@@ -26,7 +26,7 @@
 The platform seam should stay explicit:
 
 - workspace orchestration should remain platform-neutral
-- session supervision should be backend-driven
+- session supervision should be backend-driven through `awo-core::runtime::supervisor::SessionSupervisor`
 - skill projection should choose sane defaults per platform
 
 The intended backend split is:
@@ -44,7 +44,7 @@ The intended backend split is:
 
 ## Next Platform Work
 
-1. Add an explicit session-supervisor abstraction
-2. Implement a Windows ConPTY backend
+1. Implement a Windows ConPTY-backed `SessionSupervisor`
+2. Persist supervisor backend metadata instead of inferring it from log layout
 3. Add CI coverage across macOS, Linux, and Windows
 4. Add platform-specific smoke tests for shell runtime and skills projection

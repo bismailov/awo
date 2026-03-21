@@ -1,5 +1,5 @@
 use crate::app::AppPaths;
-use crate::platform::{default_shell_program, executable_exists, supports_tmux_supervision};
+use crate::platform::{default_shell_program, executable_exists};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
@@ -10,9 +10,9 @@ use strum_macros::{Display, EnumString, IntoStaticStr};
 mod supervisor;
 
 use supervisor::{
-    PreparedCommand, build_session_id, clear_sidecar_if_exists, execute_tmux_session,
+    PreparedCommand, SessionSupervisor, build_session_id, clear_sidecar_if_exists,
     exit_code_path_for, format_command_line, pid_path_for, pid_sidecar_exists, prepare_command,
-    process_is_running, read_exit_code, read_pid, sync_tmux_session, tmux_kill_session,
+    process_is_running, pty_supervision_available, read_exit_code, read_pid, session_io_layout,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +47,7 @@ impl SessionRecord {
     }
 
     pub fn is_supervised(&self) -> bool {
-        self.status == "running" && self.stderr_path.is_none()
+        self.status == "running" && SessionSupervisor::from_session(self).is_some()
     }
 }
 
@@ -85,7 +85,7 @@ impl SessionLaunchMode {
     }
 
     pub fn default_for_environment() -> Self {
-        if supports_tmux_supervision() {
+        if pty_supervision_available() {
             Self::Pty
         } else {
             Self::Oneshot
@@ -112,7 +112,7 @@ pub struct SessionExecutionResult {
 pub struct PreparedSession {
     pub session: SessionRecord,
     prepared: PreparedCommand,
-    launch_mode: SessionLaunchMode,
+    supervisor: Option<SessionSupervisor>,
     stdout_path: PathBuf,
     stderr_path: Option<PathBuf>,
 }
@@ -122,7 +122,9 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession
     let logs_dir = request.paths.logs_dir.join("sessions");
     fs::create_dir_all(&logs_dir)
         .with_context(|| format!("failed to create session log dir at {}", logs_dir.display()))?;
-    if request.launch_mode == SessionLaunchMode::Oneshot && !request.dry_run {
+    let supervisor = SessionSupervisor::from_launch_mode(request.launch_mode)?;
+
+    if supervisor.is_none() && !request.dry_run {
         clear_sidecar_if_exists(&exit_code_path_for(&logs_dir, &session_id))?;
         fs::write(pid_path_for(&logs_dir, &session_id), "pending").with_context(|| {
             format!(
@@ -132,14 +134,9 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession
         })?;
     }
 
-    let stdout_path = match request.launch_mode {
-        SessionLaunchMode::Pty => logs_dir.join(format!("{session_id}.pty.log")),
-        SessionLaunchMode::Oneshot => logs_dir.join(format!("{session_id}.out.log")),
-    };
-    let stderr_path = match request.launch_mode {
-        SessionLaunchMode::Pty => None,
-        SessionLaunchMode::Oneshot => Some(logs_dir.join(format!("{session_id}.err.log"))),
-    };
+    let io_layout = session_io_layout(&logs_dir, &session_id, supervisor);
+    let stdout_path = io_layout.stdout_path;
+    let stderr_path = io_layout.stderr_path;
     let prepared = prepare_command(
         request.runtime,
         request.slot_path,
@@ -173,7 +170,7 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession
             updated_at: String::new(),
         },
         prepared,
-        launch_mode: request.launch_mode,
+        supervisor,
         stdout_path,
         stderr_path,
     })
@@ -188,8 +185,8 @@ pub fn execute_prepared_session(
         });
     }
 
-    if prepared_session.launch_mode == SessionLaunchMode::Pty {
-        execute_tmux_session(
+    if let Some(supervisor) = prepared_session.supervisor {
+        supervisor.launch(
             &prepared_session.session.id,
             &prepared_session.prepared.cwd,
             &prepared_session.prepared,
@@ -283,7 +280,9 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<boo
         return sync_oneshot_session(paths, session);
     }
 
-    match sync_tmux_session(paths, &session.id)? {
+    let supervisor = SessionSupervisor::from_session(session)
+        .context("running supervised session is missing supervisor metadata")?;
+    match supervisor.sync(paths, &session.id)? {
         Some(exit_code) => {
             session.exit_code = Some(exit_code);
             session.status = if exit_code == 0 {
@@ -303,10 +302,9 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<b
     }
 
     if session.is_supervised() {
-        let _ = tmux_kill_session(&session.id);
-        if session.exit_code.is_none() {
-            session.exit_code = read_exit_code(paths, &session.id)?;
-        }
+        let supervisor = SessionSupervisor::from_session(session)
+            .context("running supervised session is missing supervisor metadata")?;
+        supervisor.cancel(paths, session)?;
     }
 
     session.status = "cancelled".to_string();
@@ -345,7 +343,7 @@ pub fn detect_runtime(runtime: RuntimeKind) -> bool {
 }
 
 pub fn detect_tmux() -> bool {
-    supports_tmux_supervision()
+    pty_supervision_available()
 }
 #[cfg(test)]
 mod tests;
