@@ -190,24 +190,18 @@ impl<'a> CommandRunner<'a> {
                 dry_run,
                 launch_mode,
                 attach_context,
-            } => self
-                .run_session_start(SessionStartOptions {
-                    slot_id,
-                    runtime,
-                    prompt,
-                    read_only,
-                    dry_run,
-                    launch_mode,
-                    attach_context,
-                })
-                .map_err(Into::into),
-            Command::SessionList { repo_id } => self.run_session_list(repo_id).map_err(Into::into),
-            Command::SessionCancel { session_id } => {
-                self.run_session_cancel(session_id).map_err(Into::into)
-            }
-            Command::SessionDelete { session_id } => {
-                self.run_session_delete(session_id).map_err(Into::into)
-            }
+            } => self.run_session_start(SessionStartOptions {
+                slot_id,
+                runtime,
+                prompt,
+                read_only,
+                dry_run,
+                launch_mode,
+                attach_context,
+            }),
+            Command::SessionList { repo_id } => self.run_session_list(repo_id),
+            Command::SessionCancel { session_id } => self.run_session_cancel(session_id),
+            Command::SessionDelete { session_id } => self.run_session_delete(session_id),
             Command::ReviewStatus { repo_id } => {
                 self.run_review_status(repo_id).map_err(Into::into)
             }

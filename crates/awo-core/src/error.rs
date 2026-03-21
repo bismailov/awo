@@ -57,6 +57,10 @@ pub enum AwoError {
         path: PathBuf,
         message: String,
     },
+    #[error("runtime launch failed: {message}")]
+    RuntimeLaunch { message: String },
+    #[error("supervisor error: {message}")]
+    Supervisor { message: String },
     #[error("failed to parse yaml at {path}")]
     YamlParse {
         path: PathBuf,
@@ -166,6 +170,18 @@ impl AwoError {
         Self::GitCommandFailed {
             operation,
             path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn runtime_launch(message: impl Into<String>) -> Self {
+        Self::RuntimeLaunch {
+            message: message.into(),
+        }
+    }
+
+    pub fn supervisor(message: impl Into<String>) -> Self {
+        Self::Supervisor {
             message: message.into(),
         }
     }

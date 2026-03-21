@@ -2,8 +2,8 @@ mod tmux;
 
 use super::{RuntimeKind, SessionLaunchMode, SessionRecord};
 use crate::app::AppPaths;
+use crate::error::{AwoError, AwoResult};
 use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
-use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,12 +33,12 @@ impl SessionSupervisor {
         }
     }
 
-    pub(super) fn from_launch_mode(launch_mode: SessionLaunchMode) -> Result<Option<Self>> {
+    pub(super) fn from_launch_mode(launch_mode: SessionLaunchMode) -> AwoResult<Option<Self>> {
         match launch_mode {
             SessionLaunchMode::Oneshot => Ok(None),
-            SessionLaunchMode::Pty => configured_pty_supervisor()
-                .map(Some)
-                .context("PTY launch is not implemented on this platform"),
+            SessionLaunchMode::Pty => configured_pty_supervisor().map(Some).ok_or_else(|| {
+                AwoError::supervisor("PTY launch is not implemented on this platform")
+            }),
         }
     }
 
@@ -78,19 +78,21 @@ impl SessionSupervisor {
         slot_path: &Path,
         prepared: &PreparedCommand,
         combined_log_path: PathBuf,
-    ) -> Result<()> {
+    ) -> AwoResult<()> {
         match self {
-            Self::Tmux => tmux::launch(session_id, slot_path, prepared, combined_log_path),
+            Self::Tmux => tmux::launch(session_id, slot_path, prepared, combined_log_path)
+                .map_err(|error| AwoError::supervisor(error.to_string())),
         }
     }
 
-    pub(super) fn sync(self, paths: &AppPaths, session_id: &str) -> Result<Option<i64>> {
+    pub(super) fn sync(self, paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
         match self {
-            Self::Tmux => tmux::sync(paths, session_id),
+            Self::Tmux => tmux::sync(paths, session_id)
+                .map_err(|error| AwoError::supervisor(error.to_string())),
         }
     }
 
-    pub(super) fn cancel(self, paths: &AppPaths, session: &mut SessionRecord) -> Result<()> {
+    pub(super) fn cancel(self, paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<()> {
         match self {
             Self::Tmux => {
                 let _ = tmux::kill(&session.id);
@@ -235,23 +237,23 @@ pub(super) fn build_session_id(slot_id: &str, runtime: RuntimeKind) -> String {
     format!("sess-{}-{}-{suffix}", runtime.as_str(), slot_id)
 }
 
-pub(super) fn read_exit_code(paths: &AppPaths, session_id: &str) -> Result<Option<i64>> {
+pub(super) fn read_exit_code(paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
     let path = exit_code_path_for(&paths.logs_dir.join("sessions"), session_id);
     if !path.exists() {
         return Ok(None);
     }
     let contents = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read exit-code file at {}", path.display()))?;
+        .map_err(|source| AwoError::io("read exit-code sidecar", &path, source))?;
     Ok(contents.trim().parse::<i64>().ok())
 }
 
-pub(super) fn read_pid(paths: &AppPaths, session_id: &str) -> Result<Option<u32>> {
+pub(super) fn read_pid(paths: &AppPaths, session_id: &str) -> AwoResult<Option<u32>> {
     let path = pid_path_for(&paths.logs_dir.join("sessions"), session_id);
     if !path.exists() {
         return Ok(None);
     }
     let contents = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read pid sidecar at {}", path.display()))?;
+        .map_err(|source| AwoError::io("read pid sidecar", &path, source))?;
     Ok(contents.trim().parse::<u32>().ok())
 }
 
@@ -272,11 +274,11 @@ pub(super) fn supervisor_ref(session_id: &str) -> String {
     tmux::supervisor_ref(session_id)
 }
 
-pub(super) fn clear_sidecar_if_exists(path: &Path) -> Result<()> {
+pub(super) fn clear_sidecar_if_exists(path: &Path) -> AwoResult<()> {
     if !path.exists() {
         return Ok(());
     }
-    fs::remove_file(path).with_context(|| format!("failed to remove sidecar {}", path.display()))
+    fs::remove_file(path).map_err(|source| AwoError::io("remove sidecar", path, source))
 }
 
 #[cfg(unix)]

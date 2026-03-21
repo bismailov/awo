@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::AppPaths;
 use crate::platform::{default_shell_program, shell_command_args};
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
 

@@ -1,6 +1,6 @@
 use crate::app::AppPaths;
+use crate::error::{AwoError, AwoResult};
 use crate::platform::{default_shell_program, executable_exists};
-use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -120,21 +120,18 @@ pub struct PreparedSession {
     stderr_path: Option<PathBuf>,
 }
 
-pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession> {
+pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSession> {
     let session_id = build_session_id(request.slot_id, request.runtime);
     let logs_dir = request.paths.logs_dir.join("sessions");
     fs::create_dir_all(&logs_dir)
-        .with_context(|| format!("failed to create session log dir at {}", logs_dir.display()))?;
+        .map_err(|source| AwoError::io("create session log directory", &logs_dir, source))?;
     let supervisor = SessionSupervisor::from_launch_mode(request.launch_mode)?;
 
     if supervisor.is_none() && !request.dry_run {
         clear_sidecar_if_exists(&exit_code_path_for(&logs_dir, &session_id))?;
-        fs::write(pid_path_for(&logs_dir, &session_id), "pending").with_context(|| {
-            format!(
-                "failed to prepare pid sidecar at {}",
-                pid_path_for(&logs_dir, &session_id).display()
-            )
-        })?;
+        let pid_path = pid_path_for(&logs_dir, &session_id);
+        fs::write(&pid_path, "pending")
+            .map_err(|source| AwoError::io("prepare pid sidecar", &pid_path, source))?;
     }
 
     let io_layout = session_io_layout(&logs_dir, &session_id, supervisor);
@@ -182,7 +179,7 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession
 
 pub fn execute_prepared_session(
     mut prepared_session: PreparedSession,
-) -> Result<SessionExecutionResult> {
+) -> AwoResult<SessionExecutionResult> {
     if prepared_session.session.dry_run {
         return Ok(SessionExecutionResult {
             session: prepared_session.session,
@@ -219,36 +216,33 @@ pub fn execute_prepared_session(
         .inspect_err(|_error| {
             let _ = clear_sidecar_if_exists(&pid_path);
         })
-        .with_context(|| {
-            format!(
-                "failed to launch runtime `{}`",
+        .map_err(|error| {
+            AwoError::runtime_launch(format!(
+                "failed to launch runtime `{}`: {error}",
                 prepared_session.session.runtime
-            )
+            ))
         })?;
     fs::write(&pid_path, child.id().to_string())
-        .with_context(|| format!("failed to write pid sidecar at {}", pid_path.display()))?;
+        .map_err(|source| AwoError::io("write pid sidecar", &pid_path, source))?;
 
     let output = child
         .wait_with_output()
         .inspect_err(|_error| {
             let _ = clear_sidecar_if_exists(&pid_path);
         })
-        .with_context(|| {
-            format!(
-                "failed while waiting for runtime `{}`",
+        .map_err(|error| {
+            AwoError::runtime_launch(format!(
+                "failed while waiting for runtime `{}`: {error}",
                 prepared_session.session.runtime
-            )
+            ))
         })?;
 
-    fs::write(&prepared_session.stdout_path, &output.stdout).with_context(|| {
-        format!(
-            "failed to write stdout log at {}",
-            prepared_session.stdout_path.display()
-        )
+    fs::write(&prepared_session.stdout_path, &output.stdout).map_err(|source| {
+        AwoError::io("write stdout log", &prepared_session.stdout_path, source)
     })?;
     if let Some(stderr_path) = &prepared_session.stderr_path {
         fs::write(stderr_path, &output.stderr)
-            .with_context(|| format!("failed to write stderr log at {}", stderr_path.display()))?;
+            .map_err(|source| AwoError::io("write stderr log", stderr_path, source))?;
     }
 
     prepared_session.session.status = if output.status.success() {
@@ -259,12 +253,8 @@ pub fn execute_prepared_session(
     .to_string();
     prepared_session.session.exit_code = output.status.code().map(i64::from);
     let exit_code = prepared_session.session.exit_code.unwrap_or(-1);
-    fs::write(&exit_path, exit_code.to_string()).with_context(|| {
-        format!(
-            "failed to write exit-code sidecar at {}",
-            exit_path.display()
-        )
-    })?;
+    fs::write(&exit_path, exit_code.to_string())
+        .map_err(|source| AwoError::io("write exit-code sidecar", &exit_path, source))?;
     clear_sidecar_if_exists(&pid_path)?;
 
     Ok(SessionExecutionResult {
@@ -272,7 +262,7 @@ pub fn execute_prepared_session(
     })
 }
 
-pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<bool> {
+pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<bool> {
     if session.is_terminal() {
         return Ok(false);
     }
@@ -284,8 +274,9 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<boo
         return sync_oneshot_session(paths, session);
     }
 
-    let supervisor = SessionSupervisor::from_session(session)
-        .context("running supervised session is missing supervisor metadata")?;
+    let supervisor = SessionSupervisor::from_session(session).ok_or_else(|| {
+        AwoError::invalid_state("running supervised session is missing supervisor metadata")
+    })?;
     match supervisor.sync(paths, &session.id)? {
         Some(exit_code) => {
             session.exit_code = Some(exit_code);
@@ -300,14 +291,15 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<boo
     }
 }
 
-pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<bool> {
+pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<bool> {
     if session.is_terminal() {
         return Ok(false);
     }
 
     if session.is_supervised() {
-        let supervisor = SessionSupervisor::from_session(session)
-            .context("running supervised session is missing supervisor metadata")?;
+        let supervisor = SessionSupervisor::from_session(session).ok_or_else(|| {
+            AwoError::invalid_state("running supervised session is missing supervisor metadata")
+        })?;
         supervisor.cancel(paths, session)?;
     }
 
@@ -315,7 +307,7 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<b
     Ok(true)
 }
 
-fn sync_oneshot_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<bool> {
+fn sync_oneshot_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<bool> {
     let pid = read_pid(paths, &session.id)?;
     match pid {
         Some(pid) if process_is_running(pid) => return Ok(false),
