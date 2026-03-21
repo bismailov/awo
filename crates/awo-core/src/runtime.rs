@@ -48,6 +48,7 @@ impl SessionRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum RuntimeKind {
     Codex,
@@ -67,6 +68,7 @@ impl RuntimeKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SessionLaunchMode {
     Pty,

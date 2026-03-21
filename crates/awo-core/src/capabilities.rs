@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::{Display, IntoStaticStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum CapabilitySupport {
     Native,

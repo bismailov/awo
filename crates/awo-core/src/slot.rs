@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strum_macros::{Display, EnumString, IntoStaticStr};
@@ -19,7 +20,8 @@ pub struct SlotRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SlotStrategy {
     Fresh,

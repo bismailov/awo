@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::error::AwoResult;
 use crate::events::DomainEvent;
 use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
@@ -127,7 +128,7 @@ impl<'a> CommandRunner<'a> {
         Self { config, store }
     }
 
-    pub fn sync_runtime_state(&self, repo_id: Option<&str>) -> Result<()> {
+    pub fn sync_runtime_state(&self, repo_id: Option<&str>) -> AwoResult<()> {
         let mut sessions = self.store.list_sessions(repo_id)?;
         for session in &mut sessions {
             if sync_session(&self.config.paths, session)? {
@@ -137,38 +138,50 @@ impl<'a> CommandRunner<'a> {
         Ok(())
     }
 
-    pub fn run(&mut self, command: Command) -> Result<CommandOutcome> {
+    pub fn run(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         match command {
-            Command::NoOp { label } => self.run_noop(label),
-            Command::RepoAdd { path } => self.run_repo_add(path),
+            Command::NoOp { label } => self.run_noop(label).map_err(Into::into),
+            Command::RepoAdd { path } => self.run_repo_add(path).map_err(Into::into),
             Command::RepoClone {
                 remote_url,
                 destination,
-            } => self.run_repo_clone(remote_url, destination),
-            Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id),
-            Command::RepoList => self.run_repo_list(),
-            Command::ContextPack { repo_id } => self.run_context_pack(repo_id),
-            Command::ContextDoctor { repo_id } => self.run_context_doctor(repo_id),
-            Command::SkillsList { repo_id } => self.run_skills_list(repo_id),
-            Command::SkillsDoctor { repo_id, runtime } => self.run_skills_doctor(repo_id, runtime),
+            } => self
+                .run_repo_clone(remote_url, destination)
+                .map_err(Into::into),
+            Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id).map_err(Into::into),
+            Command::RepoList => self.run_repo_list().map_err(Into::into),
+            Command::ContextPack { repo_id } => self.run_context_pack(repo_id).map_err(Into::into),
+            Command::ContextDoctor { repo_id } => {
+                self.run_context_doctor(repo_id).map_err(Into::into)
+            }
+            Command::SkillsList { repo_id } => self.run_skills_list(repo_id).map_err(Into::into),
+            Command::SkillsDoctor { repo_id, runtime } => {
+                self.run_skills_doctor(repo_id, runtime).map_err(Into::into)
+            }
             Command::SkillsLink {
                 repo_id,
                 runtime,
                 mode,
-            } => self.run_skills_link(repo_id, runtime, mode),
+            } => self
+                .run_skills_link(repo_id, runtime, mode)
+                .map_err(Into::into),
             Command::SkillsSync {
                 repo_id,
                 runtime,
                 mode,
-            } => self.run_skills_sync(repo_id, runtime, mode),
+            } => self
+                .run_skills_sync(repo_id, runtime, mode)
+                .map_err(Into::into),
             Command::SlotAcquire {
                 repo_id,
                 task_name,
                 strategy,
-            } => self.run_slot_acquire(repo_id, task_name, strategy),
-            Command::SlotList { repo_id } => self.run_slot_list(repo_id),
-            Command::SlotRelease { slot_id } => self.run_slot_release(slot_id),
-            Command::SlotRefresh { slot_id } => self.run_slot_refresh(slot_id),
+            } => self
+                .run_slot_acquire(repo_id, task_name, strategy)
+                .map_err(Into::into),
+            Command::SlotList { repo_id } => self.run_slot_list(repo_id).map_err(Into::into),
+            Command::SlotRelease { slot_id } => self.run_slot_release(slot_id).map_err(Into::into),
+            Command::SlotRefresh { slot_id } => self.run_slot_refresh(slot_id).map_err(Into::into),
             Command::SessionStart {
                 slot_id,
                 runtime,
@@ -177,19 +190,27 @@ impl<'a> CommandRunner<'a> {
                 dry_run,
                 launch_mode,
                 attach_context,
-            } => self.run_session_start(SessionStartOptions {
-                slot_id,
-                runtime,
-                prompt,
-                read_only,
-                dry_run,
-                launch_mode,
-                attach_context,
-            }),
-            Command::SessionList { repo_id } => self.run_session_list(repo_id),
-            Command::SessionCancel { session_id } => self.run_session_cancel(session_id),
-            Command::SessionDelete { session_id } => self.run_session_delete(session_id),
-            Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
+            } => self
+                .run_session_start(SessionStartOptions {
+                    slot_id,
+                    runtime,
+                    prompt,
+                    read_only,
+                    dry_run,
+                    launch_mode,
+                    attach_context,
+                })
+                .map_err(Into::into),
+            Command::SessionList { repo_id } => self.run_session_list(repo_id).map_err(Into::into),
+            Command::SessionCancel { session_id } => {
+                self.run_session_cancel(session_id).map_err(Into::into)
+            }
+            Command::SessionDelete { session_id } => {
+                self.run_session_delete(session_id).map_err(Into::into)
+            }
+            Command::ReviewStatus { repo_id } => {
+                self.run_review_status(repo_id).map_err(Into::into)
+            }
         }
     }
 

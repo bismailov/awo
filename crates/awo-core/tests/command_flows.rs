@@ -47,7 +47,7 @@ impl TestHarness {
     }
 
     fn core(&self) -> Result<AppCore> {
-        AppCore::from_config(self.config.clone())
+        Ok(AppCore::from_config(self.config.clone())?)
     }
 
     fn create_repo(&self, name: &str) -> Result<PathBuf> {

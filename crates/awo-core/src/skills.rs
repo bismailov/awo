@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SkillRuntime {
     Codex,
@@ -26,6 +27,7 @@ impl SkillRuntime {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SkillLinkMode {
     Symlink,
@@ -33,6 +35,7 @@ pub enum SkillLinkMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, IntoStaticStr)]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum SkillDiscoveryStrategy {
     GlobalProjection,
@@ -122,6 +125,7 @@ pub struct RepoSkillCatalog {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, IntoStaticStr)]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum SkillInstallState {
     Missing,

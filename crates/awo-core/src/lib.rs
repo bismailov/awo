@@ -4,6 +4,7 @@ pub mod commands;
 pub mod config;
 pub mod context;
 pub mod diagnostics;
+pub mod error;
 pub mod events;
 pub mod fingerprint;
 pub mod git;
@@ -23,6 +24,7 @@ pub use capabilities::{
 pub use commands::{Command, CommandOutcome};
 pub use context::{ContextDoctorReport, RepoContext};
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
+pub use error::{AwoError, AwoResult};
 pub use events::DomainEvent;
 pub use runtime::{RuntimeKind, SessionLaunchMode};
 pub use skills::{

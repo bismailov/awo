@@ -471,6 +471,8 @@ mod tests {
         assert_eq!(parsed["summary"], "listed repos");
         assert_eq!(parsed["data"][0], "repo-a");
         assert_eq!(parsed["events"].as_array().map(std::vec::Vec::len), Some(1));
+        assert_eq!(parsed["events"][0]["type"], "command_received");
+        assert_eq!(parsed["events"][0]["command"], "repo_list");
     }
 
     #[test]

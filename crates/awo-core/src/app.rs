@@ -3,6 +3,7 @@ use crate::config::AppConfig;
 use crate::context::{
     ContextDoctorReport, RepoContext, discover_repo_context, doctor_repo_context,
 };
+use crate::error::{AwoError, AwoResult};
 use crate::runtime::{RuntimeKind, SessionLaunchMode};
 use crate::skills::{
     RepoSkillCatalog, RuntimeSkillRoots, SkillDoctorReport, SkillLinkMode, SkillLinkReport,
@@ -36,61 +37,61 @@ pub struct AppCore {
 }
 
 impl AppCore {
-    pub fn bootstrap() -> Result<Self> {
+    pub fn bootstrap() -> AwoResult<Self> {
         let config = AppConfig::load()?;
         Self::from_config(config)
     }
 
-    pub fn from_config(config: AppConfig) -> Result<Self> {
+    pub fn from_config(config: AppConfig) -> AwoResult<Self> {
         let store = Store::open(&config.paths.state_db_path)?;
         store.initialize_schema()?;
 
         Ok(Self { config, store })
     }
 
-    pub fn dispatch(&mut self, command: Command) -> Result<CommandOutcome> {
+    pub fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         let mut runner = CommandRunner::new(&self.config, &self.store);
         runner.run(command)
     }
 
-    pub fn snapshot(&self) -> Result<AppSnapshot> {
+    pub fn snapshot(&self) -> AwoResult<AppSnapshot> {
         let runner = CommandRunner::new(&self.config, &self.store);
         runner.sync_runtime_state(None)?;
-        AppSnapshot::load(&self.config, &self.store)
+        Ok(AppSnapshot::load(&self.config, &self.store)?)
     }
 
-    pub fn context_for_repo(&self, repo_id: &str) -> Result<RepoContext> {
+    pub fn context_for_repo(&self, repo_id: &str) -> AwoResult<RepoContext> {
         let repo = self
             .store
             .get_repository(repo_id)?
-            .ok_or_else(|| anyhow::anyhow!("unknown repo id `{repo_id}`"))?;
-        discover_repo_context(Path::new(&repo.repo_root))
+            .ok_or_else(|| AwoError::unknown_repo(repo_id))?;
+        Ok(discover_repo_context(Path::new(&repo.repo_root))?)
     }
 
-    pub fn context_doctor_for_repo(&self, repo_id: &str) -> Result<ContextDoctorReport> {
+    pub fn context_doctor_for_repo(&self, repo_id: &str) -> AwoResult<ContextDoctorReport> {
         let context = self.context_for_repo(repo_id)?;
         Ok(doctor_repo_context(&context))
     }
 
-    pub fn skills_for_repo(&self, repo_id: &str) -> Result<RepoSkillCatalog> {
+    pub fn skills_for_repo(&self, repo_id: &str) -> AwoResult<RepoSkillCatalog> {
         let repo = self
             .store
             .get_repository(repo_id)?
-            .ok_or_else(|| anyhow::anyhow!("unknown repo id `{repo_id}`"))?;
-        discover_repo_skills(Path::new(&repo.repo_root))
+            .ok_or_else(|| AwoError::unknown_repo(repo_id))?;
+        Ok(discover_repo_skills(Path::new(&repo.repo_root))?)
     }
 
     pub fn skills_doctor_for_repo(
         &self,
         repo_id: &str,
         runtimes: &[SkillRuntime],
-    ) -> Result<Vec<SkillDoctorReport>> {
+    ) -> AwoResult<Vec<SkillDoctorReport>> {
         let catalog = self.skills_for_repo(repo_id)?;
         let roots = RuntimeSkillRoots::from_environment();
         runtimes
             .iter()
             .copied()
-            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots))
+            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots).map_err(Into::into))
             .collect()
     }
 
@@ -99,10 +100,12 @@ impl AppCore {
         repo_id: &str,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
-    ) -> Result<SkillLinkReport> {
+    ) -> AwoResult<SkillLinkReport> {
         let catalog = self.skills_for_repo(repo_id)?;
         let roots = RuntimeSkillRoots::from_environment();
-        crate::skills::link_repo_skills(&catalog, runtime, &roots, mode)
+        Ok(crate::skills::link_repo_skills(
+            &catalog, runtime, &roots, mode,
+        )?)
     }
 
     pub fn skills_sync_for_repo(
@@ -110,33 +113,35 @@ impl AppCore {
         repo_id: &str,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
-    ) -> Result<SkillLinkReport> {
+    ) -> AwoResult<SkillLinkReport> {
         let catalog = self.skills_for_repo(repo_id)?;
         let roots = RuntimeSkillRoots::from_environment();
-        crate::skills::sync_repo_skills(&catalog, runtime, &roots, mode)
+        Ok(crate::skills::sync_repo_skills(
+            &catalog, runtime, &roots, mode,
+        )?)
     }
 
     pub fn paths(&self) -> &AppPaths {
         &self.config.paths
     }
 
-    pub fn save_team_manifest(&self, manifest: &TeamManifest) -> Result<std::path::PathBuf> {
-        save_team_manifest(&self.config.paths, manifest)
+    pub fn save_team_manifest(&self, manifest: &TeamManifest) -> AwoResult<std::path::PathBuf> {
+        Ok(save_team_manifest(&self.config.paths, manifest)?)
     }
 
-    pub fn load_team_manifest(&self, team_id: &str) -> Result<TeamManifest> {
+    pub fn load_team_manifest(&self, team_id: &str) -> AwoResult<TeamManifest> {
         let path = crate::team::default_team_manifest_path(&self.config.paths, team_id);
-        load_team_manifest(&path)
+        Ok(load_team_manifest(&path)?)
     }
 
-    pub fn list_team_manifests(&self) -> Result<Vec<TeamManifest>> {
+    pub fn list_team_manifests(&self) -> AwoResult<Vec<TeamManifest>> {
         list_team_manifest_paths(&self.config.paths)?
             .into_iter()
-            .map(|path| load_team_manifest(&path))
+            .map(|path| load_team_manifest(&path).map_err(Into::into))
             .collect()
     }
 
-    pub fn add_team_member(&self, team_id: &str, member: TeamMember) -> Result<TeamManifest> {
+    pub fn add_team_member(&self, team_id: &str, member: TeamMember) -> AwoResult<TeamManifest> {
         let member_id = member.member_id.clone();
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         manifest.manifest_mut().add_member(member)?;
@@ -149,7 +154,7 @@ impl AppCore {
         Ok(manifest)
     }
 
-    pub fn remove_team_member(&self, team_id: &str, member_id: &str) -> Result<TeamManifest> {
+    pub fn remove_team_member(&self, team_id: &str, member_id: &str) -> AwoResult<TeamManifest> {
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         manifest.manifest_mut().remove_member(member_id)?;
         manifest.save()?;
@@ -161,7 +166,7 @@ impl AppCore {
         Ok(manifest)
     }
 
-    pub fn add_team_task(&self, team_id: &str, task: TaskCard) -> Result<TeamManifest> {
+    pub fn add_team_task(&self, team_id: &str, task: TaskCard) -> AwoResult<TeamManifest> {
         let task_id = task.task_id.clone();
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         manifest.manifest_mut().add_task(task)?;
@@ -180,7 +185,7 @@ impl AppCore {
         team_id: &str,
         task_id: &str,
         state: TaskCardState,
-    ) -> Result<TeamManifest> {
+    ) -> AwoResult<TeamManifest> {
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         manifest.manifest_mut().set_task_state(task_id, state)?;
         manifest.save()?;
@@ -200,18 +205,18 @@ impl AppCore {
         team_id: &str,
         member_id: &str,
         slot_id: &str,
-    ) -> Result<TeamManifest> {
+    ) -> AwoResult<TeamManifest> {
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         let slot = self
             .store
             .get_slot(slot_id)?
-            .ok_or_else(|| anyhow::anyhow!("unknown slot id `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_slot(slot_id))?;
         if slot.repo_id != manifest.manifest().repo_id {
-            anyhow::bail!(
+            return Err(AwoError::invalid_state(format!(
                 "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
                 slot.repo_id,
                 manifest.manifest().repo_id
-            );
+            )));
         }
         manifest
             .manifest_mut()
@@ -233,18 +238,18 @@ impl AppCore {
         team_id: &str,
         task_id: &str,
         slot_id: &str,
-    ) -> Result<TeamManifest> {
+    ) -> AwoResult<TeamManifest> {
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         let slot = self
             .store
             .get_slot(slot_id)?
-            .ok_or_else(|| anyhow::anyhow!("unknown slot id `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_slot(slot_id))?;
         if slot.repo_id != manifest.manifest().repo_id {
-            anyhow::bail!(
+            return Err(AwoError::invalid_state(format!(
                 "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
                 slot.repo_id,
                 manifest.manifest().repo_id
-            );
+            )));
         }
         manifest
             .manifest_mut()
@@ -264,15 +269,20 @@ impl AppCore {
     pub fn start_team_task(
         &mut self,
         options: TeamTaskStartOptions,
-    ) -> Result<(
+    ) -> AwoResult<(
         TeamManifest,
         Option<CommandOutcome>,
         CommandOutcome,
         TeamTaskExecution,
     )> {
-        let launch_mode: SessionLaunchMode =
-            options.launch_mode.parse().map_err(anyhow::Error::msg)?;
-        let strategy: SlotStrategy = options.strategy.parse().map_err(anyhow::Error::msg)?;
+        let launch_mode: SessionLaunchMode = options
+            .launch_mode
+            .parse()
+            .map_err(|_| AwoError::unsupported("launch mode", &options.launch_mode))?;
+        let strategy: SlotStrategy = options
+            .strategy
+            .parse()
+            .map_err(|_| AwoError::unsupported("slot strategy", &options.strategy))?;
         let team_id = options.team_id.clone();
         let task_id = options.task_id.clone();
         let recover_failed_start = |core: &mut Self, slot_id: Option<&str>| {
@@ -290,21 +300,23 @@ impl AppCore {
                 .manifest()
                 .task(&options.task_id)
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("unknown task `{}`", options.task_id))?;
+                .ok_or_else(|| AwoError::unknown_task(&options.task_id))?;
             let owner = manifest
                 .manifest()
                 .member(&task.owner_id)
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("unknown owner `{}`", task.owner_id))?;
+                .ok_or_else(|| AwoError::unknown_owner(&task.owner_id))?;
             if owner.execution_mode.as_str() != "external_slots" {
-                anyhow::bail!(
+                return Err(AwoError::invalid_state(format!(
                     "team task execution currently supports only `external_slots`; owner `{}` uses `{}`",
-                    owner.member_id,
-                    owner.execution_mode
-                );
+                    owner.member_id, owner.execution_mode
+                )));
             }
             if task.state == TaskCardState::InProgress {
-                anyhow::bail!("task `{}` is already in progress", task.task_id);
+                return Err(AwoError::invalid_state(format!(
+                    "task `{}` is already in progress",
+                    task.task_id
+                )));
             }
 
             let runtime_name = task
@@ -312,14 +324,15 @@ impl AppCore {
                 .as_deref()
                 .or(owner.runtime.as_deref())
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
+                    AwoError::invalid_state(format!(
                         "task `{}` has no runtime; set one on the task or owner `{}`",
-                        task.task_id,
-                        owner.member_id
-                    )
+                        task.task_id, owner.member_id
+                    ))
                 })?;
             let runtime_name = runtime_name.to_string();
-            let runtime: RuntimeKind = runtime_name.parse().map_err(anyhow::Error::msg)?;
+            let runtime: RuntimeKind = runtime_name
+                .parse()
+                .map_err(|_| AwoError::unsupported("runtime", &runtime_name))?;
             let prompt = if runtime.as_str() == "shell" {
                 task.summary.clone()
             } else {
@@ -350,16 +363,15 @@ impl AppCore {
                         Some(slot) => slot,
                         None => {
                             recover_failed_start(self, None);
-                            anyhow::bail!("unknown slot id `{slot_id}`");
+                            return Err(AwoError::unknown_slot(slot_id));
                         }
                     };
                     if slot.repo_id != repo_id {
                         recover_failed_start(self, None);
-                        anyhow::bail!(
+                        return Err(AwoError::invalid_state(format!(
                             "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
-                            slot.repo_id,
-                            repo_id
-                        );
+                            slot.repo_id, repo_id
+                        )));
                     }
                     (slot.id, slot.branch_name, false)
                 }
@@ -384,14 +396,16 @@ impl AppCore {
                         Some(slot_id) => slot_id,
                         None => {
                             recover_failed_start(self, None);
-                            anyhow::bail!("slot acquire did not yield a slot id");
+                            return Err(AwoError::invalid_state(
+                                "slot acquire did not yield a slot id",
+                            ));
                         }
                     };
                     let slot = match self.store.get_slot(&slot_id)? {
                         Some(slot) => slot,
                         None => {
                             recover_failed_start(self, None);
-                            anyhow::bail!("unknown acquired slot `{slot_id}`");
+                            return Err(AwoError::unknown_slot(slot_id));
                         }
                     };
                     slot_outcome = Some(outcome);
@@ -410,7 +424,7 @@ impl AppCore {
             manifest.save()
         })() {
             recover_failed_start(self, acquired_slot.then_some(slot_id.as_str()));
-            return Err(error);
+            return Err(error.into());
         }
 
         let session_outcome = match self.dispatch(Command::SessionStart {
