@@ -4,6 +4,9 @@
 
 The working interaction model is a single-window controller: `awo` owns the repo, team, slot, session, and review state in one place, while the actual agents run in background sessions or attached terminals.
 
+**Welcome Private-Alpha Testers!**
+As we stabilize `awo`, we rely on your feedback to refine the agent orchestration lifecycle. We are currently focusing heavily on improving our machine-readable interfaces to let other tools coordinate via `awo`.
+
 It currently manages:
 - repository registration
 - managed remote cloning and fetching
@@ -22,6 +25,12 @@ It currently manages:
 - review warnings around stale, dirty, blocked, or failed work
 - executable team orchestration: runtime capability registry, durable team manifests, task cards, and task-driven session launch
 - machine-readable JSON output across the main operator commands
+
+## Architecture Direction: "JSON inside, MCP outside"
+
+To support building `awo` out into a true middleware layer (see [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)), we are standardizing on a **"JSON inside, MCP outside"** pattern:
+- **JSON Inside:** The core CLI outputs predictable, structured JSON envelopes for all state changes, errors, and events. This makes it a robust, token-efficient controller for local automation, testbeds, and direct invocation by nearby scripts.
+- **MCP Outside:** The Model Context Protocol (MCP) acts as our facade. External virtual agents or orchestrated systems connect to `awo` through MCP to safely acquire slots, discover context, and execute sessions without needing to know the low-level CLI structure.
 
 ## Current Status
 
@@ -59,6 +68,8 @@ What is not done yet:
 - richer multi-turn runtime adapters beyond one-shot task execution
 
 See also:
+- [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)
+- [INTERFACE_STRATEGY.md](INTERFACE_STRATEGY.md)
 - [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
 - [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
 - [PUBLIC_TRIAL_FINDINGS.md](PUBLIC_TRIAL_FINDINGS.md)

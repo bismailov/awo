@@ -56,13 +56,13 @@ Those are exactly the capabilities a facade agent would need underneath.
 ### Daemon mode
 - long-lived process that coordinates multiple local or remote workspaces and runtimes
 
-## Interface Direction
+## Interface Direction: "JSON Inside, MCP Outside"
 
-The best contract stack is:
+The best contract stack follows a **"JSON inside, MCP outside"** pattern:
 
-1. stable JSON CLI first
+1. stable JSON CLI first (the inside layer, token-efficient, highly predictable)
 2. optional broker or daemon around the same schema
-3. MCP facade on top for external tool interoperability
+3. MCP facade on top for external tool interoperability (the outside layer, standards-compliant)
 
 This keeps `awo` efficient and scriptable locally while still letting it present itself as a standardized tool surface to outside agents later.
 

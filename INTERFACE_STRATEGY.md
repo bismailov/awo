@@ -69,7 +69,9 @@ The main lesson for `awo`:
 
 ## Recommended Contract Stack For `awo`
 
-### Layer 1: Stable JSON CLI
+We are standardizing on a **"JSON inside, MCP outside"** pattern.
+
+### Layer 1: Stable JSON CLI (Inside)
 
 Add machine-readable output to every core operation:
 - `repo add/list/clone/fetch`
@@ -90,7 +92,7 @@ Expose the same operations through a long-lived local process when we need:
 - long-running supervision
 - middleware use by another orchestration system
 
-### Layer 3: MCP Facade
+### Layer 3: MCP Facade (Outside)
 
 Expose the broker or CLI behind MCP when we want third-party agent clients to treat `awo` as a tool provider or virtual agent backend.
 

@@ -15,14 +15,9 @@ pub struct OutputMode {
 struct JsonEnvelope<T: Serialize> {
     ok: bool,
     summary: Option<String>,
+    error: Option<String>,
     events: Vec<DomainEvent>,
-    data: T,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonErrorEnvelope {
-    ok: bool,
-    error: String,
+    data: Option<T>,
 }
 
 pub fn merge_command_outcomes(outcomes: Vec<CommandOutcome>) -> CommandOutcome {
@@ -432,18 +427,22 @@ fn json_response_string<T: Serialize>(data: &T, outcome: Option<&CommandOutcome>
     let envelope = JsonEnvelope {
         ok: true,
         summary: outcome.map(|outcome| outcome.summary.clone()),
+        error: None,
         events: outcome
             .map(|outcome| outcome.events.clone())
             .unwrap_or_default(),
-        data,
+        data: Some(data),
     };
     serde_json::to_string_pretty(&envelope).expect("json serialization should succeed")
 }
 
 fn json_error_string(error: &Error) -> String {
-    let envelope = JsonErrorEnvelope {
+    let envelope = JsonEnvelope::<()> {
         ok: false,
-        error: format!("{error:#}"),
+        summary: None,
+        error: Some(format!("{error:#}")),
+        events: vec![],
+        data: None,
     };
     serde_json::to_string_pretty(&envelope).expect("json serialization should succeed")
 }
@@ -469,6 +468,7 @@ mod tests {
 
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["summary"], "listed repos");
+        assert_eq!(parsed["error"], Value::Null);
         assert_eq!(parsed["data"][0], "repo-a");
         assert_eq!(parsed["events"].as_array().map(std::vec::Vec::len), Some(1));
         assert_eq!(parsed["events"][0]["type"], "command_received");
@@ -482,6 +482,9 @@ mod tests {
         let parsed: Value = serde_json::from_str(&json).expect("json error should deserialize");
 
         assert_eq!(parsed["ok"], false);
+        assert_eq!(parsed["summary"], Value::Null);
         assert_eq!(parsed["error"], "boom");
+        assert_eq!(parsed["events"].as_array().map(std::vec::Vec::len), Some(0));
+        assert_eq!(parsed["data"], Value::Null);
     }
 }
