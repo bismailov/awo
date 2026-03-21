@@ -105,6 +105,29 @@ impl TestHarness {
     }
 }
 
+fn wait_for_repo_sessions(
+    core: &AppCore,
+    repo_id: &str,
+    timeout: Duration,
+) -> Result<Vec<awo_core::SessionSummary>> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let sessions = core
+            .snapshot()?
+            .sessions
+            .into_iter()
+            .filter(|session| session.repo_id == repo_id)
+            .collect::<Vec<_>>();
+        if !sessions.is_empty() {
+            return Ok(sessions);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(sessions);
+        }
+        sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn warm_slot_reuse_preserves_slot_identity() -> Result<()> {
     let harness = TestHarness::new()?;
@@ -514,13 +537,7 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
         Ok(())
     });
 
-    sleep(Duration::from_millis(200));
-    let sessions = core
-        .snapshot()?
-        .sessions
-        .into_iter()
-        .filter(|session| session.repo_id == repo_id)
-        .collect::<Vec<_>>();
+    let sessions = wait_for_repo_sessions(&core, &repo_id, Duration::from_secs(2))?;
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].status, "running");
     assert!(sessions[0].log_path.is_some());
@@ -575,12 +592,9 @@ fn cancelling_running_oneshot_session_is_rejected() -> Result<()> {
         Ok(())
     });
 
-    sleep(Duration::from_millis(200));
-    let session_id = core
-        .snapshot()?
-        .sessions
+    let session_id = wait_for_repo_sessions(&core, &repo_id, Duration::from_secs(2))?
         .into_iter()
-        .find(|session| session.repo_id == repo_id)
+        .find(|session| session.status == "running")
         .map(|session| session.id)
         .context("missing running oneshot session")?;
 

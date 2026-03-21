@@ -78,6 +78,7 @@ pub enum DomainEvent {
         session_id: String,
         slot_id: String,
         runtime: String,
+        supervisor: Option<String>,
         status: String,
     },
     SessionCancelled {
@@ -195,9 +196,16 @@ impl DomainEvent {
                 session_id,
                 slot_id,
                 runtime,
+                supervisor,
                 status,
             } => {
-                format!("Session `{session_id}` for slot `{slot_id}` using `{runtime}` is {status}")
+                format!(
+                    "Session `{session_id}` for slot `{slot_id}` using `{runtime}`{} is {status}",
+                    supervisor
+                        .as_deref()
+                        .map(|value| format!(" via `{value}`"))
+                        .unwrap_or_default()
+                )
             }
             Self::SessionCancelled {
                 session_id,

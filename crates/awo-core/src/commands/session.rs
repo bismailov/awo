@@ -140,6 +140,7 @@ impl<'a> CommandRunner<'a> {
             session_id: session.id.clone(),
             slot_id: session.slot_id.clone(),
             runtime: session.runtime.clone(),
+            supervisor: session.supervisor.clone(),
             status: session.status.clone(),
         });
 

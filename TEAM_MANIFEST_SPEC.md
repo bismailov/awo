@@ -155,6 +155,31 @@ Reset makes alpha-stage cleanup practical: when a team run goes sideways the ope
 
 **Important:** Reset does not release worktree slots or cancel running sessions. The operator should handle those independently via `awo slot release` and `awo session cancel` before or after reset.
 
+### Teardown
+
+`awo team teardown <team_id> [--force]` is the operational cleanup path.
+
+**What teardown does:**
+- Syncs runtime state and reconciles the manifest first.
+- Cancels any cancellable sessions still attached to the team's bound slots.
+- Releases active bound slots.
+- Resets the team back to `planning`.
+
+**Safety:**
+- Without `--force`, teardown previews what it will cancel, release, and reset.
+- Dirty slots block teardown.
+- Running one-shot sessions block teardown because they still cannot be interrupted safely.
+- Teardown is intentionally honest about blockers instead of pretending the team is clean.
+
+### Delete
+
+`awo team delete <team_id>` removes the manifest file once the team no longer references live workspace state.
+
+**Safety:**
+- Bound slots must already be gone.
+- Attached non-terminal sessions must already be gone.
+- The intended path is usually `team teardown` first, then `team delete` if the manifest itself is no longer needed.
+
 ### Status Values
 
 | Status     | Meaning                                           |

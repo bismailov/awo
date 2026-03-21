@@ -140,6 +140,17 @@ pub enum TeamCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Cancel cancellable sessions, release slots, and reset the team to planning.
+    Teardown {
+        team_id: String,
+        /// Skip preview output and execute the teardown when no blockers remain.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Delete a team manifest once it no longer references active workspace state.
+    Delete {
+        team_id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

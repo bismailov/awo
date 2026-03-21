@@ -46,5 +46,6 @@ The intended backend split is:
 
 1. Implement a Windows ConPTY-backed `SessionSupervisor`
 2. Persist supervisor backend metadata instead of inferring it from log layout
+Status: complete in the current tmux-backed implementation
 3. Add CI coverage across macOS, Linux, and Windows
 4. Add platform-specific smoke tests for shell runtime and skills projection

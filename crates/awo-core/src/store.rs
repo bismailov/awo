@@ -69,6 +69,7 @@ impl Store {
                 repo_id TEXT NOT NULL,
                 slot_id TEXT NOT NULL,
                 runtime TEXT NOT NULL,
+                supervisor TEXT,
                 prompt TEXT NOT NULL,
                 status TEXT NOT NULL,
                 read_only INTEGER NOT NULL DEFAULT 0,
@@ -80,10 +81,6 @@ impl Store {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-
-            INSERT INTO app_meta (key, value)
-            VALUES ('schema_version', '3')
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value;
         "#;
 
         let connection = self
@@ -93,6 +90,15 @@ impl Store {
         connection
             .execute_batch(sql)
             .context("failed to initialize SQLite schema")?;
+        ensure_session_supervisor_column(&connection)?;
+        connection
+            .execute(
+                "INSERT INTO app_meta (key, value)
+                 VALUES ('schema_version', '4')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .context("failed to update SQLite schema version")?;
         Ok(())
     }
 
@@ -436,13 +442,14 @@ impl Store {
         connection
             .execute(
                 "INSERT INTO sessions (
-                    id, repo_id, slot_id, runtime, prompt, status, read_only, dry_run,
+                    id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
                     command_line, stdout_path, stderr_path, exit_code
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(id) DO UPDATE SET
                     repo_id = excluded.repo_id,
                     slot_id = excluded.slot_id,
                     runtime = excluded.runtime,
+                    supervisor = excluded.supervisor,
                     prompt = excluded.prompt,
                     status = excluded.status,
                     read_only = excluded.read_only,
@@ -457,6 +464,7 @@ impl Store {
                     session.repo_id,
                     session.slot_id,
                     session.runtime,
+                    session.supervisor,
                     session.prompt,
                     session.status,
                     session.read_only as i64,
@@ -489,14 +497,14 @@ impl Store {
             .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
         let query = if repo_id.is_some() {
             "SELECT
-                id, repo_id, slot_id, runtime, prompt, status, read_only, dry_run,
+                id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
                 command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
              FROM sessions
              WHERE repo_id = ?1
              ORDER BY created_at DESC"
         } else {
             "SELECT
-                id, repo_id, slot_id, runtime, prompt, status, read_only, dry_run,
+                id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
                 command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
              FROM sessions
              ORDER BY created_at DESC"
@@ -511,16 +519,17 @@ impl Store {
                 repo_id: row.get(1)?,
                 slot_id: row.get(2)?,
                 runtime: row.get(3)?,
-                prompt: row.get(4)?,
-                status: row.get(5)?,
-                read_only: row.get::<_, i64>(6)? != 0,
-                dry_run: row.get::<_, i64>(7)? != 0,
-                command_line: row.get(8)?,
-                stdout_path: row.get(9)?,
-                stderr_path: row.get(10)?,
-                exit_code: row.get(11)?,
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
+                supervisor: row.get(4)?,
+                prompt: row.get(5)?,
+                status: row.get(6)?,
+                read_only: row.get::<_, i64>(7)? != 0,
+                dry_run: row.get::<_, i64>(8)? != 0,
+                command_line: row.get(9)?,
+                stdout_path: row.get(10)?,
+                stderr_path: row.get(11)?,
+                exit_code: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
             })
         };
 
@@ -544,7 +553,7 @@ impl Store {
         let mut statement = connection
             .prepare(
                 "SELECT
-                    id, repo_id, slot_id, runtime, prompt, status, read_only, dry_run,
+                    id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
                     command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
                  FROM sessions
                  WHERE id = ?1",
@@ -558,16 +567,17 @@ impl Store {
                     repo_id: row.get(1)?,
                     slot_id: row.get(2)?,
                     runtime: row.get(3)?,
-                    prompt: row.get(4)?,
-                    status: row.get(5)?,
-                    read_only: row.get::<_, i64>(6)? != 0,
-                    dry_run: row.get::<_, i64>(7)? != 0,
-                    command_line: row.get(8)?,
-                    stdout_path: row.get(9)?,
-                    stderr_path: row.get(10)?,
-                    exit_code: row.get(11)?,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    supervisor: row.get(4)?,
+                    prompt: row.get(5)?,
+                    status: row.get(6)?,
+                    read_only: row.get::<_, i64>(7)? != 0,
+                    dry_run: row.get::<_, i64>(8)? != 0,
+                    command_line: row.get(9)?,
+                    stdout_path: row.get(10)?,
+                    stderr_path: row.get(11)?,
+                    exit_code: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })
             .optional()
@@ -583,7 +593,7 @@ impl Store {
         let mut statement = connection
             .prepare(
                 "SELECT
-                    id, repo_id, slot_id, runtime, prompt, status, read_only, dry_run,
+                    id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
                     command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
                  FROM sessions
                  WHERE slot_id = ?1
@@ -597,16 +607,17 @@ impl Store {
                 repo_id: row.get(1)?,
                 slot_id: row.get(2)?,
                 runtime: row.get(3)?,
-                prompt: row.get(4)?,
-                status: row.get(5)?,
-                read_only: row.get::<_, i64>(6)? != 0,
-                dry_run: row.get::<_, i64>(7)? != 0,
-                command_line: row.get(8)?,
-                stdout_path: row.get(9)?,
-                stderr_path: row.get(10)?,
-                exit_code: row.get(11)?,
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
+                supervisor: row.get(4)?,
+                prompt: row.get(5)?,
+                status: row.get(6)?,
+                read_only: row.get::<_, i64>(7)? != 0,
+                dry_run: row.get::<_, i64>(8)? != 0,
+                command_line: row.get(9)?,
+                stdout_path: row.get(10)?,
+                stderr_path: row.get(11)?,
+                exit_code: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
             })
         })?;
 
@@ -615,4 +626,31 @@ impl Store {
             .context("failed to collect slot session rows")?;
         Ok(sessions)
     }
+}
+
+fn ensure_session_supervisor_column(connection: &Connection) -> Result<()> {
+    if session_supervisor_column_exists(connection)? {
+        return Ok(());
+    }
+
+    connection
+        .execute("ALTER TABLE sessions ADD COLUMN supervisor TEXT", [])
+        .context("failed to add `supervisor` column to sessions table")?;
+    Ok(())
+}
+
+fn session_supervisor_column_exists(connection: &Connection) -> Result<bool> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(sessions)")
+        .context("failed to inspect sessions table schema")?;
+    let mut rows = statement
+        .query([])
+        .context("failed to query sessions table schema")?;
+    while let Some(row) = rows.next().context("failed to read sessions schema row")? {
+        let column_name: String = row.get(1).context("failed to read schema column name")?;
+        if column_name == "supervisor" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

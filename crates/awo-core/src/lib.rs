@@ -37,7 +37,7 @@ pub use snapshot::{
 };
 pub use team::{
     TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
-    TeamStatus, TeamTaskExecution, TeamTaskStartOptions, default_team_manifest_path,
-    list_team_manifest_paths, load_team_manifest, remove_team_manifest, save_team_manifest,
-    starter_team_manifest,
+    TeamStatus, TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan, TeamTeardownResult,
+    default_team_manifest_path, list_team_manifest_paths, load_team_manifest, remove_team_manifest,
+    save_team_manifest, starter_team_manifest,
 };

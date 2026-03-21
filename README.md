@@ -24,6 +24,7 @@ It currently manages:
 - one-shot session visibility while sessions are still running
 - review warnings around stale, dirty, blocked, or failed work
 - executable team orchestration: runtime capability registry, durable team manifests, task cards, and task-driven session launch
+- team archive, reset, teardown, and delete lifecycle controls
 - machine-readable JSON output across the main operator commands
 
 ## Architecture Direction: "JSON inside, MCP outside"
@@ -47,6 +48,7 @@ This repo currently ships a working V1 slice with:
 - runtime-aware skill policy with repo-local preference for Gemini
 - distinct `skills sync` repair semantics for drifted or mode-mismatched installs
 - detached tmux-backed PTY supervision with status sync
+- persisted supervisor metadata on sessions so PTY backend identity survives restarts and schema evolution
 - session cancellation and terminal-session deletion
 - review summary and warnings in both CLI and TUI
 - repo-filtered `review status` output in the CLI
@@ -60,7 +62,6 @@ What is not done yet:
 - embedded terminal sessions
 - structured agent output parsing
 - true interruption or timeout control for running one-shot sessions
-- full team archive/reset and post-run manifest reconciliation
 - runtime-agnostic subagent orchestration above vendor-native team features
 - repo overlap detection by changed-file classes
 - remote machine targets
@@ -110,6 +111,9 @@ cargo run -- team show team-alpha
 cargo run -- team member add team-alpha reviewer-a reviewer --runtime gemini --read-only
 cargo run -- team task add team-alpha audit reviewer-a "Audit docs" "Review the docs" --deliverable "A concise review"
 cargo run -- team task start team-alpha audit --launch-mode oneshot
+cargo run -- team teardown team-alpha
+cargo run -- team teardown team-alpha --force
+cargo run -- team delete team-alpha
 cargo run -- --json team show team-alpha
 
 cargo run -- slot acquire <repo-id> my-task
@@ -158,6 +162,7 @@ The TUI now also surfaces:
 - team-manifest mutations are protected with cross-process file locks
 - long-running team-task launches release manifest locks between reservation, slot binding, and runtime execution phases
 - oneshot sessions can be reconciled after an interrupted launcher process via PID and exit-code sidecars
+- session supervisor backend identity is stored explicitly in session records instead of being inferred from log layout
 
 ## Session Modes
 
@@ -169,6 +174,15 @@ The TUI now also surfaces:
   If the launcher process is interrupted after spawn, later `session list`, `slot list`, and `review status` runs can still reconcile the session via PID/exit sidecars.
 
 The default is environment-aware: `pty` when the configured PTY supervisor is available, otherwise `oneshot`.
+
+## Team Lifecycle
+
+- `team archive` shelves a team once all tasks are terminal and no active slot/session bindings remain.
+- `team reset` clears task progress and bindings but intentionally does not touch live sessions or slots.
+- `team teardown` is the operational cleanup path: it cancels cancellable sessions, releases bound slots, and then resets the team back to planning.
+- `team delete` removes the manifest once no slot or session bindings remain.
+
+`team teardown` refuses to hide blockers. Dirty slots and running one-shot sessions still require operator attention before the manifest can be cleaned up.
 
 ## Context And Skills
 

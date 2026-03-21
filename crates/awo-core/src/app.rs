@@ -14,8 +14,8 @@ use crate::snapshot::AppSnapshot;
 use crate::store::Store;
 use crate::team::{
     TaskCard, TaskCardState, TeamManifest, TeamManifestGuard, TeamMember, TeamResetSummary,
-    TeamTaskExecution, TeamTaskStartOptions, list_team_manifest_paths, remove_team_manifest,
-    save_team_manifest,
+    TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan, TeamTeardownResult,
+    list_team_manifest_paths, remove_team_manifest, save_team_manifest,
 };
 use anyhow::Result;
 use std::collections::BTreeSet;
@@ -319,6 +319,92 @@ impl AppCore {
         Ok((manifest, summary))
     }
 
+    pub fn plan_team_teardown(&self, team_id: &str) -> AwoResult<TeamTeardownPlan> {
+        self.sync_runtime_state(None)?;
+        let manifest = self.reconcile_team_manifest(team_id)?;
+        build_team_teardown_plan(&self.store, &manifest)
+    }
+
+    pub fn teardown_team(
+        &mut self,
+        team_id: &str,
+    ) -> AwoResult<(TeamManifest, TeamTeardownResult)> {
+        let plan = self.plan_team_teardown(team_id)?;
+        if plan.has_blockers() {
+            let mut blockers = Vec::new();
+            if !plan.dirty_slots.is_empty() {
+                blockers.push(format!("dirty slots: {}", plan.dirty_slots.join(", ")));
+            }
+            blockers.extend(plan.blocking_sessions.iter().cloned());
+            return Err(AwoError::invalid_state(format!(
+                "cannot teardown team `{team_id}`: {}",
+                blockers.join("; ")
+            )));
+        }
+
+        let mut cancelled_sessions = Vec::new();
+        for session_id in &plan.cancellable_sessions {
+            self.dispatch(Command::SessionCancel {
+                session_id: session_id.clone(),
+            })?;
+            cancelled_sessions.push(session_id.clone());
+        }
+
+        self.sync_runtime_state(None)?;
+        let manifest = self.reconcile_team_manifest(team_id)?;
+        let mut released_slots = Vec::new();
+        for slot_id in collect_bound_slot_ids(&manifest) {
+            if let Some(slot) = self.store.get_slot(&slot_id)?
+                && slot.status != "released"
+            {
+                self.dispatch(Command::SlotRelease {
+                    slot_id: slot_id.clone(),
+                })?;
+                released_slots.push(slot_id);
+            }
+        }
+
+        let (manifest, reset_summary) = self.reset_team(team_id)?;
+        self.store.insert_action(
+            "team_teardown",
+            &format!(
+                "team_id={} cancelled_sessions={} released_slots={}",
+                manifest.team_id,
+                cancelled_sessions.len(),
+                released_slots.len()
+            ),
+        )?;
+
+        Ok((
+            manifest,
+            TeamTeardownResult {
+                cancelled_sessions,
+                released_slots,
+                reset_summary,
+            },
+        ))
+    }
+
+    pub fn delete_team(&self, team_id: &str) -> AwoResult<()> {
+        let plan = self.plan_team_teardown(team_id)?;
+        if !plan.bound_slots.is_empty() {
+            return Err(AwoError::invalid_state(format!(
+                "cannot delete team `{team_id}` while slot bindings remain (run `team teardown` first): {}",
+                plan.bound_slots.join(", ")
+            )));
+        }
+        if !plan.blocking_sessions.is_empty() || !plan.cancellable_sessions.is_empty() {
+            return Err(AwoError::invalid_state(format!(
+                "cannot delete team `{team_id}` while sessions remain attached (run `team teardown` first)"
+            )));
+        }
+
+        self.remove_team(team_id)?;
+        self.store
+            .insert_action("team_delete", &format!("team_id={team_id}"))?;
+        Ok(())
+    }
+
     pub fn remove_team(&self, team_id: &str) -> AwoResult<()> {
         Ok(remove_team_manifest(&self.config.paths, team_id)?)
     }
@@ -594,6 +680,49 @@ fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult<TeamTeardownPlan> {
+    let bound_slots = collect_bound_slot_ids(manifest);
+    let mut active_slots = BTreeSet::new();
+    let mut dirty_slots = BTreeSet::new();
+    let mut cancellable_sessions = BTreeSet::new();
+    let mut blocking_sessions = BTreeSet::new();
+
+    for slot_id in &bound_slots {
+        if let Some(slot) = store.get_slot(slot_id)? {
+            if slot.status != "released" {
+                active_slots.insert(slot_id.clone());
+            }
+            if slot.dirty {
+                dirty_slots.insert(slot_id.clone());
+            }
+        }
+
+        for session in store.list_sessions_for_slot(slot_id)? {
+            if session.is_terminal() {
+                continue;
+            }
+
+            if session.status == "running" && !session.is_supervised() {
+                blocking_sessions.insert(format!(
+                    "session `{}` on slot `{}` is a running one-shot launch and cannot be interrupted yet",
+                    session.id, slot_id
+                ));
+            } else {
+                cancellable_sessions.insert(session.id);
+            }
+        }
+    }
+
+    Ok(TeamTeardownPlan {
+        reset_summary: manifest.reset_summary(),
+        bound_slots,
+        active_slots: active_slots.into_iter().collect(),
+        dirty_slots: dirty_slots.into_iter().collect(),
+        cancellable_sessions: cancellable_sessions.into_iter().collect(),
+        blocking_sessions: blocking_sessions.into_iter().collect(),
+    })
 }
 
 fn reconcile_team_manifest_state(store: &Store, manifest: &mut TeamManifest) -> AwoResult<bool> {

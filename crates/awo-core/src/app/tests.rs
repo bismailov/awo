@@ -322,6 +322,7 @@ fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
         repo_id,
         slot_id: slot_id.clone(),
         runtime: "shell".to_string(),
+        supervisor: None,
         prompt: "echo done".to_string(),
         status: "completed".to_string(),
         read_only: false,
@@ -352,6 +353,7 @@ fn load_team_manifest_reconciles_failed_session_to_blocked() -> Result<()> {
         repo_id,
         slot_id,
         runtime: "shell".to_string(),
+        supervisor: None,
         prompt: "false".to_string(),
         status: "failed".to_string(),
         read_only: false,
@@ -390,6 +392,7 @@ fn load_team_manifest_clears_released_slot_bindings() -> Result<()> {
         repo_id,
         slot_id,
         runtime: "shell".to_string(),
+        supervisor: None,
         prompt: "echo done".to_string(),
         status: "completed".to_string(),
         read_only: false,
@@ -581,6 +584,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
         repo_id: repo_id.clone(),
         slot_id: slot.id.clone(),
         runtime: "shell".to_string(),
+        supervisor: None,
         prompt: "sleep 30".to_string(),
         status: "running".to_string(),
         read_only: false,
@@ -599,5 +603,131 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
     let _ = child.kill();
     let _ = child.wait();
     assert!(error.to_string().contains("session `sess-archive-running`"));
+    Ok(())
+}
+
+#[test]
+fn teardown_team_cancels_prepared_sessions_releases_slots_and_resets() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (_repo_id, slot_id) =
+        create_team_with_bound_slot(&mut core, "team-teardown", "team-teardown")?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-team-teardown".to_string(),
+        repo_id: core
+            .store
+            .get_slot(&slot_id)?
+            .context("missing slot")?
+            .repo_id,
+        slot_id: slot_id.clone(),
+        runtime: "shell".to_string(),
+        supervisor: None,
+        prompt: "echo hi".to_string(),
+        status: "prepared".to_string(),
+        read_only: false,
+        dry_run: true,
+        command_line: "sh -lc 'echo hi'".to_string(),
+        stdout_path: Some("/tmp/team-teardown.out.log".to_string()),
+        stderr_path: Some("/tmp/team-teardown.err.log".to_string()),
+        exit_code: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let (manifest, result) = core.teardown_team("team-teardown")?;
+    assert_eq!(manifest.status, crate::team::TeamStatus::Planning);
+    assert_eq!(
+        manifest.task("task-1").map(|task| task.state),
+        Some(TaskCardState::Todo)
+    );
+    assert_eq!(
+        result.cancelled_sessions,
+        vec!["sess-team-teardown".to_string()]
+    );
+    assert_eq!(result.released_slots, vec![slot_id.clone()]);
+    let slot = core
+        .store
+        .get_slot(&slot_id)?
+        .context("missing slot after teardown")?;
+    assert_eq!(slot.status, "released");
+    let session = core
+        .store
+        .get_session("sess-team-teardown")?
+        .context("missing session after teardown")?;
+    assert_eq!(session.status, "cancelled");
+    Ok(())
+}
+
+#[test]
+fn teardown_team_blocks_running_oneshot_sessions() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (_repo_id, slot_id) =
+        create_team_with_bound_slot(&mut core, "team-teardown-blocked", "team-teardown-blocked")?;
+    let mut child = ProcessCommand::new("sleep").arg("30").spawn()?;
+    let sessions_dir = core.paths().logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(
+        sessions_dir.join("sess-team-teardown-blocked.pid"),
+        child.id().to_string(),
+    )?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-team-teardown-blocked".to_string(),
+        repo_id: core
+            .store
+            .get_slot(&slot_id)?
+            .context("missing slot")?
+            .repo_id,
+        slot_id: slot_id.clone(),
+        runtime: "shell".to_string(),
+        supervisor: None,
+        prompt: "sleep 30".to_string(),
+        status: "running".to_string(),
+        read_only: false,
+        dry_run: false,
+        command_line: "sh -lc 'sleep 30'".to_string(),
+        stdout_path: Some("/tmp/team-teardown-blocked.out.log".to_string()),
+        stderr_path: Some("/tmp/team-teardown-blocked.err.log".to_string()),
+        exit_code: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let error = core
+        .teardown_team("team-teardown-blocked")
+        .expect_err("teardown should block on running oneshot");
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(error.to_string().contains("cannot be interrupted yet"));
+    Ok(())
+}
+
+#[test]
+fn delete_team_removes_manifest_once_bindings_are_gone() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-delete")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .find(|repo| repo.name == "team-delete")
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-delete",
+        "Delete a dormant team",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+    );
+    core.save_team_manifest(&manifest)?;
+
+    let manifest_path = crate::team::default_team_manifest_path(core.paths(), "team-delete");
+    assert!(manifest_path.exists());
+    core.delete_team("team-delete")?;
+    assert!(!manifest_path.exists());
     Ok(())
 }

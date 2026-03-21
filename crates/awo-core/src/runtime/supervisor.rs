@@ -27,6 +27,12 @@ pub(super) struct PreparedCommand {
 }
 
 impl SessionSupervisor {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Tmux => "tmux",
+        }
+    }
+
     pub(super) fn from_launch_mode(launch_mode: SessionLaunchMode) -> Result<Option<Self>> {
         match launch_mode {
             SessionLaunchMode::Oneshot => Ok(None),
@@ -37,6 +43,14 @@ impl SessionSupervisor {
     }
 
     pub(super) fn from_session(session: &SessionRecord) -> Option<Self> {
+        if let Some(supervisor) = session
+            .supervisor
+            .as_deref()
+            .and_then(SessionSupervisor::from_persisted_name)
+        {
+            return Some(supervisor);
+        }
+
         known_supervisors()
             .iter()
             .copied()
@@ -97,6 +111,13 @@ impl SessionSupervisor {
                         .as_deref()
                         .is_some_and(|path| path.ends_with(".pty.log"))
             }
+        }
+    }
+
+    fn from_persisted_name(value: &str) -> Option<Self> {
+        match value {
+            "tmux" => Some(Self::Tmux),
+            _ => None,
         }
     }
 }

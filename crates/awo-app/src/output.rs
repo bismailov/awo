@@ -2,7 +2,7 @@ use anyhow::Error;
 use awo_core::{
     AppSnapshot, CommandOutcome, ContextDoctorReport, Diagnostic, DomainEvent, RepoContext,
     RepoSkillCatalog, ReviewSummary, RuntimeCapabilityDescriptor, SkillDoctorReport, TeamManifest,
-    TeamTaskExecution,
+    TeamTaskExecution, TeamTeardownPlan, TeamTeardownResult,
 };
 use serde::Serialize;
 
@@ -218,13 +218,14 @@ pub fn print_sessions(snapshot: &AppSnapshot, repo_filter: Option<&str>) {
     println!("Sessions:");
     for session in sessions {
         println!(
-            "- {} [{}] slot={} status={} read_only={} dry_run={} exit={}",
+            "- {} [{}] slot={} status={} read_only={} dry_run={} supervisor={} exit={}",
             session.runtime,
             session.id,
             session.slot_id,
             session.status,
             session.read_only,
             session.dry_run,
+            session.supervisor.as_deref().unwrap_or("-"),
             session
                 .exit_code
                 .map(|code| code.to_string())
@@ -379,6 +380,69 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
             );
         }
     }
+}
+
+pub fn print_team_teardown_plan(team_id: &str, plan: &TeamTeardownPlan) {
+    println!("Team teardown preview for `{team_id}`:");
+    if !plan.reset_summary.non_todo_tasks.is_empty() {
+        println!("- tasks that will reset:");
+        for task in &plan.reset_summary.non_todo_tasks {
+            println!("  - {task}");
+        }
+    }
+    if !plan.reset_summary.bound_members.is_empty() {
+        println!(
+            "- members with slot bindings: {}",
+            plan.reset_summary.bound_members.join(", ")
+        );
+    }
+    if !plan.bound_slots.is_empty() {
+        println!("- bound slots: {}", plan.bound_slots.join(", "));
+    }
+    if !plan.active_slots.is_empty() {
+        println!(
+            "- active slots to release: {}",
+            plan.active_slots.join(", ")
+        );
+    }
+    if !plan.cancellable_sessions.is_empty() {
+        println!(
+            "- sessions to cancel: {}",
+            plan.cancellable_sessions.join(", ")
+        );
+    }
+    if !plan.dirty_slots.is_empty() {
+        println!("- blocking dirty slots: {}", plan.dirty_slots.join(", "));
+    }
+    if !plan.blocking_sessions.is_empty() {
+        println!("- blocking sessions:");
+        for session in &plan.blocking_sessions {
+            println!("  - {session}");
+        }
+    }
+    if !plan.requires_confirmation() {
+        println!("- nothing to teardown");
+    }
+}
+
+pub fn print_team_teardown_result(team_id: &str, result: &TeamTeardownResult) {
+    println!("Team `{team_id}` torn down to planning.");
+    println!(
+        "- cancelled sessions: {}",
+        if result.cancelled_sessions.is_empty() {
+            "-".to_string()
+        } else {
+            result.cancelled_sessions.join(", ")
+        }
+    );
+    println!(
+        "- released slots: {}",
+        if result.released_slots.is_empty() {
+            "-".to_string()
+        } else {
+            result.released_slots.join(", ")
+        }
+    );
 }
 
 pub fn print_team_task_execution(execution: &TeamTaskExecution) {

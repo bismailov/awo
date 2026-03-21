@@ -6,7 +6,8 @@ use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
     print_outcome, print_registered_repos, print_review, print_runtime_capabilities,
     print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
-    print_team_manifests, print_team_task_execution,
+    print_team_manifests, print_team_task_execution, print_team_teardown_plan,
+    print_team_teardown_result,
 };
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
@@ -559,6 +560,58 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             } else {
                 println!("Team `{}` reset to planning.", manifest.team_id);
                 print_team_manifest(&manifest);
+            }
+        }
+        TeamCommand::Teardown { team_id, force } => {
+            let plan = core.plan_team_teardown(&team_id)?;
+            if !force && plan.requires_confirmation() {
+                if output.json {
+                    print_json_response(&plan, None);
+                } else {
+                    print_team_teardown_plan(&team_id, &plan);
+                    println!("Pass --force to confirm.");
+                }
+                return Ok(());
+            }
+
+            let (manifest, result) = core.teardown_team(&team_id)?;
+            if output.json {
+                #[derive(Serialize)]
+                struct TeamTeardownResponse<'a> {
+                    manifest: &'a TeamManifest,
+                    result: &'a awo_core::TeamTeardownResult,
+                }
+
+                print_json_response(
+                    &TeamTeardownResponse {
+                        manifest: &manifest,
+                        result: &result,
+                    },
+                    None,
+                );
+            } else {
+                print_team_teardown_result(&team_id, &result);
+                print_team_manifest(&manifest);
+            }
+        }
+        TeamCommand::Delete { team_id } => {
+            core.delete_team(&team_id)?;
+            if output.json {
+                #[derive(Serialize)]
+                struct TeamDeleteResponse<'a> {
+                    team_id: &'a str,
+                    deleted: bool,
+                }
+
+                print_json_response(
+                    &TeamDeleteResponse {
+                        team_id: &team_id,
+                        deleted: true,
+                    },
+                    None,
+                );
+            } else {
+                println!("Deleted team manifest `{team_id}`.");
             }
         }
     }

@@ -478,6 +478,38 @@ pub struct TeamResetSummary {
     pub bound_members: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamTeardownPlan {
+    pub reset_summary: TeamResetSummary,
+    pub bound_slots: Vec<String>,
+    pub active_slots: Vec<String>,
+    pub dirty_slots: Vec<String>,
+    pub cancellable_sessions: Vec<String>,
+    pub blocking_sessions: Vec<String>,
+}
+
+impl TeamTeardownPlan {
+    pub fn has_blockers(&self) -> bool {
+        !self.dirty_slots.is_empty() || !self.blocking_sessions.is_empty()
+    }
+
+    pub fn requires_confirmation(&self) -> bool {
+        self.has_blockers()
+            || !self.bound_slots.is_empty()
+            || !self.active_slots.is_empty()
+            || !self.cancellable_sessions.is_empty()
+            || !self.reset_summary.non_todo_tasks.is_empty()
+            || !self.reset_summary.bound_members.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamTeardownResult {
+    pub cancelled_sessions: Vec<String>,
+    pub released_slots: Vec<String>,
+    pub reset_summary: TeamResetSummary,
+}
+
 pub fn starter_team_manifest(
     repo_id: &str,
     team_id: &str,
