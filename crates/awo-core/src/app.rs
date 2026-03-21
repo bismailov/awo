@@ -18,6 +18,7 @@ use crate::team::{
     remove_team_manifest, save_team_manifest,
 };
 use anyhow::Result;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -269,6 +270,33 @@ impl AppCore {
 
     pub fn archive_team(&self, team_id: &str) -> AwoResult<TeamManifest> {
         let mut guard = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        let mut blockers = guard.manifest().archive_blockers();
+        let bound_slot_ids = collect_bound_slot_ids(guard.manifest());
+        for slot_id in bound_slot_ids {
+            if let Some(slot) = self.store.get_slot(&slot_id)?
+                && slot.status != "released"
+            {
+                blockers.push(format!(
+                    "slot `{slot_id}` is still active with status `{}`",
+                    slot.status
+                ));
+            }
+
+            for session in self.store.list_sessions_for_slot(&slot_id)? {
+                if !session.is_terminal() {
+                    blockers.push(format!(
+                        "session `{}` for slot `{slot_id}` is still `{}`",
+                        session.id, session.status
+                    ));
+                }
+            }
+        }
+        if !blockers.is_empty() {
+            return Err(AwoError::invalid_state(format!(
+                "cannot archive team `{team_id}`: {}",
+                blockers.join("; ")
+            )));
+        }
         guard.manifest_mut().archive()?;
         guard.save()?;
         let manifest = guard.into_manifest();
@@ -515,6 +543,22 @@ impl AppCore {
 
         Ok((manifest, slot_outcome, session_outcome, execution))
     }
+}
+
+fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
+    std::iter::once(manifest.lead.slot_id.as_deref())
+        .chain(
+            manifest
+                .members
+                .iter()
+                .map(|member| member.slot_id.as_deref()),
+        )
+        .chain(manifest.tasks.iter().map(|task| task.slot_id.as_deref()))
+        .flatten()
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]

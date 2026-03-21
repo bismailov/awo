@@ -1,7 +1,7 @@
 use super::*;
 use crate::commands::Command;
 use crate::config::AppConfig;
-use crate::runtime::SessionLaunchMode;
+use crate::runtime::{SessionLaunchMode, SessionRecord};
 use crate::team::{TaskCard, TaskCardState, TeamExecutionMode, TeamMember, starter_team_manifest};
 use anyhow::Context;
 use std::fs;
@@ -228,5 +228,185 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         .map(|slot| slot.slot_path)
         .context("missing slot summary")?;
     assert!(Path::new(&slot_path).join("TEAM_TASK.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn archive_team_blocks_active_bound_slot() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-archive-slot")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-archive-slot",
+        "Archive with slot safety",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-archive-slot",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-archive-slot",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Ready for archive".to_string(),
+            summary: "Task already finished.".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            deliverable: "A finished task".to_string(),
+            verification: vec!["cargo test".to_string()],
+            depends_on: Vec::new(),
+            state: TaskCardState::Done,
+        },
+    )?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "archive-worker".to_string(),
+        strategy: crate::slot::SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .store
+        .list_slots(Some(&repo_id))?
+        .into_iter()
+        .next()
+        .context("missing acquired slot")?;
+    core.assign_team_member_slot("team-archive-slot", "worker-a", &slot.id)?;
+    core.bind_team_task_slot("team-archive-slot", "task-1", &slot.id)?;
+
+    let error = core
+        .archive_team("team-archive-slot")
+        .expect_err("archive should block");
+    assert!(error.to_string().contains("still active"));
+    Ok(())
+}
+
+#[test]
+fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-archive-session")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-archive-session",
+        "Archive with session safety",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-archive-session",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-archive-session",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Ready for archive".to_string(),
+            summary: "Task already finished.".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            deliverable: "A finished task".to_string(),
+            verification: vec!["cargo test".to_string()],
+            depends_on: Vec::new(),
+            state: TaskCardState::Done,
+        },
+    )?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "archive-running".to_string(),
+        strategy: crate::slot::SlotStrategy::Fresh,
+    })?;
+    let mut slot = core
+        .store
+        .list_slots(Some(&repo_id))?
+        .into_iter()
+        .next()
+        .context("missing acquired slot")?;
+    slot.status = "released".to_string();
+    core.store.upsert_slot(&slot)?;
+    core.assign_team_member_slot("team-archive-session", "worker-a", &slot.id)?;
+    core.bind_team_task_slot("team-archive-session", "task-1", &slot.id)?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-archive-running".to_string(),
+        repo_id: repo_id.clone(),
+        slot_id: slot.id.clone(),
+        runtime: "shell".to_string(),
+        prompt: "sleep 30".to_string(),
+        status: "running".to_string(),
+        read_only: false,
+        dry_run: false,
+        command_line: "sh -lc 'sleep 30'".to_string(),
+        stdout_path: Some("/tmp/archive-running.out.log".to_string()),
+        stderr_path: Some("/tmp/archive-running.err.log".to_string()),
+        exit_code: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let error = core
+        .archive_team("team-archive-session")
+        .expect_err("archive should block");
+    assert!(error.to_string().contains("session `sess-archive-running`"));
     Ok(())
 }

@@ -520,8 +520,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
         TeamCommand::Reset { team_id, force } => {
             let preview = core.load_team_manifest(&team_id)?;
             let summary = preview.reset_summary();
-            if !force && (!summary.non_todo_tasks.is_empty() || !summary.bound_members.is_empty())
-            {
+            if !force && (!summary.non_todo_tasks.is_empty() || !summary.bound_members.is_empty()) {
                 #[derive(Serialize)]
                 struct ResetPreview<'a> {
                     team_id: &'a str,

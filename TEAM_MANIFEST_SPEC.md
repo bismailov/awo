@@ -131,6 +131,8 @@ That keeps parallel work explicit and makes merge/review safer.
 - All tasks must be in a terminal state (`done` or `blocked`).
 - Tasks in `todo`, `in_progress`, or `review` block archival.
 - A team that is already archived cannot be archived again.
+- Bound slots that are still active block archival.
+- Non-terminal sessions attached to bound slots block archival.
 
 Archive is an explicit operator action. It signals that the team's work is complete (or intentionally abandoned where blocked) and the manifest should no longer be actively used.
 
