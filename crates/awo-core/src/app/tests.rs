@@ -231,6 +231,188 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
     Ok(())
 }
 
+fn create_team_with_bound_slot(
+    core: &mut AppCore,
+    repo_name: &str,
+    team_id: &str,
+) -> Result<(String, String)> {
+    let repo_dir = create_repo(&core.paths().data_dir, repo_name)?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .find(|repo| repo.name == repo_name)
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        team_id,
+        "Exercise team reconciliation",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        team_id,
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+        },
+    )?;
+    core.add_team_task(
+        team_id,
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Reconcile task".to_string(),
+            summary: "Run reconciliation.".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            deliverable: "A reconciled task".to_string(),
+            verification: vec!["cargo test".to_string()],
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+        },
+    )?;
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: format!("{team_id}-slot"),
+        strategy: crate::slot::SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .store
+        .list_slots(Some(&repo_id))?
+        .into_iter()
+        .find(|slot| slot.task_name == format!("{team_id}-slot"))
+        .context("missing acquired slot")?;
+    core.assign_team_member_slot(team_id, "worker-a", &slot.id)?;
+    core.bind_team_task_slot(team_id, "task-1", &slot.id)?;
+    core.set_team_task_state(team_id, "task-1", TaskCardState::InProgress)?;
+    Ok((repo_id, slot.id))
+}
+
+#[test]
+fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (repo_id, slot_id) = create_team_with_bound_slot(
+        &mut core,
+        "team-reconcile-complete",
+        "team-reconcile-complete",
+    )?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-reconcile-complete".to_string(),
+        repo_id,
+        slot_id: slot_id.clone(),
+        runtime: "shell".to_string(),
+        prompt: "echo done".to_string(),
+        status: "completed".to_string(),
+        read_only: false,
+        dry_run: false,
+        command_line: "sh -lc 'echo done'".to_string(),
+        stdout_path: Some("/tmp/reconcile-complete.out.log".to_string()),
+        stderr_path: Some("/tmp/reconcile-complete.err.log".to_string()),
+        exit_code: Some(0),
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let manifest = core.load_team_manifest("team-reconcile-complete")?;
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.state, TaskCardState::Review);
+    assert_eq!(manifest.status, crate::team::TeamStatus::Running);
+    assert_eq!(task.slot_id.as_deref(), Some(slot_id.as_str()));
+    Ok(())
+}
+
+#[test]
+fn load_team_manifest_reconciles_failed_session_to_blocked() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (repo_id, slot_id) =
+        create_team_with_bound_slot(&mut core, "team-reconcile-failed", "team-reconcile-failed")?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-reconcile-failed".to_string(),
+        repo_id,
+        slot_id,
+        runtime: "shell".to_string(),
+        prompt: "false".to_string(),
+        status: "failed".to_string(),
+        read_only: false,
+        dry_run: false,
+        command_line: "sh -lc 'false'".to_string(),
+        stdout_path: Some("/tmp/reconcile-failed.out.log".to_string()),
+        stderr_path: Some("/tmp/reconcile-failed.err.log".to_string()),
+        exit_code: Some(1),
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let manifest = core.load_team_manifest("team-reconcile-failed")?;
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.state, TaskCardState::Blocked);
+    assert_eq!(manifest.status, crate::team::TeamStatus::Blocked);
+    Ok(())
+}
+
+#[test]
+fn load_team_manifest_clears_released_slot_bindings() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (repo_id, slot_id) = create_team_with_bound_slot(
+        &mut core,
+        "team-reconcile-release",
+        "team-reconcile-release",
+    )?;
+    let mut slot = core
+        .store
+        .get_slot(&slot_id)?
+        .context("missing acquired slot")?;
+    slot.status = "released".to_string();
+    core.store.upsert_slot(&slot)?;
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-reconcile-release".to_string(),
+        repo_id,
+        slot_id,
+        runtime: "shell".to_string(),
+        prompt: "echo done".to_string(),
+        status: "completed".to_string(),
+        read_only: false,
+        dry_run: false,
+        command_line: "sh -lc 'echo done'".to_string(),
+        stdout_path: Some("/tmp/reconcile-release.out.log".to_string()),
+        stderr_path: Some("/tmp/reconcile-release.err.log".to_string()),
+        exit_code: Some(0),
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let manifest = core.load_team_manifest("team-reconcile-release")?;
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.state, TaskCardState::Review);
+    assert!(task.slot_id.is_none());
+    assert!(task.branch_name.is_none());
+    let member = manifest.member("worker-a").context("missing member")?;
+    assert!(member.slot_id.is_none());
+    assert!(member.branch_name.is_none());
+    Ok(())
+}
+
 #[test]
 fn archive_team_blocks_active_bound_slot() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
@@ -387,6 +569,13 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
     core.store.upsert_slot(&slot)?;
     core.assign_team_member_slot("team-archive-session", "worker-a", &slot.id)?;
     core.bind_team_task_slot("team-archive-session", "task-1", &slot.id)?;
+    let mut child = ProcessCommand::new("sleep").arg("30").spawn()?;
+    let sessions_dir = core.paths().logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(
+        sessions_dir.join("sess-archive-running.pid"),
+        child.id().to_string(),
+    )?;
     core.store.upsert_session(&SessionRecord {
         id: "sess-archive-running".to_string(),
         repo_id: repo_id.clone(),
@@ -407,6 +596,8 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
     let error = core
         .archive_team("team-archive-session")
         .expect_err("archive should block");
+    let _ = child.kill();
+    let _ = child.wait();
     assert!(error.to_string().contains("session `sess-archive-running`"));
     Ok(())
 }

@@ -14,8 +14,8 @@ use crate::snapshot::AppSnapshot;
 use crate::store::Store;
 use crate::team::{
     TaskCard, TaskCardState, TeamManifest, TeamManifestGuard, TeamMember, TeamResetSummary,
-    TeamTaskExecution, TeamTaskStartOptions, list_team_manifest_paths, load_team_manifest,
-    remove_team_manifest, save_team_manifest,
+    TeamTaskExecution, TeamTaskStartOptions, list_team_manifest_paths, remove_team_manifest,
+    save_team_manifest,
 };
 use anyhow::Result;
 use std::collections::BTreeSet;
@@ -57,8 +57,8 @@ impl AppCore {
     }
 
     pub fn snapshot(&self) -> AwoResult<AppSnapshot> {
-        let runner = CommandRunner::new(&self.config, &self.store);
-        runner.sync_runtime_state(None)?;
+        self.sync_runtime_state(None)?;
+        let _ = self.reconcile_all_team_manifests()?;
         Ok(AppSnapshot::load(&self.config, &self.store)?)
     }
 
@@ -132,15 +132,13 @@ impl AppCore {
     }
 
     pub fn load_team_manifest(&self, team_id: &str) -> AwoResult<TeamManifest> {
-        let path = crate::team::default_team_manifest_path(&self.config.paths, team_id);
-        Ok(load_team_manifest(&path)?)
+        self.sync_runtime_state(None)?;
+        self.reconcile_team_manifest(team_id)
     }
 
     pub fn list_team_manifests(&self) -> AwoResult<Vec<TeamManifest>> {
-        list_team_manifest_paths(&self.config.paths)?
-            .into_iter()
-            .map(|path| load_team_manifest(&path).map_err(Into::into))
-            .collect()
+        self.sync_runtime_state(None)?;
+        self.reconcile_all_team_manifests()
     }
 
     pub fn add_team_member(&self, team_id: &str, member: TeamMember) -> AwoResult<TeamManifest> {
@@ -269,7 +267,12 @@ impl AppCore {
     }
 
     pub fn archive_team(&self, team_id: &str) -> AwoResult<TeamManifest> {
+        self.sync_runtime_state(None)?;
         let mut guard = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        let changed = reconcile_team_manifest_state(&self.store, guard.manifest_mut())?;
+        if changed {
+            guard.save()?;
+        }
         let mut blockers = guard.manifest().archive_blockers();
         let bound_slot_ids = collect_bound_slot_ids(guard.manifest());
         for slot_id in bound_slot_ids {
@@ -543,6 +546,38 @@ impl AppCore {
 
         Ok((manifest, slot_outcome, session_outcome, execution))
     }
+
+    fn sync_runtime_state(&self, repo_id: Option<&str>) -> AwoResult<()> {
+        let runner = CommandRunner::new(&self.config, &self.store);
+        runner.sync_runtime_state(repo_id)?;
+        Ok(())
+    }
+
+    fn reconcile_team_manifest(&self, team_id: &str) -> AwoResult<TeamManifest> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        if reconcile_team_manifest_state(&self.store, guard.manifest_mut())? {
+            guard.save()?;
+        }
+        Ok(guard.into_manifest())
+    }
+
+    fn reconcile_all_team_manifests(&self) -> AwoResult<Vec<TeamManifest>> {
+        list_team_manifest_paths(&self.config.paths)?
+            .into_iter()
+            .map(|path| {
+                let team_id = path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| {
+                        AwoError::invalid_state(format!(
+                            "team manifest path `{}` has no valid team id stem",
+                            path.display()
+                        ))
+                    })?;
+                self.reconcile_team_manifest(team_id)
+            })
+            .collect()
+    }
 }
 
 fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
@@ -559,6 +594,122 @@ fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn reconcile_team_manifest_state(store: &Store, manifest: &mut TeamManifest) -> AwoResult<bool> {
+    if manifest.status.as_str() == "archived" {
+        return Ok(false);
+    }
+
+    let mut changed = false;
+
+    for task in &mut manifest.tasks {
+        if task.slot_id.is_none() {
+            if task.branch_name.take().is_some() {
+                changed = true;
+            }
+            continue;
+        }
+
+        let slot_id = task.slot_id.clone().unwrap_or_default();
+        let slot = store.get_slot(&slot_id)?;
+        let sessions = store.list_sessions_for_slot(&slot_id)?;
+        let has_running_session = sessions.iter().any(|session| !session.is_terminal());
+        let slot_missing_or_released = slot
+            .as_ref()
+            .is_none_or(|slot| slot.status.as_str() == "released");
+
+        if has_running_session {
+            if task.state != TaskCardState::InProgress {
+                task.state = TaskCardState::InProgress;
+                changed = true;
+            }
+            continue;
+        }
+
+        if let Some(session) = sessions.iter().find(|session| session.is_terminal()) {
+            match session.status.as_str() {
+                "completed" => {
+                    if !matches!(task.state, TaskCardState::Done | TaskCardState::Review) {
+                        task.state = TaskCardState::Review;
+                        changed = true;
+                    }
+                }
+                "failed" | "cancelled" => {
+                    if task.state != TaskCardState::Blocked {
+                        task.state = TaskCardState::Blocked;
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        } else if task.state == TaskCardState::InProgress && slot_missing_or_released {
+            task.state = TaskCardState::Blocked;
+            changed = true;
+        }
+
+        if slot_missing_or_released && !has_running_session {
+            if task.slot_id.take().is_some() {
+                changed = true;
+            }
+            if task.branch_name.take().is_some() {
+                changed = true;
+            }
+        }
+    }
+
+    let task_bound_slot_ids = manifest
+        .tasks
+        .iter()
+        .filter_map(|task| task.slot_id.as_deref())
+        .collect::<BTreeSet<_>>();
+
+    if should_clear_member_slot_binding(store, &task_bound_slot_ids, &manifest.lead)? {
+        manifest.lead.slot_id = None;
+        manifest.lead.branch_name = None;
+        changed = true;
+    }
+
+    for member in &mut manifest.members {
+        if should_clear_member_slot_binding(store, &task_bound_slot_ids, member)? {
+            member.slot_id = None;
+            member.branch_name = None;
+            changed = true;
+        }
+    }
+
+    if changed {
+        manifest.refresh_status();
+        manifest.validate()?;
+    }
+
+    Ok(changed)
+}
+
+fn should_clear_member_slot_binding(
+    store: &Store,
+    task_bound_slot_ids: &BTreeSet<&str>,
+    member: &TeamMember,
+) -> AwoResult<bool> {
+    let Some(slot_id) = member.slot_id.as_deref() else {
+        return Ok(member.branch_name.is_some());
+    };
+
+    if !task_bound_slot_ids.contains(slot_id) {
+        return Ok(true);
+    }
+
+    let has_running_session = store
+        .list_sessions_for_slot(slot_id)?
+        .iter()
+        .any(|session| !session.is_terminal());
+    if has_running_session {
+        return Ok(false);
+    }
+
+    Ok(store
+        .get_slot(slot_id)?
+        .is_none_or(|slot| slot.status.as_str() == "released"))
 }
 
 #[cfg(test)]
