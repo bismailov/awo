@@ -129,6 +129,17 @@ pub enum TeamCommand {
         #[command(subcommand)]
         command: TeamTaskCommand,
     },
+    /// Archive a team whose tasks have all reached terminal states.
+    Archive {
+        team_id: String,
+    },
+    /// Reset a team to planning state, clearing all task progress and slot bindings.
+    Reset {
+        team_id: String,
+        /// Skip confirmation and proceed even if work will be discarded.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

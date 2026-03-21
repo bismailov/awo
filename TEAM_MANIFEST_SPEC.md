@@ -121,6 +121,48 @@ Every task card should define:
 
 That keeps parallel work explicit and makes merge/review safer.
 
+## Team Lifecycle: Archive and Reset
+
+### Archive
+
+`awo team archive <team_id>` transitions a team to the `archived` status.
+
+**Safety requirements:**
+- All tasks must be in a terminal state (`done` or `blocked`).
+- Tasks in `todo`, `in_progress`, or `review` block archival.
+- A team that is already archived cannot be archived again.
+
+Archive is an explicit operator action. It signals that the team's work is complete (or intentionally abandoned where blocked) and the manifest should no longer be actively used.
+
+An archived manifest is preserved on disk for auditability. Use `team reset` followed by re-planning to revive an archived team.
+
+### Reset
+
+`awo team reset <team_id> [--force]` returns a team to the `planning` state.
+
+**What reset does:**
+- Sets all task states back to `todo`.
+- Clears all slot and branch bindings on tasks, members, and the lead.
+- Sets team status to `planning`.
+
+**Safety:**
+- Without `--force`, reset previews what will be discarded (non-todo tasks, bound members) and asks the operator to confirm.
+- With `--force`, reset proceeds immediately.
+
+Reset makes alpha-stage cleanup practical: when a team run goes sideways the operator can wipe slate and re-plan without deleting the team definition, members, or task structure.
+
+**Important:** Reset does not release worktree slots or cancel running sessions. The operator should handle those independently via `awo slot release` and `awo session cancel` before or after reset.
+
+### Status Values
+
+| Status     | Meaning                                           |
+|------------|---------------------------------------------------|
+| `planning` | No tasks started (initial or post-reset)          |
+| `running`  | Some tasks in progress                            |
+| `blocked`  | Some tasks blocked                                |
+| `complete` | All tasks done                                    |
+| `archived` | Operator has explicitly archived the team         |
+
 ## Recommendation
 
 Use the single-window controller as the product default, with background agents and structured ownership. Let runtime-native panes or team UIs remain optional views, not the core organizing principle.

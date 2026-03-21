@@ -12,9 +12,9 @@ use crate::tui::run_tui;
 use anyhow::{Result, bail};
 use awo_core::{
     AppCore, Command, RuntimeKind, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy,
-    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamTaskStartOptions,
-    all_runtime_capabilities, default_team_manifest_path, runtime_capabilities,
-    starter_team_manifest,
+    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
+    TeamTaskStartOptions, all_runtime_capabilities, default_team_manifest_path,
+    runtime_capabilities, starter_team_manifest,
 };
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
@@ -508,6 +508,60 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 }
             }
         },
+        TeamCommand::Archive { team_id } => {
+            let manifest = core.archive_team(&team_id)?;
+            if output.json {
+                print_json_response(&manifest, None);
+            } else {
+                println!("Team `{}` archived.", manifest.team_id);
+                print_team_manifest(&manifest);
+            }
+        }
+        TeamCommand::Reset { team_id, force } => {
+            let preview = core.load_team_manifest(&team_id)?;
+            let summary = preview.reset_summary();
+            if !force && (!summary.non_todo_tasks.is_empty() || !summary.bound_members.is_empty())
+            {
+                #[derive(Serialize)]
+                struct ResetPreview<'a> {
+                    team_id: &'a str,
+                    summary: &'a TeamResetSummary,
+                }
+
+                if output.json {
+                    print_json_response(
+                        &ResetPreview {
+                            team_id: &team_id,
+                            summary: &summary,
+                        },
+                        None,
+                    );
+                } else {
+                    println!("Reset would discard the following state:");
+                    if !summary.non_todo_tasks.is_empty() {
+                        println!("- tasks not in todo:");
+                        for t in &summary.non_todo_tasks {
+                            println!("  - {t}");
+                        }
+                    }
+                    if !summary.bound_members.is_empty() {
+                        println!(
+                            "- members with slot bindings: {}",
+                            summary.bound_members.join(", ")
+                        );
+                    }
+                    println!("Pass --force to confirm.");
+                }
+                return Ok(());
+            }
+            let (manifest, _summary) = core.reset_team(&team_id)?;
+            if output.json {
+                print_json_response(&manifest, None);
+            } else {
+                println!("Team `{}` reset to planning.", manifest.team_id);
+                print_team_manifest(&manifest);
+            }
+        }
     }
 
     Ok(())

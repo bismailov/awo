@@ -13,8 +13,9 @@ use crate::slot::SlotStrategy;
 use crate::snapshot::AppSnapshot;
 use crate::store::Store;
 use crate::team::{
-    TaskCard, TaskCardState, TeamManifest, TeamManifestGuard, TeamMember, TeamTaskExecution,
-    TeamTaskStartOptions, list_team_manifest_paths, load_team_manifest, save_team_manifest,
+    TaskCard, TaskCardState, TeamManifest, TeamManifestGuard, TeamMember, TeamResetSummary,
+    TeamTaskExecution, TeamTaskStartOptions, list_team_manifest_paths, load_team_manifest,
+    remove_team_manifest, save_team_manifest,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -264,6 +265,31 @@ impl AppCore {
             ),
         )?;
         Ok(manifest)
+    }
+
+    pub fn archive_team(&self, team_id: &str) -> AwoResult<TeamManifest> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        guard.manifest_mut().archive()?;
+        guard.save()?;
+        let manifest = guard.into_manifest();
+        self.store
+            .insert_action("team_archive", &format!("team_id={}", manifest.team_id))?;
+        Ok(manifest)
+    }
+
+    pub fn reset_team(&self, team_id: &str) -> AwoResult<(TeamManifest, TeamResetSummary)> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        let summary = guard.manifest().reset_summary();
+        guard.manifest_mut().reset();
+        guard.save()?;
+        let manifest = guard.into_manifest();
+        self.store
+            .insert_action("team_reset", &format!("team_id={}", manifest.team_id))?;
+        Ok((manifest, summary))
+    }
+
+    pub fn remove_team(&self, team_id: &str) -> AwoResult<()> {
+        Ok(remove_team_manifest(&self.config.paths, team_id)?)
     }
 
     pub fn start_team_task(

@@ -215,3 +215,181 @@ fn concurrent_manifest_mutations_preserve_all_members() -> Result<()> {
     assert!(loaded.member("worker-b").is_some());
     Ok(())
 }
+
+// ── Archive tests ──────────────────────────────────────────────────
+
+#[test]
+fn archive_succeeds_when_all_tasks_done() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Done;
+    manifest.refresh_status();
+    assert!(manifest.can_archive());
+    manifest.archive()?;
+    assert_eq!(manifest.status, TeamStatus::Archived);
+    Ok(())
+}
+
+#[test]
+fn archive_succeeds_when_tasks_done_or_blocked() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Blocked;
+    assert!(manifest.can_archive());
+    manifest.archive()?;
+    assert_eq!(manifest.status, TeamStatus::Archived);
+    Ok(())
+}
+
+#[test]
+fn archive_refuses_in_progress_task() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::InProgress;
+    assert!(!manifest.can_archive());
+    let blockers = manifest.archive_blockers();
+    assert_eq!(blockers.len(), 1);
+    assert!(blockers[0].contains("in_progress"));
+    assert!(manifest.archive().is_err());
+}
+
+#[test]
+fn archive_refuses_review_task() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Review;
+    assert!(!manifest.can_archive());
+    assert!(manifest.archive().is_err());
+}
+
+#[test]
+fn archive_refuses_todo_task() {
+    let mut manifest = sample_manifest();
+    // sample_manifest starts with Todo
+    assert!(!manifest.can_archive());
+    assert!(manifest.archive().is_err());
+}
+
+#[test]
+fn archive_refuses_already_archived() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Done;
+    manifest.status = TeamStatus::Archived;
+    assert!(!manifest.can_archive());
+    let blockers = manifest.archive_blockers();
+    assert!(blockers.iter().any(|b| b.contains("already archived")));
+}
+
+#[test]
+fn archive_empty_task_list_succeeds() -> Result<()> {
+    let mut manifest = starter_team_manifest(
+        "repo-1",
+        "team-empty",
+        "Test empty archive",
+        Some("claude"),
+        None,
+        TeamExecutionMode::ExternalSlots,
+    );
+    assert!(manifest.can_archive());
+    manifest.archive()?;
+    assert_eq!(manifest.status, TeamStatus::Archived);
+    Ok(())
+}
+
+// ── Reset tests ────────────────────────────────────────────────────
+
+#[test]
+fn reset_clears_all_task_state_and_bindings() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::InProgress;
+    manifest.tasks[0].slot_id = Some("slot-1".to_string());
+    manifest.tasks[0].branch_name = Some("awo/task-1".to_string());
+    manifest.members[0].slot_id = Some("slot-1".to_string());
+    manifest.members[0].branch_name = Some("awo/worker-a".to_string());
+    manifest.lead.slot_id = Some("slot-lead".to_string());
+    manifest.lead.branch_name = Some("awo/lead".to_string());
+
+    manifest.reset();
+
+    assert_eq!(manifest.status, TeamStatus::Planning);
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
+    assert!(manifest.tasks[0].slot_id.is_none());
+    assert!(manifest.tasks[0].branch_name.is_none());
+    assert!(manifest.members[0].slot_id.is_none());
+    assert!(manifest.members[0].branch_name.is_none());
+    assert!(manifest.lead.slot_id.is_none());
+    assert!(manifest.lead.branch_name.is_none());
+}
+
+#[test]
+fn reset_summary_reports_non_todo_tasks_and_bound_members() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Review;
+    manifest.members[0].slot_id = Some("slot-1".to_string());
+    manifest.lead.slot_id = Some("slot-lead".to_string());
+
+    let summary = manifest.reset_summary();
+    assert_eq!(summary.non_todo_tasks.len(), 1);
+    assert!(summary.non_todo_tasks[0].contains("task-1"));
+    assert!(summary.non_todo_tasks[0].contains("review"));
+    assert_eq!(summary.bound_members.len(), 2); // lead + worker-a
+    assert!(summary.bound_members.contains(&"lead".to_string()));
+    assert!(summary.bound_members.contains(&"worker-a".to_string()));
+}
+
+#[test]
+fn reset_summary_empty_when_clean() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Todo;
+    manifest.tasks[0].slot_id = None;
+    manifest.tasks[0].branch_name = None;
+    manifest.members[0].slot_id = None;
+    manifest.members[0].branch_name = None;
+
+    let summary = manifest.reset_summary();
+    assert!(summary.non_todo_tasks.is_empty());
+    assert!(summary.bound_members.is_empty());
+}
+
+#[test]
+fn reset_archived_team_returns_to_planning() {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Done;
+    manifest.status = TeamStatus::Archived;
+
+    manifest.reset();
+
+    assert_eq!(manifest.status, TeamStatus::Planning);
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
+}
+
+// ── Storage remove test ────────────────────────────────────────────
+
+#[test]
+fn remove_team_manifest_deletes_file() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let manifest = sample_manifest();
+    let path = save_team_manifest(&paths, &manifest)?;
+    assert!(path.exists());
+
+    remove_team_manifest(&paths, &manifest.team_id)?;
+    assert!(!path.exists());
+
+    let manifests = list_team_manifest_paths(&paths)?;
+    assert!(manifests.is_empty());
+    Ok(())
+}
+
+// ── Archived manifest round-trip through TOML ──────────────────────
+
+#[test]
+fn archived_status_survives_toml_roundtrip() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Done;
+    manifest.refresh_status();
+    manifest.archive()?;
+
+    let path = save_team_manifest(&paths, &manifest)?;
+    let loaded = load_team_manifest(&path)?;
+    assert_eq!(loaded.status, TeamStatus::Archived);
+    Ok(())
+}

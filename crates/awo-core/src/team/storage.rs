@@ -121,6 +121,25 @@ pub fn load_team_manifest(path: &Path) -> Result<TeamManifest> {
     read_team_manifest_unlocked(path)
 }
 
+pub fn remove_team_manifest(paths: &AppPaths, team_id: &str) -> Result<()> {
+    let path = default_team_manifest_path(paths, team_id);
+    let lock = open_team_manifest_lock(&path)?;
+    lock.lock_exclusive().with_context(|| {
+        format!(
+            "failed to acquire exclusive lock for team manifest at {}",
+            path.display()
+        )
+    })?;
+    if path.exists() {
+        fs::remove_file(&path)
+            .with_context(|| format!("failed to remove team manifest at {}", path.display()))?;
+    }
+    let lock_path = team_manifest_lock_path(&path);
+    // Best-effort lock file cleanup — not critical if it fails.
+    let _ = fs::remove_file(&lock_path);
+    Ok(())
+}
+
 pub fn list_team_manifest_paths(paths: &AppPaths) -> Result<Vec<PathBuf>> {
     if !paths.teams_dir.exists() {
         return Ok(Vec::new());

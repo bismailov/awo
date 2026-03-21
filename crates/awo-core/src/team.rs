@@ -6,7 +6,7 @@ mod storage;
 
 pub use storage::{
     TeamManifestGuard, default_team_manifest_path, list_team_manifest_paths, load_team_manifest,
-    save_team_manifest,
+    remove_team_manifest, save_team_manifest,
 };
 
 #[derive(
@@ -36,6 +36,7 @@ pub enum TeamStatus {
     Running,
     Blocked,
     Complete,
+    Archived,
 }
 
 impl TeamStatus {
@@ -289,6 +290,9 @@ impl TeamManifest {
     }
 
     pub fn refresh_status(&mut self) {
+        if self.status == TeamStatus::Archived {
+            return;
+        }
         self.status = if self.tasks.is_empty() {
             TeamStatus::Planning
         } else if self
@@ -379,6 +383,99 @@ impl TeamManifest {
 
         Ok(lines.join("\n"))
     }
+
+    /// Returns a list of reasons why this team cannot be archived, or an empty
+    /// vec when archive is safe. Archive requires all tasks to be in a terminal
+    /// state (Done or Blocked) and the team must not already be archived.
+    pub fn archive_blockers(&self) -> Vec<String> {
+        let mut blockers = Vec::new();
+        if self.status == TeamStatus::Archived {
+            blockers.push("team is already archived".to_string());
+        }
+        for task in &self.tasks {
+            match task.state {
+                TaskCardState::Done => {}
+                TaskCardState::Todo | TaskCardState::InProgress | TaskCardState::Review => {
+                    blockers.push(format!(
+                        "task `{}` is in non-terminal state `{}`",
+                        task.task_id, task.state
+                    ));
+                }
+                TaskCardState::Blocked => {
+                    // Blocked is terminal for archive purposes — the operator
+                    // is explicitly choosing to shelve work that could not proceed.
+                }
+            }
+        }
+        blockers
+    }
+
+    /// Returns true when archive is safe (no blockers).
+    pub fn can_archive(&self) -> bool {
+        self.archive_blockers().is_empty()
+    }
+
+    /// Transition the team to `Archived`. Fails if `can_archive()` is false.
+    pub fn archive(&mut self) -> Result<()> {
+        let blockers = self.archive_blockers();
+        if !blockers.is_empty() {
+            anyhow::bail!(
+                "cannot archive team `{}`: {}",
+                self.team_id,
+                blockers.join("; ")
+            );
+        }
+        self.status = TeamStatus::Archived;
+        Ok(())
+    }
+
+    /// Returns a summary of what reset will discard so the operator can
+    /// make an informed decision. Lists tasks that are not in `Todo` state
+    /// and members that have bound slots.
+    pub fn reset_summary(&self) -> TeamResetSummary {
+        let non_todo_tasks: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|t| t.state != TaskCardState::Todo)
+            .map(|t| format!("{} ({})", t.task_id, t.state))
+            .collect();
+        let bound_members: Vec<String> = std::iter::once(&self.lead)
+            .chain(self.members.iter())
+            .filter(|m| m.slot_id.is_some())
+            .map(|m| m.member_id.clone())
+            .collect();
+        TeamResetSummary {
+            non_todo_tasks,
+            bound_members,
+        }
+    }
+
+    /// Reset the team to planning state: all task states become `Todo`, all
+    /// slot/branch bindings on tasks and members are cleared, and team status
+    /// returns to `Planning`. This makes alpha-stage cleanup practical without
+    /// hiding risk — the caller should present `reset_summary()` first.
+    pub fn reset(&mut self) {
+        for task in &mut self.tasks {
+            task.state = TaskCardState::Todo;
+            task.slot_id = None;
+            task.branch_name = None;
+        }
+        self.lead.slot_id = None;
+        self.lead.branch_name = None;
+        for member in &mut self.members {
+            member.slot_id = None;
+            member.branch_name = None;
+        }
+        self.status = TeamStatus::Planning;
+    }
+}
+
+/// Summary of what a reset would discard, presented to the operator before
+/// confirming.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamResetSummary {
+    pub non_todo_tasks: Vec<String>,
+    pub bound_members: Vec<String>,
 }
 
 pub fn starter_team_manifest(

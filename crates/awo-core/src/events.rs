@@ -94,6 +94,14 @@ pub enum DomainEvent {
         dirty: usize,
         stale: usize,
     },
+    TeamArchived {
+        team_id: String,
+    },
+    TeamReset {
+        team_id: String,
+        tasks_reset: usize,
+        slots_unbound: usize,
+    },
 }
 
 impl DomainEvent {
@@ -201,6 +209,18 @@ impl DomainEvent {
             Self::SessionListLoaded { count } => format!("Loaded {count} session(s)."),
             Self::ReviewStatusLoaded { dirty, stale } => {
                 format!("Review status: {dirty} dirty slot(s), {stale} stale slot(s)")
+            }
+            Self::TeamArchived { team_id } => {
+                format!("Team `{team_id}` archived")
+            }
+            Self::TeamReset {
+                team_id,
+                tasks_reset,
+                slots_unbound,
+            } => {
+                format!(
+                    "Team `{team_id}` reset to planning: {tasks_reset} task(s) reset, {slots_unbound} slot binding(s) cleared"
+                )
             }
         }
     }
