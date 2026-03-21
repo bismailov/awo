@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use awo_core::{
     AppCore, AppSnapshot, Command, ContextDoctorReport, Diagnostic, DomainEvent, RepoContext,
-    RepoSkillCatalog, RepoSummary, ReviewSummary, RuntimeKind, SessionLaunchMode,
-    SkillDoctorReport, SkillLinkMode, SkillRuntime, SlotStrategy,
+    RepoSkillCatalog, RepoSummary, ReviewSummary, RuntimeCapabilityDescriptor, RuntimeKind,
+    SessionLaunchMode, SkillDoctorReport, SkillLinkMode, SkillRuntime, SlotStrategy,
+    TeamExecutionMode, TeamManifest, TeamSummary, all_runtime_capabilities,
+    default_team_manifest_path, runtime_capabilities, starter_team_manifest,
 };
 use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event as CEvent, KeyCode};
@@ -38,6 +40,14 @@ enum AppCommand {
     Skills {
         #[command(subcommand)]
         command: SkillsCommand,
+    },
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommand,
+    },
+    Team {
+        #[command(subcommand)]
+        command: TeamCommand,
     },
     Slot {
         #[command(subcommand)]
@@ -99,6 +109,33 @@ enum SkillsCommand {
         runtime: String,
         #[arg(long)]
         mode: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RuntimeCommand {
+    List,
+    Show { runtime: String },
+}
+
+#[derive(Debug, Subcommand)]
+enum TeamCommand {
+    Init {
+        repo_id: String,
+        team_id: String,
+        objective: String,
+        #[arg(long)]
+        lead_runtime: Option<String>,
+        #[arg(long)]
+        lead_model: Option<String>,
+        #[arg(long, default_value = "external_slots")]
+        execution_mode: String,
+        #[arg(long)]
+        force: bool,
+    },
+    List,
+    Show {
+        team_id: String,
     },
 }
 
@@ -198,6 +235,8 @@ fn main() -> Result<()> {
         AppCommand::Repo { command } => run_repo(command),
         AppCommand::Context { command } => run_context(command),
         AppCommand::Skills { command } => run_skills(command),
+        AppCommand::Runtime { command } => run_runtime(command),
+        AppCommand::Team { command } => run_team(command),
         AppCommand::Slot { command } => run_slot(command),
         AppCommand::Session { command } => run_session(command),
         AppCommand::Review { command } => run_review(command),
@@ -340,6 +379,85 @@ fn run_skills(command: SkillsCommand) -> Result<()> {
                 let reports = core.skills_doctor_for_repo(&repo_id, &[runtime])?;
                 print_skill_doctor(&reports);
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn run_runtime(command: RuntimeCommand) -> Result<()> {
+    match command {
+        RuntimeCommand::List => print_runtime_capabilities(&all_runtime_capabilities()),
+        RuntimeCommand::Show { runtime } => {
+            let runtime = runtime.parse::<RuntimeKind>().map_err(anyhow::Error::msg)?;
+            let capability = runtime_capabilities(runtime);
+            print_runtime_capabilities(&[capability]);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_team(command: TeamCommand) -> Result<()> {
+    let core = AppCore::bootstrap()?;
+    match command {
+        TeamCommand::Init {
+            repo_id,
+            team_id,
+            objective,
+            lead_runtime,
+            lead_model,
+            execution_mode,
+            force,
+        } => {
+            let snapshot = core.snapshot()?;
+            if !snapshot
+                .registered_repos
+                .iter()
+                .any(|repo| repo.id == repo_id)
+            {
+                anyhow::bail!("unknown repo id `{repo_id}`");
+            }
+
+            let execution_mode = execution_mode
+                .parse::<TeamExecutionMode>()
+                .map_err(anyhow::Error::msg)?;
+            let lead_runtime = lead_runtime
+                .as_deref()
+                .map(|runtime| {
+                    runtime
+                        .parse::<RuntimeKind>()
+                        .map(|runtime| runtime.as_str().to_string())
+                        .map_err(anyhow::Error::msg)
+                })
+                .transpose()?;
+            let manifest_path = default_team_manifest_path(core.paths(), &team_id);
+            if manifest_path.exists() && !force {
+                anyhow::bail!(
+                    "team manifest `{team_id}` already exists at {} (pass --force to overwrite)",
+                    manifest_path.display()
+                );
+            }
+
+            let manifest = starter_team_manifest(
+                &repo_id,
+                &team_id,
+                &objective,
+                lead_runtime.as_deref(),
+                lead_model.as_deref(),
+                execution_mode,
+            );
+            let path = core.save_team_manifest(&manifest)?;
+            println!("Saved starter team manifest to {}", path.display());
+            print_team_manifest(&manifest);
+        }
+        TeamCommand::List => {
+            let manifests = core.list_team_manifests()?;
+            print_team_manifests(&manifests);
+        }
+        TeamCommand::Show { team_id } => {
+            let manifest = core.load_team_manifest(&team_id)?;
+            print_team_manifest(&manifest);
         }
     }
 
@@ -600,7 +718,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "awo V1 slice | q quit | j/k select repo | a add cwd repo | c context doctor | d skills doctor | n no-op | r review refresh | {}",
+        "awo V1 slice | q quit | j/k select repo | a add cwd repo | c context doctor | d skills doctor | n no-op | r review refresh | teams/runtimes visible below | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title("Status"));
@@ -612,6 +730,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         Line::from(format!("State DB: {}", snapshot.state_db_path)),
         Line::from(format!("Repo Overlays: {}", snapshot.repos_dir)),
         Line::from(format!("Managed Clones: {}", snapshot.clones_dir)),
+        Line::from(format!("Team Manifests: {}", snapshot.teams_dir)),
         Line::from(format!(
             "Review: active={} releasable={} dirty={} stale={} pending={} sessions_ok={} sessions_failed={}",
             snapshot.review.active_slots,
@@ -621,6 +740,21 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             snapshot.review.pending_sessions,
             snapshot.review.completed_sessions,
             snapshot.review.failed_sessions
+        )),
+        Line::from(format!(
+            "Runtimes: {}",
+            snapshot
+                .runtime_capabilities
+                .iter()
+                .map(|capability| format!(
+                    "{}(subagents={},teams={},skills={})",
+                    capability.runtime,
+                    capability.inline_subagents.as_str(),
+                    capability.multi_session_teams.as_str(),
+                    capability.skill_preload.as_str()
+                ))
+                .collect::<Vec<_>>()
+                .join(" ")
         )),
     ];
     let paths_widget =
@@ -634,9 +768,10 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     ])
     .split(vertical[2]);
     let bottom = Layout::horizontal([
-        Constraint::Percentage(35),
-        Constraint::Percentage(33),
-        Constraint::Percentage(32),
+        Constraint::Percentage(24),
+        Constraint::Percentage(20),
+        Constraint::Percentage(26),
+        Constraint::Percentage(30),
     ])
     .split(vertical[3]);
 
@@ -662,7 +797,11 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         List::new(repo_items).block(Block::default().borders(Borders::ALL).title("Repositories"));
     frame.render_widget(repos, top[0]);
 
-    let repo_details = render_repo_detail(selected_repo);
+    let repo_details = render_repo_detail(
+        selected_repo,
+        snapshot.teams.as_slice(),
+        snapshot.runtime_capabilities.as_slice(),
+    );
     let repo_detail_widget = Paragraph::new(repo_details).block(
         Block::default()
             .borders(Borders::ALL)
@@ -721,6 +860,26 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         List::new(session_items).block(Block::default().borders(Borders::ALL).title("Sessions"));
     frame.render_widget(sessions, bottom[0]);
 
+    let team_items = snapshot
+        .teams
+        .iter()
+        .filter(|team| selected_repo.is_none_or(|repo| repo.id == team.repo_id))
+        .map(|team| {
+            ListItem::new(format!(
+                "{} [{}] {} members={} open={}/{} write={}",
+                team.team_id,
+                team.repo_id,
+                team.status,
+                team.member_count,
+                team.open_task_count,
+                team.task_count,
+                team.write_member_count
+            ))
+        })
+        .collect::<Vec<_>>();
+    let teams = List::new(team_items).block(Block::default().borders(Borders::ALL).title("Teams"));
+    frame.render_widget(teams, bottom[1]);
+
     let warning_items = snapshot
         .review
         .warnings
@@ -731,7 +890,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         .collect::<Vec<_>>();
     let warnings =
         List::new(warning_items).block(Block::default().borders(Borders::ALL).title("Warnings"));
-    frame.render_widget(warnings, bottom[1]);
+    frame.render_widget(warnings, bottom[2]);
 
     let message_items = state
         .messages
@@ -742,7 +901,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         .collect::<Vec<_>>();
     let messages =
         List::new(message_items).block(Block::default().borders(Borders::ALL).title("Event Log"));
-    frame.render_widget(messages, bottom[2]);
+    frame.render_widget(messages, bottom[3]);
 }
 
 fn render_repo_item(repo: &RepoSummary, selected: bool) -> ListItem<'static> {
@@ -767,7 +926,11 @@ fn render_repo_item(repo: &RepoSummary, selected: bool) -> ListItem<'static> {
     ))
 }
 
-fn render_repo_detail(repo: Option<&RepoSummary>) -> Vec<Line<'static>> {
+fn render_repo_detail(
+    repo: Option<&RepoSummary>,
+    teams: &[TeamSummary],
+    runtime_capabilities: &[RuntimeCapabilityDescriptor],
+) -> Vec<Line<'static>> {
     let Some(repo) = repo else {
         return vec![Line::from("No repo selected.")];
     };
@@ -802,6 +965,33 @@ fn render_repo_detail(repo: Option<&RepoSummary>) -> Vec<Line<'static>> {
                 runtime.runtime, runtime.ready, runtime.total, runtime.warnings, runtime.strategy
             )));
         }
+    }
+
+    let repo_teams = teams
+        .iter()
+        .filter(|team| team.repo_id == repo.id)
+        .collect::<Vec<_>>();
+    if repo_teams.is_empty() {
+        lines.push(Line::from("Teams: none"));
+    } else {
+        lines.push(Line::from("Teams:"));
+        for team in repo_teams {
+            lines.push(Line::from(format!(
+                "  - {} status={} open={}/{}",
+                team.team_id, team.status, team.open_task_count, team.task_count
+            )));
+        }
+    }
+
+    lines.push(Line::from("Runtime capabilities:"));
+    for capability in runtime_capabilities {
+        lines.push(Line::from(format!(
+            "  - {} launch={} subagents={} teams={}",
+            capability.runtime,
+            capability.default_launch_mode,
+            capability.inline_subagents.as_str(),
+            capability.multi_session_teams.as_str()
+        )));
     }
 
     lines
@@ -1039,5 +1229,129 @@ fn print_review(review: &ReviewSummary) {
     println!("- warnings:");
     for warning in &review.warnings {
         println!("  - {}", warning.message);
+    }
+}
+
+fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) {
+    if capabilities.is_empty() {
+        println!("No runtime capabilities found.");
+        return;
+    }
+
+    println!("Runtime capabilities:");
+    for capability in capabilities {
+        println!(
+            "- {} ({}) launch={} subagents={} teams={} skills={} mcp_reasoning={} interrupt={} resume={} structured={} read_only_hint={}",
+            capability.display_name,
+            capability.runtime,
+            capability.default_launch_mode,
+            capability.inline_subagents.as_str(),
+            capability.multi_session_teams.as_str(),
+            capability.skill_preload.as_str(),
+            capability.reasoning_mcp_tools.as_str(),
+            capability.interrupt.as_str(),
+            capability.resume.as_str(),
+            capability.structured_output.as_str(),
+            capability.read_only_hint.as_str()
+        );
+        for note in &capability.notes {
+            println!("  - note: {note}");
+        }
+    }
+}
+
+fn print_team_manifests(manifests: &[TeamManifest]) {
+    if manifests.is_empty() {
+        println!("No team manifests.");
+        return;
+    }
+
+    println!("Team manifests:");
+    for manifest in manifests {
+        println!(
+            "- {} repo={} status={} members={} tasks={}",
+            manifest.team_id,
+            manifest.repo_id,
+            manifest.status,
+            1 + manifest.members.len(),
+            manifest.tasks.len()
+        );
+        println!("  objective={}", manifest.objective);
+    }
+}
+
+fn print_team_manifest(manifest: &TeamManifest) {
+    println!("Team manifest:");
+    println!("- team id: {}", manifest.team_id);
+    println!("- repo id: {}", manifest.repo_id);
+    println!("- objective: {}", manifest.objective);
+    println!("- status: {}", manifest.status);
+    println!(
+        "- lead: {} role={} runtime={} model={} mode={} read_only={}",
+        manifest.lead.member_id,
+        manifest.lead.role,
+        manifest.lead.runtime.as_deref().unwrap_or("-"),
+        manifest.lead.model.as_deref().unwrap_or("-"),
+        manifest.lead.execution_mode,
+        manifest.lead.read_only
+    );
+    if manifest.lead.context_packs.is_empty() {
+        println!("- lead context packs: none");
+    } else {
+        println!(
+            "- lead context packs: {}",
+            manifest.lead.context_packs.join(", ")
+        );
+    }
+    if manifest.lead.skills.is_empty() {
+        println!("- lead skills: none");
+    } else {
+        println!("- lead skills: {}", manifest.lead.skills.join(", "));
+    }
+
+    if manifest.members.is_empty() {
+        println!("- members: none");
+    } else {
+        println!("- members:");
+        for member in &manifest.members {
+            println!(
+                "  - {} role={} runtime={} mode={} read_only={} scope={}",
+                member.member_id,
+                member.role,
+                member.runtime.as_deref().unwrap_or("-"),
+                member.execution_mode,
+                member.read_only,
+                if member.write_scope.is_empty() {
+                    "-".to_string()
+                } else {
+                    member.write_scope.join(", ")
+                }
+            );
+        }
+    }
+
+    if manifest.tasks.is_empty() {
+        println!("- tasks: none");
+    } else {
+        println!("- tasks:");
+        for task in &manifest.tasks {
+            println!(
+                "  - {} owner={} state={} deliverable={}",
+                task.title, task.owner_id, task.state, task.deliverable
+            );
+            println!(
+                "    scope={} verify={}",
+                if task.write_scope.is_empty() {
+                    "-".to_string()
+                } else {
+                    task.write_scope.join(", ")
+                },
+                if task.verification.is_empty() {
+                    "-".to_string()
+                } else {
+                    task.verification.join(", ")
+                }
+            );
+        }
     }
 }

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Pick a public GitHub repository that is safer than `sales-erp` for the next real end-to-end `awo` trials.
+Pick a public GitHub repository that is safer than a live production repo for the next real end-to-end `awo` trials.
 
 ## Selection Criteria
 

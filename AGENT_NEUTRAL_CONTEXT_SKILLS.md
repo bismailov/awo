@@ -22,7 +22,7 @@ Recommended shape:
 - `PROJECT.md` as the detailed project brain when the repo already uses that pattern
 - thin vendor wrappers only where a client requires them, such as `CLAUDE.md` or `GEMINI.md`
 
-Practical recommendation for repos like `sales-erp`:
+Practical recommendation for repos that already centralize project instructions:
 - keep `PROJECT.md` as the long-form project brain
 - keep `AGENTS.md` thin and explicit: "read `PROJECT.md` first"
 - keep `CLAUDE.md` and `GEMINI.md` as thin compatibility files when needed
@@ -126,8 +126,8 @@ The durable answer is:
 - optional local MCP bridge for context packs and skill activation
 - organization-level shared skill registries
 
-## Sales-ERP Fit
-`sales-erp` already follows this strategy well:
+## Example Repo Fit
+A well-structured multi-agent repo already follows this strategy well:
 - `PROJECT.md` is the real project brain
 - `AGENTS.md` and `CLAUDE.md` are thin wrappers
 - `.agents/skills/` contains portable skill content

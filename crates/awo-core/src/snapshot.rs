@@ -1,3 +1,4 @@
+use crate::capabilities::{RuntimeCapabilityDescriptor, all_runtime_capabilities};
 use crate::config::AppConfig;
 use crate::context::discover_repo_context;
 use crate::diagnostics::DiagnosticSeverity;
@@ -9,6 +10,7 @@ use crate::skills::{
 };
 use crate::slot::SlotRecord;
 use crate::store::Store;
+use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +32,10 @@ pub struct AppSnapshot {
     pub logs_dir: String,
     pub repos_dir: String,
     pub clones_dir: String,
+    pub teams_dir: String,
     pub registered_repos: Vec<RepoSummary>,
+    pub teams: Vec<TeamSummary>,
+    pub runtime_capabilities: Vec<RuntimeCapabilityDescriptor>,
     pub slots: Vec<SlotSummary>,
     pub sessions: Vec<SessionSummary>,
     pub review: ReviewSummary,
@@ -68,6 +73,18 @@ pub struct RepoSkillRuntimeSummary {
     pub total: usize,
     pub warnings: usize,
     pub note: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamSummary {
+    pub team_id: String,
+    pub repo_id: String,
+    pub status: String,
+    pub objective: String,
+    pub member_count: usize,
+    pub write_member_count: usize,
+    pub task_count: usize,
+    pub open_task_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +139,11 @@ impl AppSnapshot {
         let slots = store.list_slots(None)?;
         let sessions = store.list_sessions(None)?;
         let review = build_review_summary(&slots, &sessions);
+        let teams = list_team_manifest_paths(&config.paths)?
+            .into_iter()
+            .filter_map(|path| load_team_manifest(&path).ok())
+            .map(TeamSummary::from)
+            .collect::<Vec<_>>();
         let registered_repos = repositories
             .into_iter()
             .map(build_repo_summary)
@@ -135,7 +157,10 @@ impl AppSnapshot {
             logs_dir: config.paths.logs_dir.display().to_string(),
             repos_dir: config.paths.repos_dir.display().to_string(),
             clones_dir: config.paths.clones_dir.display().to_string(),
+            teams_dir: config.paths.teams_dir.display().to_string(),
             registered_repos,
+            teams,
+            runtime_capabilities: all_runtime_capabilities(),
             slots: slots.into_iter().map(SlotSummary::from).collect(),
             sessions: sessions.into_iter().map(SessionSummary::from).collect(),
             review,
@@ -276,6 +301,35 @@ impl From<SessionRecord> for SessionSummary {
             dry_run: value.dry_run,
             log_path: value.stdout_path,
             exit_code: value.exit_code,
+        }
+    }
+}
+
+impl From<TeamManifest> for TeamSummary {
+    fn from(value: TeamManifest) -> Self {
+        let member_count = 1 + value.members.len();
+        let write_member_count = usize::from(!value.lead.read_only)
+            + value
+                .members
+                .iter()
+                .filter(|member| !member.read_only)
+                .count();
+        let task_count = value.tasks.len();
+        let open_task_count = value
+            .tasks
+            .iter()
+            .filter(|task| task.state.as_str() != "done")
+            .count();
+
+        Self {
+            team_id: value.team_id,
+            repo_id: value.repo_id,
+            status: value.status.to_string(),
+            objective: value.objective,
+            member_count,
+            write_member_count,
+            task_count,
+            open_task_count,
         }
     }
 }

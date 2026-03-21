@@ -40,6 +40,8 @@ This repo currently ships a working V1 slice with:
 - review summary and warnings in both CLI and TUI
 - repo-filtered `review status` output in the CLI
 - TUI repo selection with per-repo context-pack and skill-health detail
+- runtime capability inspection in both CLI and TUI
+- starter team manifest creation plus CLI/TUI team visibility
 - regression tests for the trickiest lifecycle edges
 
 What is not done yet:
@@ -47,15 +49,15 @@ What is not done yet:
 - structured agent output parsing
 - machine-readable JSON result mode across the full CLI surface
 - true interruption or timeout control for running one-shot sessions
-- team manifests and runtime-agnostic subagent orchestration
+- team task editing and runtime-agnostic subagent orchestration
 - repo overlap detection by changed-file classes
 - remote machine targets
 - Windows-native PTY supervision backend
 - richer multi-turn runtime adapters beyond one-shot task execution
 
 See also:
-- [SUBAGENT_ORCHESTRATION.md](/Users/bismailov/Documents/chaban/SUBAGENT_ORCHESTRATION.md)
-- [TEAM_MANIFEST_SPEC.md](/Users/bismailov/Documents/chaban/TEAM_MANIFEST_SPEC.md)
+- [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
+- [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
 
 ## Quick Start
 
@@ -82,6 +84,13 @@ cargo run -- skills doctor <repo-id>
 cargo run -- skills doctor <repo-id> --runtime codex
 cargo run -- skills link <repo-id> gemini
 cargo run -- skills sync <repo-id> claude --mode copy
+
+cargo run -- runtime list
+cargo run -- runtime show claude
+
+cargo run -- team init <repo-id> team-alpha "Coordinate a safe parallel task"
+cargo run -- team list
+cargo run -- team show team-alpha
 
 cargo run -- slot acquire <repo-id> my-task
 cargo run -- slot acquire <repo-id> my-task --strategy warm
@@ -111,6 +120,10 @@ The current TUI is intentionally small and operational:
 - `d` run `skills doctor` for the selected repo
 - `n` send a no-op command through the core
 - `r` refresh review state
+
+The TUI now also surfaces:
+- repo-scoped team manifests
+- runtime capability summaries
 
 ## Safety Rules Implemented
 

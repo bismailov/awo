@@ -68,7 +68,7 @@ The winning abstraction is not "spawn another agent." It is:
 - OpenSquirrel: strong reference for multi-agent session UX and runtime adapters, but not for Git/workspace safety
 - Meta-analysis materials: context preservation and explicit standards must be first-class or AI workflows drift into remediation
 - CLI-Anything and mcp2cli: strong evidence that CLI plus structured output is a powerful agent interface, but best used as a complement to MCP rather than a replacement for it
-- Public disposable repos such as `sharkdp/bat` are better first orchestration testbeds than the user's live `sales-erp` product
+- Public disposable repos such as `sharkdp/bat` are better first orchestration testbeds than a live production product repo
 - Claude Code subagents and agent teams: useful proof that vendor-native delegation exists, but `awo` still needs a runtime-agnostic team model above any one vendor's feature set
 - Sequential Thinking MCP: useful for in-run reasoning, but complementary to file-based planning rather than a replacement for durable team memory
 
