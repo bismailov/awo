@@ -115,6 +115,8 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "strum",
+ "strum_macros",
  "tempfile",
  "toml",
 ]

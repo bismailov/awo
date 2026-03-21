@@ -15,9 +15,6 @@ mod session;
 mod skills;
 mod slot;
 
-#[cfg(test)]
-mod tests;
-
 pub(super) struct FreshSlotOptions<'a> {
     pub repo_id: &'a str,
     pub repo_root: &'a Path,

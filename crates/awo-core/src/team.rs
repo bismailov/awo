@@ -2,12 +2,14 @@ use crate::app::AppPaths;
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use strum_macros::{Display, EnumString, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum TeamExecutionMode {
     ExternalSlots,
     InlineSubagents,
@@ -16,34 +18,14 @@ pub enum TeamExecutionMode {
 
 impl TeamExecutionMode {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ExternalSlots => "external_slots",
-            Self::InlineSubagents => "inline_subagents",
-            Self::MultiSessionTeam => "multi_session_team",
-        }
+        self.into()
     }
 }
 
-impl fmt::Display for TeamExecutionMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for TeamExecutionMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "external_slots" => Ok(Self::ExternalSlots),
-            "inline_subagents" => Ok(Self::InlineSubagents),
-            "multi_session_team" => Ok(Self::MultiSessionTeam),
-            _ => Err(format!("unsupported team execution mode `{value}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum TeamStatus {
     Planning,
     Running,
@@ -53,36 +35,14 @@ pub enum TeamStatus {
 
 impl TeamStatus {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Planning => "planning",
-            Self::Running => "running",
-            Self::Blocked => "blocked",
-            Self::Complete => "complete",
-        }
+        self.into()
     }
 }
 
-impl fmt::Display for TeamStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for TeamStatus {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "planning" => Ok(Self::Planning),
-            "running" => Ok(Self::Running),
-            "blocked" => Ok(Self::Blocked),
-            "complete" => Ok(Self::Complete),
-            _ => Err(format!("unsupported team status `{value}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum TaskCardState {
     Todo,
     InProgress,
@@ -93,34 +53,7 @@ pub enum TaskCardState {
 
 impl TaskCardState {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Todo => "todo",
-            Self::InProgress => "in_progress",
-            Self::Review => "review",
-            Self::Blocked => "blocked",
-            Self::Done => "done",
-        }
-    }
-}
-
-impl fmt::Display for TaskCardState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for TaskCardState {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "todo" => Ok(Self::Todo),
-            "in_progress" => Ok(Self::InProgress),
-            "review" => Ok(Self::Review),
-            "blocked" => Ok(Self::Blocked),
-            "done" => Ok(Self::Done),
-            _ => Err(format!("unsupported task card state `{value}`")),
-        }
+        self.into()
     }
 }
 

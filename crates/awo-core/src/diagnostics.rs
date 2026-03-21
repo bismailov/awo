@@ -1,7 +1,8 @@
 use serde::Serialize;
-use std::fmt;
+use strum_macros::{Display, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum DiagnosticSeverity {
     Info,
     Warning,
@@ -10,17 +11,7 @@ pub enum DiagnosticSeverity {
 
 impl DiagnosticSeverity {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Info => "info",
-            Self::Warning => "warning",
-            Self::Error => "error",
-        }
-    }
-}
-
-impl fmt::Display for DiagnosticSeverity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        self.into()
     }
 }
 

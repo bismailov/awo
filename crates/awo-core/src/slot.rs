@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use strum_macros::{Display, EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone)]
 pub struct SlotRecord {
@@ -19,7 +19,8 @@ pub struct SlotRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SlotStrategy {
     Fresh,
     Warm,
@@ -27,22 +28,7 @@ pub enum SlotStrategy {
 
 impl SlotStrategy {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Fresh => "fresh",
-            Self::Warm => "warm",
-        }
-    }
-}
-
-impl FromStr for SlotStrategy {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "fresh" => Ok(Self::Fresh),
-            "warm" => Ok(Self::Warm),
-            _ => Err(format!("unsupported slot strategy `{value}`")),
-        }
+        self.into()
     }
 }
 

@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use strum_macros::{Display, EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRecord {
@@ -47,7 +47,8 @@ impl SessionRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum RuntimeKind {
     Codex,
     Claude,
@@ -57,12 +58,7 @@ pub enum RuntimeKind {
 
 impl RuntimeKind {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-            Self::Gemini => "gemini",
-            Self::Shell => "shell",
-        }
+        self.into()
     }
 
     pub fn uses_agent_prompt(self) -> bool {
@@ -70,21 +66,8 @@ impl RuntimeKind {
     }
 }
 
-impl FromStr for RuntimeKind {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "codex" => Ok(Self::Codex),
-            "claude" => Ok(Self::Claude),
-            "gemini" => Ok(Self::Gemini),
-            "shell" => Ok(Self::Shell),
-            _ => Err(format!("unsupported runtime `{value}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SessionLaunchMode {
     Pty,
     Oneshot,
@@ -92,10 +75,7 @@ pub enum SessionLaunchMode {
 
 impl SessionLaunchMode {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pty => "pty",
-            Self::Oneshot => "oneshot",
-        }
+        self.into()
     }
 
     pub fn default_for_environment() -> Self {
@@ -103,18 +83,6 @@ impl SessionLaunchMode {
             Self::Pty
         } else {
             Self::Oneshot
-        }
-    }
-}
-
-impl FromStr for SessionLaunchMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "pty" => Ok(Self::Pty),
-            "oneshot" => Ok(Self::Oneshot),
-            _ => Err(format!("unsupported launch mode `{value}`")),
         }
     }
 }

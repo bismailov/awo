@@ -38,6 +38,10 @@ pub struct AppCore {
 impl AppCore {
     pub fn bootstrap() -> Result<Self> {
         let config = AppConfig::load()?;
+        Self::from_config(config)
+    }
+
+    pub fn from_config(config: AppConfig) -> Result<Self> {
         let store = Store::open(&config.paths.state_db_path)?;
         store.initialize_schema()?;
 

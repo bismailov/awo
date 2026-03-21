@@ -1,9 +1,10 @@
-use super::*;
-use crate::app::AppPaths;
-use crate::config::AppConfig;
-use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionRecord};
-use crate::snapshot::AppSnapshot;
+#![allow(unused_crate_dependencies)]
+
 use anyhow::{Context, Result, bail};
+use awo_core::app::AppPaths;
+use awo_core::config::AppConfig;
+use awo_core::runtime::{RuntimeKind, SessionLaunchMode, detect_tmux};
+use awo_core::{AppCore, Command, SlotStrategy};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -13,7 +14,6 @@ use tempfile::TempDir;
 struct TestHarness {
     _temp_dir: TempDir,
     config: AppConfig,
-    store: Store,
 }
 
 impl TestHarness {
@@ -24,33 +24,30 @@ impl TestHarness {
         let logs_dir = data_dir.join("logs");
         let clones_dir = data_dir.join("clones");
         let repos_dir = config_dir.join("repos");
+        let teams_dir = config_dir.join("teams");
         fs::create_dir_all(&logs_dir)?;
         fs::create_dir_all(&clones_dir)?;
         fs::create_dir_all(&repos_dir)?;
-
-        let config = AppConfig {
-            paths: AppPaths {
-                config_dir,
-                data_dir: data_dir.clone(),
-                state_db_path: data_dir.join("state.sqlite3"),
-                logs_dir,
-                repos_dir,
-                clones_dir,
-                teams_dir: temp_dir.path().join("config/teams"),
-            },
-        };
-        let store = Store::open(&config.paths.state_db_path)?;
-        store.initialize_schema()?;
+        fs::create_dir_all(&teams_dir)?;
 
         Ok(Self {
             _temp_dir: temp_dir,
-            config,
-            store,
+            config: AppConfig {
+                paths: AppPaths {
+                    config_dir,
+                    data_dir: data_dir.clone(),
+                    state_db_path: data_dir.join("state.sqlite3"),
+                    logs_dir,
+                    repos_dir,
+                    clones_dir,
+                    teams_dir,
+                },
+            },
         })
     }
 
-    fn runner(&self) -> CommandRunner<'_> {
-        CommandRunner::new(&self.config, &self.store)
+    fn core(&self) -> Result<AppCore> {
+        AppCore::from_config(self.config.clone())
     }
 
     fn create_repo(&self, name: &str) -> Result<PathBuf> {
@@ -64,16 +61,15 @@ impl TestHarness {
     }
 
     fn register_repo(&self, repo_dir: PathBuf) -> Result<String> {
-        let mut runner = self.runner();
-        runner.run(Command::RepoAdd {
-            path: repo_dir.clone(),
-        })?;
         let expected_name = repo_dir
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .context("repo dir missing final path component")?;
-        let repos = self.store.list_repositories()?;
-        let repo = repos
+        let mut core = self.core()?;
+        core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let snapshot = core.snapshot()?;
+        let repo = snapshot
+            .registered_repos
             .into_iter()
             .find(|repo| repo.name == expected_name)
             .context("registered repo not found")?;
@@ -112,32 +108,36 @@ impl TestHarness {
 #[test]
 fn warm_slot_reuse_preserves_slot_identity() -> Result<()> {
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("warm-reuse")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("warm-reuse")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "first task".to_string(),
         strategy: SlotStrategy::Warm,
     })?;
-    let first_slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let first_slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing first slot")?;
 
-    runner.run(Command::SlotRelease {
+    core.dispatch(Command::SlotRelease {
         slot_id: first_slot.id.clone(),
     })?;
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "second task".to_string(),
         strategy: SlotStrategy::Warm,
     })?;
 
-    let slots = harness.store.list_slots(Some(repo_id.as_str()))?;
+    let slots = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .filter(|slot| slot.repo_id == repo_id)
+        .collect::<Vec<_>>();
     assert_eq!(slots.len(), 1);
     let reused = &slots[0];
     assert_eq!(reused.id, first_slot.id);
@@ -151,25 +151,24 @@ fn warm_slot_reuse_preserves_slot_identity() -> Result<()> {
 #[test]
 fn release_blocks_dirty_slot() -> Result<()> {
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("dirty-slot")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("dirty-slot")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id,
         task_name: "dirty task".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(None)?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
         .find(|slot| slot.task_name == "dirty task")
         .context("missing dirty slot")?;
     fs::write(Path::new(&slot.slot_path).join("DIRTY.txt"), "dirty\n")?;
 
-    let error = runner
-        .run(Command::SlotRelease {
+    let error = core
+        .dispatch(Command::SlotRelease {
             slot_id: slot.id.clone(),
         })
         .expect_err("dirty slot release should fail");
@@ -181,40 +180,33 @@ fn release_blocks_dirty_slot() -> Result<()> {
 #[test]
 fn release_blocks_pending_session() -> Result<()> {
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("busy-slot")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("busy-slot")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "busy task".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing busy slot")?;
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-test".to_string(),
-        repo_id,
+
+    core.dispatch(Command::SessionStart {
         slot_id: slot.id.clone(),
-        runtime: "codex".to_string(),
-        prompt: "test".to_string(),
-        status: "prepared".to_string(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf pending".to_string(),
         read_only: false,
         dry_run: true,
-        command_line: "codex exec ...".to_string(),
-        stdout_path: None,
-        stderr_path: None,
-        exit_code: None,
-        created_at: String::new(),
-        updated_at: String::new(),
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
     })?;
 
-    let error = runner
-        .run(Command::SlotRelease {
+    let error = core
+        .dispatch(Command::SlotRelease {
             slot_id: slot.id.clone(),
         })
         .expect_err("busy slot release should fail");
@@ -226,48 +218,48 @@ fn release_blocks_pending_session() -> Result<()> {
 #[test]
 fn cancelling_pending_session_unblocks_release() -> Result<()> {
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("cancel-session")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("cancel-session")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "cancel task".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing cancel slot")?;
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-cancel".to_string(),
-        repo_id,
+
+    core.dispatch(Command::SessionStart {
         slot_id: slot.id.clone(),
-        runtime: "codex".to_string(),
-        prompt: "test".to_string(),
-        status: "prepared".to_string(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf pending".to_string(),
         read_only: false,
         dry_run: true,
-        command_line: "codex exec ...".to_string(),
-        stdout_path: None,
-        stderr_path: None,
-        exit_code: None,
-        created_at: String::new(),
-        updated_at: String::new(),
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
     })?;
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .map(|session| session.id)
+        .context("missing pending session")?;
 
-    runner.run(Command::SessionCancel {
-        session_id: "sess-cancel".to_string(),
-    })?;
-    runner.run(Command::SlotRelease {
+    core.dispatch(Command::SessionCancel { session_id })?;
+    core.dispatch(Command::SlotRelease {
         slot_id: slot.id.clone(),
     })?;
 
-    let session = harness
-        .store
-        .get_session("sess-cancel")?
+    let session = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
         .context("missing cancelled session")?;
     assert_eq!(session.status, "cancelled");
 
@@ -277,42 +269,51 @@ fn cancelling_pending_session_unblocks_release() -> Result<()> {
 #[test]
 fn deleting_terminal_session_removes_it_from_state() -> Result<()> {
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("delete-session")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("delete-session")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "delete task".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing delete slot")?;
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-delete".to_string(),
-        repo_id,
-        slot_id: slot.id,
-        runtime: "codex".to_string(),
-        prompt: "test".to_string(),
-        status: "cancelled".to_string(),
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf pending".to_string(),
         read_only: true,
         dry_run: true,
-        command_line: "codex exec ...".to_string(),
-        stdout_path: None,
-        stderr_path: None,
-        exit_code: None,
-        created_at: String::new(),
-        updated_at: String::new(),
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .map(|session| session.id)
+        .context("missing prepared session")?;
+
+    core.dispatch(Command::SessionCancel {
+        session_id: session_id.clone(),
+    })?;
+    core.dispatch(Command::SessionDelete {
+        session_id: session_id.clone(),
     })?;
 
-    runner.run(Command::SessionDelete {
-        session_id: "sess-delete".to_string(),
-    })?;
-    assert!(harness.store.get_session("sess-delete")?.is_none());
+    assert!(
+        core.snapshot()?
+            .sessions
+            .into_iter()
+            .all(|session| session.id != session_id)
+    );
 
     Ok(())
 }
@@ -321,50 +322,49 @@ fn deleting_terminal_session_removes_it_from_state() -> Result<()> {
 fn repo_clone_registers_remote_repo() -> Result<()> {
     let harness = TestHarness::new()?;
     let remote = harness.create_bare_remote("remote-clone")?;
-    let mut runner = harness.runner();
+    let mut core = harness.core()?;
 
-    runner.run(Command::RepoClone {
+    core.dispatch(Command::RepoClone {
         remote_url: remote.display().to_string(),
         destination: None,
     })?;
 
-    let repo = harness
-        .store
-        .list_repositories()?
+    let repo = core
+        .snapshot()?
+        .registered_repos
         .into_iter()
         .next()
         .context("missing cloned repo")?;
     assert!(Path::new(&repo.repo_root).exists());
-    let remote_string = remote.display().to_string();
-    assert_eq!(repo.remote_url.as_deref(), Some(remote_string.as_str()));
+    let remote_url = git_stdout(Path::new(&repo.repo_root), ["remote", "get-url", "origin"])?;
+    assert_eq!(remote_url.trim(), remote.display().to_string());
 
     Ok(())
 }
 
 #[test]
 fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
-    if !crate::runtime::detect_tmux() {
+    if !detect_tmux() {
         return Ok(());
     }
 
     let harness = TestHarness::new()?;
-    let repo_dir = harness.create_repo("pty-session")?;
-    let repo_id = harness.register_repo(repo_dir)?;
-    let mut runner = harness.runner();
+    let repo_id = harness.register_repo(harness.create_repo("pty-session")?)?;
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "pty task".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing PTY slot")?;
 
-    runner.run(Command::SessionStart {
+    core.dispatch(Command::SessionStart {
         slot_id: slot.id.clone(),
         runtime: RuntimeKind::Shell,
         prompt: "printf pty-ok; sleep 1; printf done".to_string(),
@@ -374,24 +374,26 @@ fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
         attach_context: false,
     })?;
 
-    let session = harness
-        .store
-        .list_sessions(Some(repo_id.as_str()))?
+    let session = core
+        .snapshot()?
+        .sessions
         .into_iter()
-        .next()
+        .find(|session| session.slot_id == slot.id)
         .context("missing PTY session")?;
     assert_eq!(session.status, "running");
 
     sleep(Duration::from_secs(2));
-    runner.sync_runtime_state(Some(repo_id.as_str()))?;
+    let session_id = session.id.clone();
 
-    let session = harness
-        .store
-        .get_session(&session.id)?
+    let session = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.id == session_id)
         .context("missing synced PTY session")?;
     assert_eq!(session.status, "completed");
     assert_eq!(session.exit_code, Some(0));
-    let log_path = session.stdout_path.context("missing PTY log path")?;
+    let log_path = session.log_path.context("missing PTY log path")?;
     let log = fs::read_to_string(&log_path)?;
     assert!(log.contains("pty-ok"));
     assert!(log.contains("done"));
@@ -405,67 +407,61 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
     let harness = TestHarness::new()?;
     let repo_a = harness.register_repo(harness.create_repo("review-a")?)?;
     let repo_b = harness.register_repo(harness.create_repo("review-b")?)?;
-    let mut runner = harness.runner();
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_a.clone(),
         task_name: "repo-a".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_b.clone(),
         task_name: "repo-b".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
 
-    let slot_a = harness
-        .store
-        .list_slots(Some(repo_a.as_str()))?
-        .into_iter()
-        .next()
+    let snapshot = core.snapshot()?;
+    let slot_a = snapshot
+        .slots
+        .iter()
+        .find(|slot| slot.repo_id == repo_a)
+        .cloned()
         .context("missing repo-a slot")?;
-    let slot_b = harness
-        .store
-        .list_slots(Some(repo_b.as_str()))?
-        .into_iter()
-        .next()
+    let slot_b = snapshot
+        .slots
+        .iter()
+        .find(|slot| slot.repo_id == repo_b)
+        .cloned()
         .context("missing repo-b slot")?;
 
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-a".to_string(),
-        repo_id: repo_a.clone(),
+    core.dispatch(Command::SessionStart {
         slot_id: slot_a.id.clone(),
-        runtime: "shell".to_string(),
-        prompt: "test".to_string(),
-        status: "completed".to_string(),
+        runtime: RuntimeKind::Shell,
+        prompt: "true".to_string(),
         read_only: true,
         dry_run: false,
-        command_line: "sh -c true".to_string(),
-        stdout_path: None,
-        stderr_path: Some("stderr.log".to_string()),
-        exit_code: Some(0),
-        created_at: String::new(),
-        updated_at: String::new(),
-    })?;
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-b".to_string(),
-        repo_id: repo_b.clone(),
-        slot_id: slot_b.id.clone(),
-        runtime: "shell".to_string(),
-        prompt: "test".to_string(),
-        status: "running".to_string(),
-        read_only: true,
-        dry_run: false,
-        command_line: "sh -c sleep 5".to_string(),
-        stdout_path: Some("stdout.log".to_string()),
-        stderr_path: Some("stderr.log".to_string()),
-        exit_code: None,
-        created_at: String::new(),
-        updated_at: String::new(),
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
     })?;
 
-    let snapshot = AppSnapshot::load(&harness.config, &harness.store)?;
-    let repo_a_review = snapshot.review_for_repo(Some(repo_a.as_str()));
+    let config = harness.config.clone();
+    let slot_b_id = slot_b.id.clone();
+    let worker = std::thread::spawn(move || -> Result<()> {
+        let mut core = AppCore::from_config(config)?;
+        core.dispatch(Command::SessionStart {
+            slot_id: slot_b_id,
+            runtime: RuntimeKind::Shell,
+            prompt: "sleep 1; printf visible".to_string(),
+            read_only: true,
+            dry_run: false,
+            launch_mode: SessionLaunchMode::Oneshot,
+            attach_context: false,
+        })?;
+        Ok(())
+    });
+
+    sleep(Duration::from_millis(200));
+    let repo_a_review = core.snapshot()?.review_for_repo(Some(repo_a.as_str()));
 
     assert_eq!(repo_a_review.active_slots, 1);
     assert_eq!(repo_a_review.completed_sessions, 1);
@@ -477,6 +473,10 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
             .all(|warning| warning.slot_id.as_deref() != Some(slot_b.id.as_str()))
     );
 
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
+
     Ok(())
 }
 
@@ -484,27 +484,25 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
 fn oneshot_session_is_visible_while_running() -> Result<()> {
     let harness = TestHarness::new()?;
     let repo_id = harness.register_repo(harness.create_repo("oneshot-visible")?)?;
-    let mut runner = harness.runner();
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "oneshot".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing oneshot slot")?;
 
     let config = harness.config.clone();
-    let state_db_path = config.paths.state_db_path.clone();
     let slot_id = slot.id.clone();
     let worker = std::thread::spawn(move || -> Result<()> {
-        let store = Store::open(&state_db_path)?;
-        let mut runner = CommandRunner::new(&config, &store);
-        runner.run(Command::SessionStart {
+        let mut core = AppCore::from_config(config)?;
+        core.dispatch(Command::SessionStart {
             slot_id,
             runtime: RuntimeKind::Shell,
             prompt: "sleep 1; printf visible".to_string(),
@@ -517,20 +515,25 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
     });
 
     sleep(Duration::from_millis(200));
-    let sessions = harness.store.list_sessions(Some(repo_id.as_str()))?;
+    let sessions = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .filter(|session| session.repo_id == repo_id)
+        .collect::<Vec<_>>();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].status, "running");
-    assert!(sessions[0].stderr_path.is_some());
+    assert!(sessions[0].log_path.is_some());
 
     worker
         .join()
         .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
 
-    let session = harness
-        .store
-        .list_sessions(Some(repo_id.as_str()))?
+    let session = core
+        .snapshot()?
+        .sessions
         .into_iter()
-        .next()
+        .find(|session| session.repo_id == repo_id)
         .context("missing finished oneshot session")?;
     assert_eq!(session.status, "completed");
     assert_eq!(session.exit_code, Some(0));
@@ -542,43 +545,53 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
 fn cancelling_running_oneshot_session_is_rejected() -> Result<()> {
     let harness = TestHarness::new()?;
     let repo_id = harness.register_repo(harness.create_repo("cancel-running-oneshot")?)?;
-    let mut runner = harness.runner();
+    let mut core = harness.core()?;
 
-    runner.run(Command::SlotAcquire {
+    core.dispatch(Command::SlotAcquire {
         repo_id: repo_id.clone(),
         task_name: "cancel".to_string(),
         strategy: SlotStrategy::Fresh,
     })?;
-    let slot = harness
-        .store
-        .list_slots(Some(repo_id.as_str()))?
+    let slot = core
+        .snapshot()?
+        .slots
         .into_iter()
-        .next()
+        .find(|slot| slot.repo_id == repo_id)
         .context("missing cancel slot")?;
 
-    harness.store.upsert_session(&SessionRecord {
-        id: "sess-running-oneshot".to_string(),
-        repo_id,
-        slot_id: slot.id,
-        runtime: "shell".to_string(),
-        prompt: "sleep 5".to_string(),
-        status: "running".to_string(),
-        read_only: true,
-        dry_run: false,
-        command_line: "sh -c 'sleep 5'".to_string(),
-        stdout_path: Some("stdout.log".to_string()),
-        stderr_path: Some("stderr.log".to_string()),
-        exit_code: None,
-        created_at: String::new(),
-        updated_at: String::new(),
-    })?;
+    let config = harness.config.clone();
+    let slot_id = slot.id.clone();
+    let worker = std::thread::spawn(move || -> Result<()> {
+        let mut core = AppCore::from_config(config)?;
+        core.dispatch(Command::SessionStart {
+            slot_id,
+            runtime: RuntimeKind::Shell,
+            prompt: "sleep 1".to_string(),
+            read_only: true,
+            dry_run: false,
+            launch_mode: SessionLaunchMode::Oneshot,
+            attach_context: false,
+        })?;
+        Ok(())
+    });
 
-    let error = runner
-        .run(Command::SessionCancel {
-            session_id: "sess-running-oneshot".to_string(),
-        })
+    sleep(Duration::from_millis(200));
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.repo_id == repo_id)
+        .map(|session| session.id)
+        .context("missing running oneshot session")?;
+
+    let error = core
+        .dispatch(Command::SessionCancel { session_id })
         .expect_err("running oneshot cancellation should be rejected");
     assert!(error.to_string().contains("interruption is not supported"));
+
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
 
     Ok(())
 }
@@ -647,6 +660,26 @@ fn run_git_root(
         );
     }
     Ok(())
+}
+
+fn git_stdout(
+    repo_dir: &Path,
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run git in {}", repo_dir.display()))?;
+    if !output.status.success() {
+        bail!(
+            "git command failed in {}: {}",
+            repo_dir.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn kill_tmux_session(session_id: &str) -> Result<()> {

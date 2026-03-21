@@ -1,7 +1,9 @@
 use crate::runtime::{RuntimeKind, SessionLaunchMode};
 use serde::{Deserialize, Serialize};
+use strum_macros::{Display, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum CapabilitySupport {
     Native,
     ViaMcp,
@@ -13,14 +15,7 @@ pub enum CapabilitySupport {
 
 impl CapabilitySupport {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Native => "native",
-            Self::ViaMcp => "via_mcp",
-            Self::AdapterManaged => "adapter_managed",
-            Self::Planned => "planned",
-            Self::Unknown => "unknown",
-            Self::Unsupported => "unsupported",
-        }
+        self.into()
     }
 }
 

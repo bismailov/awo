@@ -3,12 +3,12 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use strum_macros::{Display, EnumString, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SkillRuntime {
     Codex,
     Claude,
@@ -17,11 +17,7 @@ pub enum SkillRuntime {
 
 impl SkillRuntime {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-            Self::Gemini => "gemini",
-        }
+        self.into()
     }
 
     pub fn all() -> [Self; 3] {
@@ -29,32 +25,15 @@ impl SkillRuntime {
     }
 }
 
-impl fmt::Display for SkillRuntime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for SkillRuntime {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "codex" => Ok(Self::Codex),
-            "claude" => Ok(Self::Claude),
-            "gemini" => Ok(Self::Gemini),
-            _ => Err(format!("unsupported skill runtime `{value}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum SkillLinkMode {
     Symlink,
     Copy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SkillDiscoveryStrategy {
     GlobalProjection,
     RepoLocalPreferred,
@@ -62,10 +41,7 @@ pub enum SkillDiscoveryStrategy {
 
 impl SkillDiscoveryStrategy {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::GlobalProjection => "global-projection",
-            Self::RepoLocalPreferred => "repo-local-preferred",
-        }
+        self.into()
     }
 }
 
@@ -79,10 +55,7 @@ pub struct SkillRuntimePolicy {
 
 impl SkillLinkMode {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Symlink => "symlink",
-            Self::Copy => "copy",
-        }
+        self.into()
     }
 
     pub fn default_for_platform() -> Self {
@@ -94,24 +67,6 @@ impl SkillLinkMode {
         #[cfg(not(windows))]
         {
             Self::Symlink
-        }
-    }
-}
-
-impl fmt::Display for SkillLinkMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for SkillLinkMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "symlink" => Ok(Self::Symlink),
-            "copy" => Ok(Self::Copy),
-            _ => Err(format!("unsupported skill link mode `{value}`")),
         }
     }
 }
@@ -166,7 +121,8 @@ pub struct RepoSkillCatalog {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SkillInstallState {
     Missing,
     Linked,
@@ -178,14 +134,7 @@ pub enum SkillInstallState {
 
 impl SkillInstallState {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Missing => "missing",
-            Self::Linked => "linked",
-            Self::Copied => "copied",
-            Self::ProjectLocal => "project-local",
-            Self::Drifted => "drifted",
-            Self::Conflict => "conflict",
-        }
+        self.into()
     }
 }
 
