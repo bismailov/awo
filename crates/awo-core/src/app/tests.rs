@@ -3,7 +3,7 @@ use crate::commands::Command;
 use crate::config::AppConfig;
 use crate::runtime::{SessionLaunchMode, SessionRecord};
 use crate::team::{TaskCard, TaskCardState, TeamExecutionMode, TeamMember, starter_team_manifest};
-use anyhow::Context;
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;

@@ -49,3 +49,4 @@ The intended backend split is:
 Status: complete in the current tmux-backed implementation
 3. Add CI coverage across macOS, Linux, and Windows
 4. Add platform-specific smoke tests for shell runtime and skills projection
+Status: in progress via the GitHub Actions Linux/macOS/Windows validation matrix; deeper runtime-specific smoke coverage is still pending

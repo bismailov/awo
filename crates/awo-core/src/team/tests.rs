@@ -201,7 +201,7 @@ fn concurrent_manifest_mutations_preserve_all_members() -> Result<()> {
                 skills: Vec::new(),
                 notes: None,
             })?;
-            guard.save()
+            Ok(guard.save()?)
         }));
     }
 

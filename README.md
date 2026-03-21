@@ -73,6 +73,7 @@ See also:
 - [INTERFACE_STRATEGY.md](INTERFACE_STRATEGY.md)
 - [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
 - [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
+- [TOKIO_DECISION.md](TOKIO_DECISION.md)
 - [PUBLIC_TRIAL_FINDINGS.md](PUBLIC_TRIAL_FINDINGS.md)
 
 ## Quick Start
@@ -213,3 +214,5 @@ cargo check
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+GitHub Actions now runs the core Rust validation matrix on Linux, macOS, and Windows for pushes to `main` and pull requests.

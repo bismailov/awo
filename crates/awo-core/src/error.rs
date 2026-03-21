@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -16,6 +17,46 @@ pub enum AwoError {
     UnsupportedValue { kind: &'static str, value: String },
     #[error("invalid state: {message}")]
     InvalidState { message: String },
+    #[error("failed to resolve application directories")]
+    ProjectDirectoriesUnavailable,
+    #[error("io error while {action} at {path}")]
+    Io {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to acquire {mode} lock at {path}")]
+    FileLock {
+        mode: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse team manifest at {path}")]
+    TeamManifestParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("failed to serialize team manifest")]
+    TeamManifestSerialize {
+        #[source]
+        source: toml::ser::Error,
+    },
+    #[error("failed to run git {operation} in {path}")]
+    GitInvocation {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("git {operation} failed in {path}: {message}")]
+    GitCommandFailed {
+        operation: &'static str,
+        path: PathBuf,
+        message: String,
+    },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -62,6 +103,61 @@ impl AwoError {
 
     pub fn invalid_state(message: impl Into<String>) -> Self {
         Self::InvalidState {
+            message: message.into(),
+        }
+    }
+
+    pub fn project_directories_unavailable() -> Self {
+        Self::ProjectDirectoriesUnavailable
+    }
+
+    pub fn io(action: &'static str, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Io {
+            action,
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn file_lock(mode: &'static str, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::FileLock {
+            mode,
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn team_manifest_parse(path: impl Into<PathBuf>, source: toml::de::Error) -> Self {
+        Self::TeamManifestParse {
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn team_manifest_serialize(source: toml::ser::Error) -> Self {
+        Self::TeamManifestSerialize { source }
+    }
+
+    pub fn git_invocation(
+        operation: &'static str,
+        path: impl Into<PathBuf>,
+        source: std::io::Error,
+    ) -> Self {
+        Self::GitInvocation {
+            operation,
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn git_command_failed(
+        operation: &'static str,
+        path: impl Into<PathBuf>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::GitCommandFailed {
+            operation,
+            path: path.into(),
             message: message.into(),
         }
     }

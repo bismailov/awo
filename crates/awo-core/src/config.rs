@@ -1,5 +1,5 @@
 use crate::app::AppPaths;
-use anyhow::{Context, Result};
+use crate::error::{AwoError, AwoResult};
 use directories::ProjectDirs;
 use std::fs;
 
@@ -9,9 +9,9 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load() -> Result<Self> {
+    pub fn load() -> AwoResult<Self> {
         let project_dirs = ProjectDirs::from("net", "awo", "awo")
-            .context("failed to resolve application directories")?;
+            .ok_or_else(AwoError::project_directories_unavailable)?;
 
         let config_dir = project_dirs.config_dir().to_path_buf();
         let data_dir = project_dirs.data_dir().to_path_buf();
@@ -22,17 +22,17 @@ impl AppConfig {
         let state_db_path = data_dir.join("state.sqlite3");
 
         fs::create_dir_all(&config_dir)
-            .with_context(|| format!("failed to create config dir at {}", config_dir.display()))?;
+            .map_err(|source| AwoError::io("create config dir", &config_dir, source))?;
         fs::create_dir_all(&data_dir)
-            .with_context(|| format!("failed to create data dir at {}", data_dir.display()))?;
+            .map_err(|source| AwoError::io("create data dir", &data_dir, source))?;
         fs::create_dir_all(&logs_dir)
-            .with_context(|| format!("failed to create logs dir at {}", logs_dir.display()))?;
+            .map_err(|source| AwoError::io("create logs dir", &logs_dir, source))?;
         fs::create_dir_all(&clones_dir)
-            .with_context(|| format!("failed to create clones dir at {}", clones_dir.display()))?;
+            .map_err(|source| AwoError::io("create clones dir", &clones_dir, source))?;
         fs::create_dir_all(&repos_dir)
-            .with_context(|| format!("failed to create repos dir at {}", repos_dir.display()))?;
+            .map_err(|source| AwoError::io("create repos dir", &repos_dir, source))?;
         fs::create_dir_all(&teams_dir)
-            .with_context(|| format!("failed to create teams dir at {}", teams_dir.display()))?;
+            .map_err(|source| AwoError::io("create teams dir", &teams_dir, source))?;
 
         Ok(Self {
             paths: AppPaths {

@@ -17,7 +17,6 @@ use crate::team::{
     TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan, TeamTeardownResult,
     list_team_manifest_paths, remove_team_manifest, save_team_manifest,
 };
-use anyhow::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -59,7 +58,7 @@ impl AppCore {
     pub fn snapshot(&self) -> AwoResult<AppSnapshot> {
         self.sync_runtime_state(None)?;
         let _ = self.reconcile_all_team_manifests()?;
-        Ok(AppSnapshot::load(&self.config, &self.store)?)
+        AppSnapshot::load(&self.config, &self.store)
     }
 
     pub fn context_for_repo(&self, repo_id: &str) -> AwoResult<RepoContext> {
@@ -128,7 +127,7 @@ impl AppCore {
     }
 
     pub fn save_team_manifest(&self, manifest: &TeamManifest) -> AwoResult<std::path::PathBuf> {
-        Ok(save_team_manifest(&self.config.paths, manifest)?)
+        save_team_manifest(&self.config.paths, manifest)
     }
 
     pub fn load_team_manifest(&self, team_id: &str) -> AwoResult<TeamManifest> {
@@ -406,7 +405,7 @@ impl AppCore {
     }
 
     pub fn remove_team(&self, team_id: &str) -> AwoResult<()> {
-        Ok(remove_team_manifest(&self.config.paths, team_id)?)
+        remove_team_manifest(&self.config.paths, team_id)
     }
 
     pub fn start_team_task(
@@ -556,7 +555,7 @@ impl AppCore {
                 }
             };
 
-        if let Err(error) = (|| -> Result<()> {
+        if let Err(error) = (|| -> AwoResult<()> {
             let mut manifest = TeamManifestGuard::load(&self.config.paths, &options.team_id)?;
             manifest
                 .manifest_mut()
@@ -567,7 +566,7 @@ impl AppCore {
             manifest.save()
         })() {
             recover_failed_start(self, acquired_slot.then_some(slot_id.as_str()));
-            return Err(error.into());
+            return Err(error);
         }
 
         let session_outcome = match self.dispatch(Command::SessionStart {

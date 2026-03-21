@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use crate::error::{AwoError, AwoResult};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,9 +9,8 @@ pub struct GitDiscovery {
     pub default_base_branch: String,
 }
 
-pub fn discover_repo(path: &Path) -> Result<GitDiscovery> {
-    let git_root =
-        run_git(path, ["rev-parse", "--show-toplevel"]).context("failed to discover git root")?;
+pub fn discover_repo(path: &Path) -> AwoResult<GitDiscovery> {
+    let git_root = run_git(path, "discover repo root", ["rev-parse", "--show-toplevel"])?;
     let git_root = PathBuf::from(git_root.trim());
 
     let remote_url = run_git_allow_failure(&git_root, ["config", "--get", "remote.origin.url"])?;
@@ -24,44 +23,43 @@ pub fn discover_repo(path: &Path) -> Result<GitDiscovery> {
     })
 }
 
-pub fn clone_repo(remote_url: &str, destination: &Path) -> Result<()> {
+pub fn clone_repo(remote_url: &str, destination: &Path) -> AwoResult<()> {
     let parent = destination.parent().unwrap_or(destination);
-    std::fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "failed to create clone parent directory at {}",
-            parent.display()
-        )
-    })?;
+    std::fs::create_dir_all(parent)
+        .map_err(|source| AwoError::io("create clone parent directory", parent, source))?;
 
     let output = Command::new("git")
         .args(["clone", remote_url, &destination.display().to_string()])
         .output()
-        .with_context(|| {
-            format!(
-                "failed to clone remote `{remote_url}` into {}",
-                destination.display()
-            )
-        })?;
+        .map_err(|source| AwoError::git_invocation("clone", destination, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git clone failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "clone",
+            destination,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
 }
 
-pub fn fetch_repo(repo_root: &Path) -> Result<()> {
+pub fn fetch_repo(repo_root: &Path) -> AwoResult<()> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
         .args(["fetch", "--all", "--prune", "--tags"])
         .output()
-        .with_context(|| format!("failed to fetch repo at {}", repo_root.display()))?;
+        .map_err(|source| AwoError::git_invocation("fetch", repo_root, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git fetch failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "fetch",
+            repo_root,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
@@ -72,7 +70,7 @@ pub fn create_worktree(
     slot_path: &Path,
     branch_name: &str,
     base_branch: &str,
-) -> Result<()> {
+) -> AwoResult<()> {
     let base_ref = resolve_base_ref(repo_root, base_branch)?;
     let output = Command::new("git")
         .arg("-C")
@@ -86,51 +84,65 @@ pub fn create_worktree(
             &base_ref,
         ])
         .output()
-        .with_context(|| format!("failed to create worktree at {}", slot_path.display()))?;
+        .map_err(|source| AwoError::git_invocation("worktree add", slot_path, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git worktree add failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "worktree add",
+            slot_path,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
 }
 
-pub fn reuse_worktree(slot_path: &Path, branch_name: &str, base_branch: &str) -> Result<()> {
+pub fn reuse_worktree(slot_path: &Path, branch_name: &str, base_branch: &str) -> AwoResult<()> {
     let base_ref = resolve_base_ref(slot_path, base_branch)?;
     let output = Command::new("git")
         .arg("-C")
         .arg(slot_path)
         .args(["checkout", "-B", branch_name, &base_ref])
         .output()
-        .with_context(|| format!("failed to reuse worktree at {}", slot_path.display()))?;
+        .map_err(|source| {
+            AwoError::git_invocation("checkout reused worktree", slot_path, source)
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git checkout for reused worktree failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "checkout reused worktree",
+            slot_path,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
 }
 
-pub fn detach_worktree(slot_path: &Path, base_branch: &str) -> Result<()> {
+pub fn detach_worktree(slot_path: &Path, base_branch: &str) -> AwoResult<()> {
     let base_ref = resolve_base_ref(slot_path, base_branch)?;
     let output = Command::new("git")
         .arg("-C")
         .arg(slot_path)
         .args(["checkout", "--detach", &base_ref])
         .output()
-        .with_context(|| format!("failed to detach worktree at {}", slot_path.display()))?;
+        .map_err(|source| AwoError::git_invocation("detach worktree", slot_path, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git detach checkout failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "detach worktree",
+            slot_path,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
 }
 
-pub fn remove_worktree(repo_root: &Path, slot_path: &Path) -> Result<()> {
+pub fn remove_worktree(repo_root: &Path, slot_path: &Path) -> AwoResult<()> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -141,33 +153,37 @@ pub fn remove_worktree(repo_root: &Path, slot_path: &Path) -> Result<()> {
             &slot_path.display().to_string(),
         ])
         .output()
-        .with_context(|| format!("failed to remove worktree at {}", slot_path.display()))?;
+        .map_err(|source| AwoError::git_invocation("worktree remove", repo_root, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git worktree remove failed: {}", stderr.trim());
+        return Err(AwoError::git_command_failed(
+            "worktree remove",
+            slot_path,
+            stderr.trim(),
+        ));
     }
 
     Ok(())
 }
 
-pub fn is_clean(path: &Path) -> Result<bool> {
+pub fn is_clean(path: &Path) -> AwoResult<bool> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .args(["status", "--porcelain"])
         .output()
-        .with_context(|| format!("failed to check git status in {}", path.display()))?;
+        .map_err(|source| AwoError::git_invocation("status", path, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git status failed in {}: {}", path.display(), stderr.trim());
+        return Err(AwoError::git_command_failed("status", path, stderr.trim()));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
-fn detect_default_base_branch(git_root: &Path) -> Result<String> {
+fn detect_default_base_branch(git_root: &Path) -> AwoResult<String> {
     if let Some(remote_head) = run_git_allow_failure(
         git_root,
         [
@@ -198,18 +214,18 @@ fn detect_default_base_branch(git_root: &Path) -> Result<String> {
     Ok("main".to_string())
 }
 
-fn git_ref_exists(git_root: &Path, reference: &str) -> Result<bool> {
+fn git_ref_exists(git_root: &Path, reference: &str) -> AwoResult<bool> {
     let status = Command::new("git")
         .arg("-C")
         .arg(git_root)
         .args(["show-ref", "--verify", "--quiet", reference])
         .status()
-        .with_context(|| format!("failed to check git ref `{reference}`"))?;
+        .map_err(|source| AwoError::git_invocation("show-ref", git_root, source))?;
 
     Ok(status.success())
 }
 
-fn resolve_base_ref(git_root: &Path, preferred: &str) -> Result<String> {
+fn resolve_base_ref(git_root: &Path, preferred: &str) -> AwoResult<String> {
     for candidate in [preferred, "HEAD"] {
         if git_ref_exists(git_root, &format!("refs/heads/{candidate}"))? {
             return Ok(candidate.to_string());
@@ -220,36 +236,33 @@ fn resolve_base_ref(git_root: &Path, preferred: &str) -> Result<String> {
             .arg(git_root)
             .args(["rev-parse", "--verify", "--quiet", candidate])
             .status()
-            .with_context(|| format!("failed to resolve git ref `{candidate}`"))?;
+            .map_err(|source| AwoError::git_invocation("rev-parse", git_root, source))?;
         if status.success() {
             return Ok(candidate.to_string());
         }
     }
 
-    bail!(
+    Err(AwoError::invalid_state(format!(
         "repository at {} has no resolvable base ref yet; create an initial commit before acquiring slots",
         git_root.display()
-    )
+    )))
 }
 
 fn run_git(
     path: &Path,
+    operation: &'static str,
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
-) -> Result<String> {
+) -> AwoResult<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .args(args)
         .output()
-        .with_context(|| format!("failed to run git in {}", path.display()))?;
+        .map_err(|source| AwoError::git_invocation(operation, path, source))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "git command failed in {}: {}",
-            path.display(),
-            stderr.trim()
-        );
+        return Err(AwoError::git_command_failed(operation, path, stderr.trim()));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -258,13 +271,13 @@ fn run_git(
 fn run_git_allow_failure(
     path: &Path,
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
-) -> Result<Option<String>> {
+) -> AwoResult<Option<String>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .args(args)
         .output()
-        .with_context(|| format!("failed to run git in {}", path.display()))?;
+        .map_err(|source| AwoError::git_invocation("optional git command", path, source))?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();

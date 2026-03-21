@@ -2,6 +2,7 @@ use crate::capabilities::{RuntimeCapabilityDescriptor, all_runtime_capabilities}
 use crate::config::AppConfig;
 use crate::context::discover_repo_context;
 use crate::diagnostics::DiagnosticSeverity;
+use crate::error::AwoResult;
 use crate::platform::current_platform_label;
 use crate::repo::{RegisteredRepo, remote_label};
 use crate::runtime::SessionRecord;
@@ -11,7 +12,6 @@ use crate::skills::{
 use crate::slot::SlotRecord;
 use crate::store::Store;
 use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
-use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -136,7 +136,7 @@ pub struct ReviewWarning {
 }
 
 impl AppSnapshot {
-    pub fn load(config: &AppConfig, store: &Store) -> Result<Self> {
+    pub fn load(config: &AppConfig, store: &Store) -> AwoResult<Self> {
         let repositories = store.list_repositories()?;
         let slots = store.list_slots(None)?;
         let sessions = store.list_sessions(None)?;
