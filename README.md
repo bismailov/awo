@@ -16,10 +16,12 @@ It currently manages:
 - automatic launch-context injection for agent runtimes on session start
 - platform-aware defaults for session launch mode and skill projection mode
 - tmux-backed PTY session supervision
+- crash-recoverable oneshot sessions via PID/exit sidecars
 - repo-scoped review summaries in the CLI
 - one-shot session visibility while sessions are still running
 - review warnings around stale, dirty, blocked, or failed work
-- early team-orchestration foundations: runtime capability registry and durable team manifests
+- executable team orchestration: runtime capability registry, durable team manifests, task cards, and task-driven session launch
+- machine-readable JSON output across the main operator commands
 
 ## Current Status
 
@@ -42,14 +44,15 @@ This repo currently ships a working V1 slice with:
 - TUI repo selection with per-repo context-pack and skill-health detail
 - runtime capability inspection in both CLI and TUI
 - starter team manifest creation plus CLI/TUI team visibility
+- executable team member/task workflows and `team task start`
 - regression tests for the trickiest lifecycle edges
 
 What is not done yet:
 - embedded terminal sessions
 - structured agent output parsing
-- machine-readable JSON result mode across the full CLI surface
 - true interruption or timeout control for running one-shot sessions
-- team task editing and runtime-agnostic subagent orchestration
+- full team archive/reset and post-run manifest reconciliation
+- runtime-agnostic subagent orchestration above vendor-native team features
 - repo overlap detection by changed-file classes
 - remote machine targets
 - Windows-native PTY supervision backend
@@ -58,6 +61,7 @@ What is not done yet:
 See also:
 - [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
 - [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
+- [PUBLIC_TRIAL_FINDINGS.md](PUBLIC_TRIAL_FINDINGS.md)
 
 ## Quick Start
 
@@ -87,10 +91,15 @@ cargo run -- skills sync <repo-id> claude --mode copy
 
 cargo run -- runtime list
 cargo run -- runtime show claude
+cargo run -- --json runtime list
 
 cargo run -- team init <repo-id> team-alpha "Coordinate a safe parallel task"
 cargo run -- team list
 cargo run -- team show team-alpha
+cargo run -- team member add team-alpha reviewer-a reviewer --runtime gemini --read-only
+cargo run -- team task add team-alpha audit reviewer-a "Audit docs" "Review the docs" --deliverable "A concise review"
+cargo run -- team task start team-alpha audit --launch-mode oneshot
+cargo run -- --json team show team-alpha
 
 cargo run -- slot acquire <repo-id> my-task
 cargo run -- slot acquire <repo-id> my-task --strategy warm
@@ -108,6 +117,7 @@ cargo run -- session delete <session-id>
 
 cargo run -- review status
 cargo run -- review status --repo-id <repo-id>
+cargo run -- --json session list --repo-id <repo-id>
 ```
 
 ## TUI Keys
@@ -134,6 +144,9 @@ The TUI now also surfaces:
 - released fresh slots are treated as intentionally gone, not broken
 - released warm slots refuse refresh while the base repo has uncommitted changes
 - tmux-backed PTY sessions get unique hashed supervisor refs to avoid name collisions
+- team-manifest mutations are protected with cross-process file locks
+- long-running team-task launches release manifest locks between reservation, slot binding, and runtime execution phases
+- oneshot sessions can be reconciled after an interrupted launcher process via PID and exit-code sidecars
 
 ## Session Modes
 
@@ -142,6 +155,7 @@ The TUI now also surfaces:
   Runs the command inside a detached tmux session, syncs status back into the app, and writes a combined PTY log.
 - `--launch-mode oneshot`
   Runs the command directly and waits for completion in the calling process.
+  If the launcher process is interrupted after spawn, later `session list`, `slot list`, and `review status` runs can still reconcile the session via PID/exit sidecars.
 
 The default is environment-aware: `pty` when the configured PTY supervisor is available, otherwise `oneshot`.
 

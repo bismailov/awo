@@ -3,14 +3,15 @@ use crate::platform::{
     default_shell_program, executable_exists, shell_command_args, supports_tmux_supervision,
 };
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionRecord {
     pub id: String,
     pub repo_id: String,
@@ -46,7 +47,7 @@ impl SessionRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum RuntimeKind {
     Codex,
     Claude,
@@ -83,7 +84,7 @@ impl FromStr for RuntimeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SessionLaunchMode {
     Pty,
     Oneshot,
@@ -147,6 +148,15 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> Result<PreparedSession
     let logs_dir = request.paths.logs_dir.join("sessions");
     fs::create_dir_all(&logs_dir)
         .with_context(|| format!("failed to create session log dir at {}", logs_dir.display()))?;
+    if request.launch_mode == SessionLaunchMode::Oneshot && !request.dry_run {
+        clear_sidecar_if_exists(&exit_code_path_for(&logs_dir, &session_id))?;
+        fs::write(pid_path_for(&logs_dir, &session_id), "pending").with_context(|| {
+            format!(
+                "failed to prepare pid sidecar at {}",
+                pid_path_for(&logs_dir, &session_id).display()
+            )
+        })?;
+    }
 
     let stdout_path = match request.launch_mode {
         SessionLaunchMode::Pty => logs_dir.join(format!("{session_id}.pty.log")),
@@ -216,13 +226,41 @@ pub fn execute_prepared_session(
         });
     }
 
-    let output = Command::new(&prepared_session.prepared.program)
+    let logs_dir = prepared_session
+        .stdout_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let exit_path = exit_code_path_for(&logs_dir, &prepared_session.session.id);
+    let pid_path = pid_path_for(&logs_dir, &prepared_session.session.id);
+    clear_sidecar_if_exists(&exit_path)?;
+
+    let child = Command::new(&prepared_session.prepared.program)
         .args(&prepared_session.prepared.args)
         .current_dir(&prepared_session.prepared.cwd)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .inspect_err(|_error| {
+            let _ = clear_sidecar_if_exists(&pid_path);
+        })
         .with_context(|| {
             format!(
                 "failed to launch runtime `{}`",
+                prepared_session.session.runtime
+            )
+        })?;
+    fs::write(&pid_path, child.id().to_string())
+        .with_context(|| format!("failed to write pid sidecar at {}", pid_path.display()))?;
+
+    let output = child
+        .wait_with_output()
+        .inspect_err(|_error| {
+            let _ = clear_sidecar_if_exists(&pid_path);
+        })
+        .with_context(|| {
+            format!(
+                "failed while waiting for runtime `{}`",
                 prepared_session.session.runtime
             )
         })?;
@@ -245,6 +283,14 @@ pub fn execute_prepared_session(
     }
     .to_string();
     prepared_session.session.exit_code = output.status.code().map(i64::from);
+    let exit_code = prepared_session.session.exit_code.unwrap_or(-1);
+    fs::write(&exit_path, exit_code.to_string()).with_context(|| {
+        format!(
+            "failed to write exit-code sidecar at {}",
+            exit_path.display()
+        )
+    })?;
+    clear_sidecar_if_exists(&pid_path)?;
 
     Ok(SessionExecutionResult {
         session: prepared_session.session,
@@ -252,8 +298,15 @@ pub fn execute_prepared_session(
 }
 
 pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<bool> {
-    if !session.is_supervised() {
+    if session.is_terminal() {
         return Ok(false);
+    }
+    if session.status != "running" {
+        return Ok(false);
+    }
+
+    if !session.is_supervised() {
+        return sync_oneshot_session(paths, session);
     }
 
     let supervisor_ref = supervisor_ref(&session.id);
@@ -299,6 +352,29 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<b
     }
 
     session.status = "cancelled".to_string();
+    Ok(true)
+}
+
+fn sync_oneshot_session(paths: &AppPaths, session: &mut SessionRecord) -> Result<bool> {
+    let pid = read_pid(paths, &session.id)?;
+    match pid {
+        Some(pid) if process_is_running(pid) => return Ok(false),
+        None if pid_sidecar_exists(paths, &session.id) => return Ok(false),
+        _ => {}
+    }
+
+    if let Some(exit_code) = read_exit_code(paths, &session.id)? {
+        session.exit_code = Some(exit_code);
+        session.status = if exit_code == 0 {
+            "completed".to_string()
+        } else {
+            "failed".to_string()
+        };
+    } else {
+        session.status = "failed".to_string();
+    }
+
+    clear_sidecar_if_exists(&pid_path_for(&paths.logs_dir.join("sessions"), &session.id))?;
     Ok(true)
 }
 
@@ -562,8 +638,55 @@ fn read_exit_code(paths: &AppPaths, session_id: &str) -> Result<Option<i64>> {
     Ok(contents.trim().parse::<i64>().ok())
 }
 
+fn read_pid(paths: &AppPaths, session_id: &str) -> Result<Option<u32>> {
+    let path = pid_path_for(&paths.logs_dir.join("sessions"), session_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read pid sidecar at {}", path.display()))?;
+    Ok(contents.trim().parse::<u32>().ok())
+}
+
+fn pid_sidecar_exists(paths: &AppPaths, session_id: &str) -> bool {
+    pid_path_for(&paths.logs_dir.join("sessions"), session_id).exists()
+}
+
 fn exit_code_path_for(logs_dir: &Path, session_id: &str) -> PathBuf {
     logs_dir.join(format!("{session_id}.exit"))
+}
+
+fn pid_path_for(logs_dir: &Path, session_id: &str) -> PathBuf {
+    logs_dir.join(format!("{session_id}.pid"))
+}
+
+fn clear_sidecar_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path).with_context(|| format!("failed to remove sidecar {}", path.display()))
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}")])
+        .output()
+        .map(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+        })
+        .unwrap_or(false)
 }
 
 fn supervisor_ref(session_id: &str) -> String {
@@ -596,4 +719,109 @@ fn shell_quote(value: &str) -> String {
 enum TmuxSessionState {
     Running,
     Exited(i64),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppPaths;
+
+    fn sample_paths(root: &Path) -> AppPaths {
+        AppPaths {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            state_db_path: root.join("data/state.sqlite3"),
+            logs_dir: root.join("data/logs"),
+            repos_dir: root.join("config/repos"),
+            clones_dir: root.join("data/clones"),
+            teams_dir: root.join("config/teams"),
+        }
+    }
+
+    fn running_oneshot_session(session_id: &str) -> SessionRecord {
+        SessionRecord {
+            id: session_id.to_string(),
+            repo_id: "repo-1".to_string(),
+            slot_id: "slot-1".to_string(),
+            runtime: "shell".to_string(),
+            prompt: "echo hi".to_string(),
+            status: "running".to_string(),
+            read_only: true,
+            dry_run: false,
+            command_line: "sh -lc 'echo hi'".to_string(),
+            stdout_path: Some("/tmp/stdout.log".to_string()),
+            stderr_path: Some("/tmp/stderr.log".to_string()),
+            exit_code: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn prepare_session_creates_pending_pid_sidecar_for_oneshot() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let paths = sample_paths(temp_dir.path());
+        let slot_path = temp_dir.path().join("slot");
+        fs::create_dir_all(&slot_path)?;
+
+        let prepared = prepare_session(SessionRunRequest {
+            paths: &paths,
+            repo_id: "repo-1",
+            slot_id: "slot-1",
+            slot_path: &slot_path,
+            runtime: RuntimeKind::Shell,
+            prompt: "echo hi",
+            read_only: true,
+            dry_run: false,
+            launch_mode: SessionLaunchMode::Oneshot,
+        })?;
+
+        let pid_path = pid_path_for(&paths.logs_dir.join("sessions"), &prepared.session.id);
+        assert!(pid_path.exists());
+        assert_eq!(fs::read_to_string(pid_path)?.trim(), "pending");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_oneshot_keeps_pending_sidecar_running() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let paths = sample_paths(temp_dir.path());
+        let sessions_dir = paths.logs_dir.join("sessions");
+        fs::create_dir_all(&sessions_dir)?;
+        fs::write(pid_path_for(&sessions_dir, "sess-1"), "pending")?;
+
+        let mut session = running_oneshot_session("sess-1");
+        assert!(!sync_session(&paths, &mut session)?);
+        assert_eq!(session.status, "running");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_oneshot_marks_missing_process_as_failed() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let paths = sample_paths(temp_dir.path());
+        fs::create_dir_all(paths.logs_dir.join("sessions"))?;
+
+        let mut session = running_oneshot_session("sess-2");
+        assert!(sync_session(&paths, &mut session)?);
+        assert_eq!(session.status, "failed");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_oneshot_uses_exit_sidecar_when_process_is_gone() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let paths = sample_paths(temp_dir.path());
+        let sessions_dir = paths.logs_dir.join("sessions");
+        fs::create_dir_all(&sessions_dir)?;
+        fs::write(pid_path_for(&sessions_dir, "sess-3"), "999999")?;
+        fs::write(exit_code_path_for(&sessions_dir, "sess-3"), "0")?;
+
+        let mut session = running_oneshot_session("sess-3");
+        assert!(sync_session(&paths, &mut session)?);
+        assert_eq!(session.status, "completed");
+        assert_eq!(session.exit_code, Some(0));
+        assert!(!pid_path_for(&sessions_dir, "sess-3").exists());
+        Ok(())
+    }
 }

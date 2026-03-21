@@ -1,6 +1,6 @@
 use crate::diagnostics::Diagnostic;
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SkillRuntime {
     Codex,
     Claude,
@@ -48,13 +48,13 @@ impl FromStr for SkillRuntime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SkillLinkMode {
     Symlink,
     Copy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SkillDiscoveryStrategy {
     GlobalProjection,
     RepoLocalPreferred,
@@ -69,7 +69,7 @@ impl SkillDiscoveryStrategy {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillRuntimePolicy {
     pub runtime: SkillRuntime,
     pub discovery: SkillDiscoveryStrategy,
@@ -146,7 +146,7 @@ impl RuntimeSkillRoots {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscoveredSkill {
     pub directory_name: String,
     pub name: Option<String>,
@@ -157,7 +157,7 @@ pub struct DiscoveredSkill {
     pub lock_hash: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepoSkillCatalog {
     pub repo_root: String,
     pub shared_root: Option<String>,
@@ -166,7 +166,7 @@ pub struct RepoSkillCatalog {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SkillInstallState {
     Missing,
     Linked,
@@ -189,7 +189,7 @@ impl SkillInstallState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillDoctorEntry {
     pub name: String,
     pub source_path: String,
@@ -197,7 +197,7 @@ pub struct SkillDoctorEntry {
     pub state: SkillInstallState,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillDoctorReport {
     pub runtime: SkillRuntime,
     pub policy: SkillRuntimePolicy,
@@ -206,7 +206,7 @@ pub struct SkillDoctorReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SkillLinkReport {
     pub runtime: SkillRuntime,
     pub policy: SkillRuntimePolicy,

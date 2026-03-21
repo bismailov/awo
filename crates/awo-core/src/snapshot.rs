@@ -12,10 +12,11 @@ use crate::slot::SlotRecord;
 use crate::store::Store;
 use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
 use anyhow::Result;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CommandLogEntry {
     pub id: i64,
     pub command_name: String,
@@ -23,7 +24,7 @@ pub struct CommandLogEntry {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
     pub platform_label: String,
     pub config_dir: String,
@@ -42,7 +43,7 @@ pub struct AppSnapshot {
     pub recent_commands: Vec<CommandLogEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepoSummary {
     pub id: String,
     pub name: String,
@@ -59,13 +60,13 @@ pub struct RepoSummary {
     pub skill_runtimes: Vec<RepoSkillRuntimeSummary>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepoContextPackSummary {
     pub name: String,
     pub file_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepoSkillRuntimeSummary {
     pub runtime: String,
     pub strategy: String,
@@ -75,7 +76,7 @@ pub struct RepoSkillRuntimeSummary {
     pub note: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TeamSummary {
     pub team_id: String,
     pub repo_id: String,
@@ -87,7 +88,7 @@ pub struct TeamSummary {
     pub open_task_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SlotSummary {
     pub id: String,
     pub repo_id: String,
@@ -100,7 +101,7 @@ pub struct SlotSummary {
     pub fingerprint_status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSummary {
     pub id: String,
     pub repo_id: String,
@@ -113,7 +114,7 @@ pub struct SessionSummary {
     pub exit_code: Option<i64>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ReviewSummary {
     pub dirty_slots: usize,
     pub stale_slots: usize,
@@ -125,7 +126,7 @@ pub struct ReviewSummary {
     pub warnings: Vec<ReviewWarning>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ReviewWarning {
     pub kind: String,
     pub slot_id: Option<String>,

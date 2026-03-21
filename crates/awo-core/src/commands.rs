@@ -5,6 +5,7 @@ use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::SlotStrategy;
 use crate::store::Store;
 use anyhow::Result;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 mod context;
@@ -113,7 +114,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CommandOutcome {
     pub summary: String,
     pub events: Vec<DomainEvent>,

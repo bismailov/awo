@@ -1,23 +1,24 @@
 use crate::diagnostics::Diagnostic;
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ContextFile {
     pub label: String,
     pub path: String,
     pub kind: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ContextPack {
     pub name: String,
     pub files: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepoContext {
     pub repo_root: String,
     pub entrypoints: Vec<ContextFile>,
@@ -28,12 +29,12 @@ pub struct RepoContext {
     pub mcp_config_path: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ContextDoctorReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionContextPlan {
     pub mandatory_files: Vec<String>,
     pub selected_packs: Vec<ContextPack>,
