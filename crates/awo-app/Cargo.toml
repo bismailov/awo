@@ -1,0 +1,20 @@
+[package]
+name = "awo-app"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "awo"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+awo-core = { path = "../awo-core" }
+clap = { version = "4.6.0", features = ["derive"] }
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
