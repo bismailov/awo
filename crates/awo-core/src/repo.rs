@@ -1,6 +1,7 @@
 use crate::app::AppPaths;
+use crate::error::{AwoError, AwoResult};
 use crate::git::GitDiscovery;
-use anyhow::{Context, Result};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -53,9 +54,9 @@ pub fn register_repo(
     paths: &AppPaths,
     input_path: PathBuf,
     git: GitDiscovery,
-) -> Result<RegisterRepoResult> {
+) -> AwoResult<RegisterRepoResult> {
     let canonical_root = fs::canonicalize(&git.git_root)
-        .with_context(|| format!("failed to canonicalize {}", git.git_root.display()))?;
+        .map_err(|source| AwoError::io("canonicalize repo root", &git.git_root, source))?;
     let shared_manifest_path = canonical_root.join(".awo").join("repo.toml");
     let shared_manifest = load_shared_manifest(&shared_manifest_path)?;
 
@@ -154,13 +155,13 @@ pub fn default_clone_destination(paths: &AppPaths, remote_url: &str) -> PathBuf 
     destination.join(slugify(&remote.repo_name))
 }
 
-fn load_shared_manifest(path: &Path) -> Result<SharedRepoManifest> {
+fn load_shared_manifest(path: &Path) -> AwoResult<SharedRepoManifest> {
     if !path.exists() {
         return Ok(SharedRepoManifest::default());
     }
 
     let contents = fs::read_to_string(path)
-        .with_context(|| format!("failed to read shared repo manifest at {}", path.display()))?;
+        .map_err(|source| AwoError::io("read shared repo manifest", path, source))?;
     let manifest = toml::from_str::<SharedRepoManifest>(&contents)
         .with_context(|| format!("failed to parse shared repo manifest at {}", path.display()))?;
     Ok(manifest)
@@ -213,22 +214,14 @@ fn describe_hosted_remote(host: &str, path: &str) -> RemoteDescriptor {
     }
 }
 
-fn write_local_overlay(paths: &AppPaths, overlay: &LocalRepoOverlay) -> Result<PathBuf> {
-    fs::create_dir_all(&paths.repos_dir).with_context(|| {
-        format!(
-            "failed to create repo overlay dir at {}",
-            paths.repos_dir.display()
-        )
-    })?;
+fn write_local_overlay(paths: &AppPaths, overlay: &LocalRepoOverlay) -> AwoResult<PathBuf> {
+    fs::create_dir_all(&paths.repos_dir)
+        .map_err(|source| AwoError::io("create repo overlay dir", &paths.repos_dir, source))?;
     let overlay_path = paths.repos_dir.join(format!("{}.toml", overlay.repo_id));
     let contents =
         toml::to_string_pretty(overlay).context("failed to serialize local repo overlay")?;
-    fs::write(&overlay_path, contents).with_context(|| {
-        format!(
-            "failed to write local repo overlay at {}",
-            overlay_path.display()
-        )
-    })?;
+    fs::write(&overlay_path, contents)
+        .map_err(|source| AwoError::io("write repo overlay", &overlay_path, source))?;
     Ok(overlay_path)
 }
 

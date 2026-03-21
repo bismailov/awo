@@ -1,9 +1,12 @@
 use super::{CommandOutcome, CommandRunner};
+use crate::error::AwoResult;
 use crate::events::DomainEvent;
-use anyhow::Result;
 
 impl<'a> CommandRunner<'a> {
-    pub(super) fn run_review_status(&mut self, repo_id: Option<String>) -> Result<CommandOutcome> {
+    pub(super) fn run_review_status(
+        &mut self,
+        repo_id: Option<String>,
+    ) -> AwoResult<CommandOutcome> {
         self.sync_runtime_state(repo_id.as_deref())?;
         let mut slots = self.store.list_slots(repo_id.as_deref())?;
         let mut dirty = 0usize;

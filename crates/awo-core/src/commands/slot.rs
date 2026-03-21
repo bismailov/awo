@@ -1,9 +1,9 @@
 use super::{CommandOutcome, CommandRunner, FreshSlotOptions};
+use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::fingerprint::fingerprint_for_dir;
 use crate::git;
 use crate::slot::{SlotRecord, SlotStrategy, build_branch_name, build_slot_id, build_slot_path};
-use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,11 +13,11 @@ impl<'a> CommandRunner<'a> {
         repo_id: String,
         task_name: String,
         strategy: SlotStrategy,
-    ) -> Result<CommandOutcome> {
+    ) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let repo_root = PathBuf::from(&repo.repo_root);
         let repo_fingerprint = fingerprint_for_dir(&repo_root)?;
 
@@ -97,7 +97,7 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn create_fresh_slot(&self, options: FreshSlotOptions<'_>) -> Result<SlotRecord> {
+    pub(super) fn create_fresh_slot(&self, options: FreshSlotOptions<'_>) -> AwoResult<SlotRecord> {
         let slot_id = build_slot_id(options.repo_id, options.task_name);
         let branch_name = build_branch_name(options.task_name, &slot_id);
         let slot_path = build_slot_path(
@@ -105,12 +105,9 @@ impl<'a> CommandRunner<'a> {
             options.task_name,
             &slot_id,
         );
-        fs::create_dir_all(Path::new(options.worktree_root)).with_context(|| {
-            format!(
-                "failed to create worktree root at {}",
-                options.worktree_root
-            )
-        })?;
+        let worktree_root = Path::new(options.worktree_root);
+        fs::create_dir_all(worktree_root)
+            .map_err(|source| AwoError::io("create worktree root", worktree_root, source))?;
         git::create_worktree(
             options.repo_root,
             &slot_path,
@@ -135,7 +132,7 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_slot_list(&mut self, repo_id: Option<String>) -> Result<CommandOutcome> {
+    pub(super) fn run_slot_list(&mut self, repo_id: Option<String>) -> AwoResult<CommandOutcome> {
         self.sync_runtime_state(repo_id.as_deref())?;
         let slots = self.store.list_slots(repo_id.as_deref())?;
         self.store
@@ -154,22 +151,24 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_slot_release(&mut self, slot_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_slot_release(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
         let mut slot = self
             .store
             .get_slot(&slot_id)?
-            .with_context(|| format!("unknown slot id `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .with_context(|| format!("missing repo for slot `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
         let slot_path = PathBuf::from(&slot.slot_path);
         self.sync_runtime_state(Some(&slot.repo_id))?;
         self.refresh_slot_state(&mut slot)?;
 
         let sessions = self.store.list_sessions_for_slot(&slot.id)?;
         if sessions.iter().any(|session| session.blocks_release()) {
-            bail!("slot `{slot_id}` still has pending session(s); refusing to release");
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` still has pending session(s); refusing to release"
+            )));
         }
 
         let clean = if slot_path.exists() {
@@ -178,7 +177,9 @@ impl<'a> CommandRunner<'a> {
             true
         };
         if !clean {
-            bail!("slot `{slot_id}` is dirty; refusing to release");
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` is dirty; refusing to release"
+            )));
         }
 
         if slot.strategy == SlotStrategy::Warm.as_str() {
@@ -213,15 +214,15 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_slot_refresh(&mut self, slot_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_slot_refresh(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
         let mut slot = self
             .store
             .get_slot(&slot_id)?
-            .with_context(|| format!("unknown slot id `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .with_context(|| format!("missing repo for slot `{slot_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
         let slot_path = PathBuf::from(&slot.slot_path);
         let mut resynced = false;
 
@@ -230,13 +231,15 @@ impl<'a> CommandRunner<'a> {
             && slot_path.exists()
         {
             if !git::is_clean(Path::new(&repo.repo_root))? {
-                bail!(
+                return Err(AwoError::invalid_state(format!(
                     "repo `{}` has uncommitted changes; commit or stash them before refreshing released warm slots",
                     repo.id
-                );
+                )));
             }
             if !git::is_clean(&slot_path)? {
-                bail!("slot `{slot_id}` is dirty; refusing to refresh");
+                return Err(AwoError::invalid_state(format!(
+                    "slot `{slot_id}` is dirty; refusing to refresh"
+                )));
             }
             git::detach_worktree(&slot_path, &slot.base_branch)?;
             resynced = true;
@@ -278,11 +281,11 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn refresh_slot_state(&self, slot: &mut SlotRecord) -> Result<()> {
+    pub(super) fn refresh_slot_state(&self, slot: &mut SlotRecord) -> AwoResult<()> {
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .with_context(|| format!("missing repo for slot `{}`", slot.id))?;
+            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
 
         let slot_path = Path::new(&slot.slot_path);
         if !slot_path.exists() {

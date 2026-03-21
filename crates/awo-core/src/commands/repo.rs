@@ -1,12 +1,12 @@
 use super::{CommandOutcome, CommandRunner};
+use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::git;
 use crate::repo::{default_clone_destination, register_repo};
-use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 impl<'a> CommandRunner<'a> {
-    pub(super) fn run_repo_add(&mut self, path: PathBuf) -> Result<CommandOutcome> {
+    pub(super) fn run_repo_add(&mut self, path: PathBuf) -> AwoResult<CommandOutcome> {
         let git = git::discover_repo(&path)?;
         let result = register_repo(&self.config.paths, path.clone(), git)?;
         self.store.upsert_repository(&result.registered_repo)?;
@@ -44,7 +44,7 @@ impl<'a> CommandRunner<'a> {
         &mut self,
         remote_url: String,
         destination: Option<PathBuf>,
-    ) -> Result<CommandOutcome> {
+    ) -> AwoResult<CommandOutcome> {
         let destination = destination
             .unwrap_or_else(|| default_clone_destination(&self.config.paths, &remote_url));
         git::clone_repo(&remote_url, &destination)?;
@@ -86,11 +86,11 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_repo_fetch(&mut self, repo_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_repo_fetch(&mut self, repo_id: String) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         git::fetch_repo(Path::new(&repo.repo_root))?;
         let git = git::discover_repo(Path::new(&repo.repo_root))?;
         let result = register_repo(&self.config.paths, PathBuf::from(&repo.repo_root), git)?;
@@ -120,7 +120,7 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_repo_list(&mut self) -> Result<CommandOutcome> {
+    pub(super) fn run_repo_list(&mut self) -> AwoResult<CommandOutcome> {
         let repos = self.store.list_repositories()?;
         self.store
             .insert_action("repo_list", &format!("count={}", repos.len()))?;

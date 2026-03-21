@@ -141,15 +141,13 @@ impl<'a> CommandRunner<'a> {
     pub fn run(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         match command {
             Command::NoOp { label } => self.run_noop(label).map_err(Into::into),
-            Command::RepoAdd { path } => self.run_repo_add(path).map_err(Into::into),
+            Command::RepoAdd { path } => self.run_repo_add(path),
             Command::RepoClone {
                 remote_url,
                 destination,
-            } => self
-                .run_repo_clone(remote_url, destination)
-                .map_err(Into::into),
-            Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id).map_err(Into::into),
-            Command::RepoList => self.run_repo_list().map_err(Into::into),
+            } => self.run_repo_clone(remote_url, destination),
+            Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id),
+            Command::RepoList => self.run_repo_list(),
             Command::ContextPack { repo_id } => self.run_context_pack(repo_id).map_err(Into::into),
             Command::ContextDoctor { repo_id } => {
                 self.run_context_doctor(repo_id).map_err(Into::into)
@@ -176,12 +174,10 @@ impl<'a> CommandRunner<'a> {
                 repo_id,
                 task_name,
                 strategy,
-            } => self
-                .run_slot_acquire(repo_id, task_name, strategy)
-                .map_err(Into::into),
-            Command::SlotList { repo_id } => self.run_slot_list(repo_id).map_err(Into::into),
-            Command::SlotRelease { slot_id } => self.run_slot_release(slot_id).map_err(Into::into),
-            Command::SlotRefresh { slot_id } => self.run_slot_refresh(slot_id).map_err(Into::into),
+            } => self.run_slot_acquire(repo_id, task_name, strategy),
+            Command::SlotList { repo_id } => self.run_slot_list(repo_id),
+            Command::SlotRelease { slot_id } => self.run_slot_release(slot_id),
+            Command::SlotRefresh { slot_id } => self.run_slot_refresh(slot_id),
             Command::SessionStart {
                 slot_id,
                 runtime,
@@ -202,9 +198,7 @@ impl<'a> CommandRunner<'a> {
             Command::SessionList { repo_id } => self.run_session_list(repo_id),
             Command::SessionCancel { session_id } => self.run_session_cancel(session_id),
             Command::SessionDelete { session_id } => self.run_session_delete(session_id),
-            Command::ReviewStatus { repo_id } => {
-                self.run_review_status(repo_id).map_err(Into::into)
-            }
+            Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
         }
     }
 
