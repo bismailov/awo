@@ -1,8 +1,9 @@
+use crate::error::{AwoError, AwoResult};
 use crate::repo::RegisteredRepo;
 use crate::runtime::SessionRecord;
 use crate::slot::SlotRecord;
 use crate::snapshot::CommandLogEntry;
-use anyhow::{Context, Result};
+use anyhow::Context;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
@@ -13,7 +14,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> AwoResult<Self> {
         let connection = Connection::open(path)
             .with_context(|| format!("failed to open SQLite database at {}", path.display()))?;
         Ok(Self {
@@ -21,7 +22,7 @@ impl Store {
         })
     }
 
-    pub fn initialize_schema(&self) -> Result<()> {
+    pub fn initialize_schema(&self) -> AwoResult<()> {
         let sql = r#"
             CREATE TABLE IF NOT EXISTS app_meta (
                 key TEXT PRIMARY KEY,
@@ -86,7 +87,7 @@ impl Store {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute_batch(sql)
             .context("failed to initialize SQLite schema")?;
@@ -102,11 +103,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn insert_action(&self, command_name: &str, payload: &str) -> Result<()> {
+    pub fn insert_action(&self, command_name: &str, payload: &str) -> AwoResult<()> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute(
                 "INSERT INTO action_log (command_name, payload) VALUES (?1, ?2)",
@@ -116,11 +117,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn recent_actions(&self, limit: usize) -> Result<Vec<CommandLogEntry>> {
+    pub fn recent_actions(&self, limit: usize) -> AwoResult<Vec<CommandLogEntry>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT id, command_name, payload, created_at
@@ -147,11 +148,11 @@ impl Store {
         Ok(entries)
     }
 
-    pub fn upsert_repository(&self, repo: &RegisteredRepo) -> Result<()> {
+    pub fn upsert_repository(&self, repo: &RegisteredRepo) -> AwoResult<()> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute(
                 "INSERT INTO repositories (
@@ -182,11 +183,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn list_repositories(&self) -> Result<Vec<RegisteredRepo>> {
+    pub fn list_repositories(&self) -> AwoResult<Vec<RegisteredRepo>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -220,11 +221,11 @@ impl Store {
         Ok(repos)
     }
 
-    pub fn get_repository(&self, repo_id: &str) -> Result<Option<RegisteredRepo>> {
+    pub fn get_repository(&self, repo_id: &str) -> AwoResult<Option<RegisteredRepo>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -255,11 +256,11 @@ impl Store {
         Ok(repo)
     }
 
-    pub fn upsert_slot(&self, slot: &SlotRecord) -> Result<()> {
+    pub fn upsert_slot(&self, slot: &SlotRecord) -> AwoResult<()> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute(
                 "INSERT INTO slots (
@@ -296,11 +297,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_slot(&self, slot_id: &str) -> Result<Option<SlotRecord>> {
+    pub fn get_slot(&self, slot_id: &str) -> AwoResult<Option<SlotRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -335,11 +336,11 @@ impl Store {
         Ok(slot)
     }
 
-    pub fn list_slots(&self, repo_id: Option<&str>) -> Result<Vec<SlotRecord>> {
+    pub fn list_slots(&self, repo_id: Option<&str>) -> AwoResult<Vec<SlotRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let query = if repo_id.is_some() {
             "SELECT
                 id, repo_id, task_name, slot_path, branch_name, base_branch,
@@ -379,9 +380,13 @@ impl Store {
         };
 
         let rows = if let Some(repo_id) = repo_id {
-            statement.query_map([repo_id], map_row)?
+            statement
+                .query_map([repo_id], map_row)
+                .context("failed to query slots")?
         } else {
-            statement.query_map([], map_row)?
+            statement
+                .query_map([], map_row)
+                .context("failed to query slots")?
         };
 
         let slots = rows
@@ -390,11 +395,11 @@ impl Store {
         Ok(slots)
     }
 
-    pub fn find_reusable_warm_slot(&self, repo_id: &str) -> Result<Option<SlotRecord>> {
+    pub fn find_reusable_warm_slot(&self, repo_id: &str) -> AwoResult<Option<SlotRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -434,11 +439,11 @@ impl Store {
         Ok(slot)
     }
 
-    pub fn upsert_session(&self, session: &SessionRecord) -> Result<()> {
+    pub fn upsert_session(&self, session: &SessionRecord) -> AwoResult<()> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute(
                 "INSERT INTO sessions (
@@ -479,22 +484,22 @@ impl Store {
         Ok(())
     }
 
-    pub fn delete_session(&self, session_id: &str) -> Result<()> {
+    pub fn delete_session(&self, session_id: &str) -> AwoResult<()> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute("DELETE FROM sessions WHERE id = ?1", [session_id])
             .with_context(|| format!("failed to delete session `{session_id}`"))?;
         Ok(())
     }
 
-    pub fn list_sessions(&self, repo_id: Option<&str>) -> Result<Vec<SessionRecord>> {
+    pub fn list_sessions(&self, repo_id: Option<&str>) -> AwoResult<Vec<SessionRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let query = if repo_id.is_some() {
             "SELECT
                 id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
@@ -534,9 +539,13 @@ impl Store {
         };
 
         let rows = if let Some(repo_id) = repo_id {
-            statement.query_map([repo_id], map_row)?
+            statement
+                .query_map([repo_id], map_row)
+                .context("failed to query sessions")?
         } else {
-            statement.query_map([], map_row)?
+            statement
+                .query_map([], map_row)
+                .context("failed to query sessions")?
         };
 
         let sessions = rows
@@ -545,11 +554,11 @@ impl Store {
         Ok(sessions)
     }
 
-    pub fn get_session(&self, session_id: &str) -> Result<Option<SessionRecord>> {
+    pub fn get_session(&self, session_id: &str) -> AwoResult<Option<SessionRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -585,11 +594,11 @@ impl Store {
         Ok(session)
     }
 
-    pub fn list_sessions_for_slot(&self, slot_id: &str) -> Result<Vec<SessionRecord>> {
+    pub fn list_sessions_for_slot(&self, slot_id: &str) -> AwoResult<Vec<SessionRecord>> {
         let connection = self
             .connection
             .lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock store connection"))?;
+            .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -601,25 +610,27 @@ impl Store {
             )
             .context("failed to prepare slot session list query")?;
 
-        let rows = statement.query_map([slot_id], |row| {
-            Ok(SessionRecord {
-                id: row.get(0)?,
-                repo_id: row.get(1)?,
-                slot_id: row.get(2)?,
-                runtime: row.get(3)?,
-                supervisor: row.get(4)?,
-                prompt: row.get(5)?,
-                status: row.get(6)?,
-                read_only: row.get::<_, i64>(7)? != 0,
-                dry_run: row.get::<_, i64>(8)? != 0,
-                command_line: row.get(9)?,
-                stdout_path: row.get(10)?,
-                stderr_path: row.get(11)?,
-                exit_code: row.get(12)?,
-                created_at: row.get(13)?,
-                updated_at: row.get(14)?,
+        let rows = statement
+            .query_map([slot_id], |row| {
+                Ok(SessionRecord {
+                    id: row.get(0)?,
+                    repo_id: row.get(1)?,
+                    slot_id: row.get(2)?,
+                    runtime: row.get(3)?,
+                    supervisor: row.get(4)?,
+                    prompt: row.get(5)?,
+                    status: row.get(6)?,
+                    read_only: row.get::<_, i64>(7)? != 0,
+                    dry_run: row.get::<_, i64>(8)? != 0,
+                    command_line: row.get(9)?,
+                    stdout_path: row.get(10)?,
+                    stderr_path: row.get(11)?,
+                    exit_code: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
+                })
             })
-        })?;
+            .context("failed to query slot sessions")?;
 
         let sessions = rows
             .collect::<rusqlite::Result<Vec<_>>>()
@@ -628,7 +639,7 @@ impl Store {
     }
 }
 
-fn ensure_session_supervisor_column(connection: &Connection) -> Result<()> {
+fn ensure_session_supervisor_column(connection: &Connection) -> AwoResult<()> {
     if session_supervisor_column_exists(connection)? {
         return Ok(());
     }
@@ -639,7 +650,7 @@ fn ensure_session_supervisor_column(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn session_supervisor_column_exists(connection: &Connection) -> Result<bool> {
+fn session_supervisor_column_exists(connection: &Connection) -> AwoResult<bool> {
     let mut statement = connection
         .prepare("PRAGMA table_info(sessions)")
         .context("failed to inspect sessions table schema")?;

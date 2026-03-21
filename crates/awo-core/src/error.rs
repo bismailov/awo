@@ -57,6 +57,14 @@ pub enum AwoError {
         path: PathBuf,
         message: String,
     },
+    #[error("failed to parse yaml at {path}")]
+    YamlParse {
+        path: PathBuf,
+        #[source]
+        source: serde_yaml::Error,
+    },
+    #[error("could not resolve `{runtime}` user skill directory")]
+    SkillTargetDirUnresolved { runtime: String },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -159,6 +167,19 @@ impl AwoError {
             operation,
             path: path.into(),
             message: message.into(),
+        }
+    }
+
+    pub fn yaml_parse(path: impl Into<PathBuf>, source: serde_yaml::Error) -> Self {
+        Self::YamlParse {
+            path: path.into(),
+            source,
+        }
+    }
+
+    pub fn skill_target_dir_unresolved(runtime: impl Into<String>) -> Self {
+        Self::SkillTargetDirUnresolved {
+            runtime: runtime.into(),
         }
     }
 }

@@ -267,6 +267,11 @@ pub(super) fn pid_path_for(logs_dir: &Path, session_id: &str) -> PathBuf {
     logs_dir.join(format!("{session_id}.pid"))
 }
 
+#[cfg(test)]
+pub(super) fn supervisor_ref(session_id: &str) -> String {
+    tmux::supervisor_ref(session_id)
+}
+
 pub(super) fn clear_sidecar_if_exists(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -296,7 +301,7 @@ pub(super) fn process_is_running(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn shell_join(program: &str, args: &[String]) -> String {
+pub(super) fn shell_join(program: &str, args: &[String]) -> String {
     std::iter::once(program.to_string())
         .chain(args.iter().cloned())
         .map(|part| shell_quote(&part))
@@ -304,7 +309,7 @@ fn shell_join(program: &str, args: &[String]) -> String {
         .join(" ")
 }
 
-fn shell_quote(value: &str) -> String {
+pub(super) fn shell_quote(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
     }

@@ -53,7 +53,7 @@ impl<'a> CommandRunner<'a> {
         let reports = runtimes
             .iter()
             .copied()
-            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots))
+            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots).map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
         let warning_count = reports
             .iter()

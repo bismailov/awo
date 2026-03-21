@@ -66,7 +66,7 @@ impl AppCore {
             .store
             .get_repository(repo_id)?
             .ok_or_else(|| AwoError::unknown_repo(repo_id))?;
-        Ok(discover_repo_context(Path::new(&repo.repo_root))?)
+        discover_repo_context(Path::new(&repo.repo_root))
     }
 
     pub fn context_doctor_for_repo(&self, repo_id: &str) -> AwoResult<ContextDoctorReport> {
@@ -79,7 +79,7 @@ impl AppCore {
             .store
             .get_repository(repo_id)?
             .ok_or_else(|| AwoError::unknown_repo(repo_id))?;
-        Ok(discover_repo_skills(Path::new(&repo.repo_root))?)
+        discover_repo_skills(Path::new(&repo.repo_root))
     }
 
     pub fn skills_doctor_for_repo(
@@ -92,7 +92,7 @@ impl AppCore {
         runtimes
             .iter()
             .copied()
-            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots).map_err(Into::into))
+            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots))
             .collect()
     }
 
@@ -104,9 +104,7 @@ impl AppCore {
     ) -> AwoResult<SkillLinkReport> {
         let catalog = self.skills_for_repo(repo_id)?;
         let roots = RuntimeSkillRoots::from_environment();
-        Ok(crate::skills::link_repo_skills(
-            &catalog, runtime, &roots, mode,
-        )?)
+        crate::skills::link_repo_skills(&catalog, runtime, &roots, mode)
     }
 
     pub fn skills_sync_for_repo(
@@ -117,9 +115,7 @@ impl AppCore {
     ) -> AwoResult<SkillLinkReport> {
         let catalog = self.skills_for_repo(repo_id)?;
         let roots = RuntimeSkillRoots::from_environment();
-        Ok(crate::skills::sync_repo_skills(
-            &catalog, runtime, &roots, mode,
-        )?)
+        crate::skills::sync_repo_skills(&catalog, runtime, &roots, mode)
     }
 
     pub fn paths(&self) -> &AppPaths {

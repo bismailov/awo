@@ -1,5 +1,5 @@
 use crate::diagnostics::Diagnostic;
-use anyhow::{Context, Result, bail};
+use crate::error::{AwoError, AwoResult};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
@@ -205,7 +205,7 @@ pub fn doctor_repo_skills(
     catalog: &RepoSkillCatalog,
     runtime: SkillRuntime,
     roots: &RuntimeSkillRoots,
-) -> Result<SkillDoctorReport> {
+) -> AwoResult<SkillDoctorReport> {
     let policy = runtime_skill_policy(runtime);
     let target_dir = roots.target_dir(runtime).map(Path::to_path_buf);
     let mut diagnostics = Vec::new();
@@ -298,7 +298,7 @@ pub fn link_repo_skills(
     runtime: SkillRuntime,
     roots: &RuntimeSkillRoots,
     mode: SkillLinkMode,
-) -> Result<SkillLinkReport> {
+) -> AwoResult<SkillLinkReport> {
     reconcile_repo_skills(catalog, runtime, roots, mode, ReconcileIntent::Link)
 }
 
@@ -307,7 +307,7 @@ pub fn sync_repo_skills(
     runtime: SkillRuntime,
     roots: &RuntimeSkillRoots,
     mode: SkillLinkMode,
-) -> Result<SkillLinkReport> {
+) -> AwoResult<SkillLinkReport> {
     reconcile_repo_skills(catalog, runtime, roots, mode, ReconcileIntent::Sync)
 }
 
@@ -317,17 +317,13 @@ fn reconcile_repo_skills(
     roots: &RuntimeSkillRoots,
     mode: SkillLinkMode,
     intent: ReconcileIntent,
-) -> Result<SkillLinkReport> {
+) -> AwoResult<SkillLinkReport> {
     let policy = runtime_skill_policy(runtime);
     let Some(target_dir) = roots.target_dir(runtime) else {
-        bail!("could not resolve the `{runtime}` user skill directory");
+        return Err(AwoError::skill_target_dir_unresolved(runtime.to_string()));
     };
-    fs::create_dir_all(target_dir).with_context(|| {
-        format!(
-            "failed to create `{runtime}` skill directory at {}",
-            target_dir.display()
-        )
-    })?;
+    fs::create_dir_all(target_dir)
+        .map_err(|source| AwoError::io("create runtime skill directory", target_dir, source))?;
 
     let mut linked = Vec::new();
     let mut updated = Vec::new();
@@ -395,11 +391,12 @@ fn reconcile_repo_skills(
             .map(|skill| skill.directory_name.as_str())
             .collect::<BTreeSet<_>>();
         if let Some(shared_root) = shared_root {
-            for entry in fs::read_dir(target_dir).with_context(|| {
-                format!("failed to read runtime skill dir {}", target_dir.display())
+            for entry in fs::read_dir(target_dir).map_err(|source| {
+                AwoError::io("read runtime skill directory", target_dir, source)
             })? {
-                let entry = entry
-                    .with_context(|| format!("failed to read entry in {}", target_dir.display()))?;
+                let entry = entry.map_err(|source| {
+                    AwoError::io("read runtime skill directory entry", target_dir, source)
+                })?;
                 let path = entry.path();
                 let name = match path.file_name().and_then(|value| value.to_str()) {
                     Some(value) => value.to_string(),
@@ -409,10 +406,10 @@ fn reconcile_repo_skills(
                     continue;
                 }
                 let metadata = fs::symlink_metadata(&path)
-                    .with_context(|| format!("failed to inspect {}", path.display()))?;
+                    .map_err(|source| AwoError::io("inspect path", &path, source))?;
                 if metadata.file_type().is_symlink() {
                     let linked_to = fs::read_link(&path)
-                        .with_context(|| format!("failed to read symlink {}", path.display()))?;
+                        .map_err(|source| AwoError::io("read symlink", &path, source))?;
                     let resolved = if linked_to.is_absolute() {
                         linked_to
                     } else {

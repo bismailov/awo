@@ -159,7 +159,7 @@ fn session_state(supervisor_ref: &str) -> Result<Option<TmuxSessionState>> {
     }
 }
 
-fn supervisor_ref(session_id: &str) -> String {
+pub(super) fn supervisor_ref(session_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(session_id.as_bytes());
     let digest = hasher.finalize();

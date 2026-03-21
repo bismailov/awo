@@ -14,6 +14,8 @@ use supervisor::{
     exit_code_path_for, format_command_line, pid_path_for, pid_sidecar_exists, prepare_command,
     process_is_running, pty_supervision_available, read_exit_code, read_pid, session_io_layout,
 };
+#[cfg(test)]
+use supervisor::{shell_join, shell_quote, supervisor_ref};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRecord {

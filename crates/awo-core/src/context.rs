@@ -1,5 +1,5 @@
 use crate::diagnostics::Diagnostic;
-use anyhow::{Context, Result};
+use crate::error::{AwoError, AwoResult};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -59,9 +59,10 @@ impl SessionContextPlan {
     }
 }
 
-pub fn discover_repo_context(repo_root: &Path) -> Result<RepoContext> {
+pub fn discover_repo_context(repo_root: &Path) -> AwoResult<RepoContext> {
+    let repo_root_display = repo_root.display().to_string();
     let repo_root = fs::canonicalize(repo_root)
-        .with_context(|| format!("failed to canonicalize repo root {}", repo_root.display()))?;
+        .map_err(|source| AwoError::io("canonicalize repo root", repo_root_display, source))?;
 
     let entrypoints = discover_entrypoints(&repo_root);
     let standards = discover_standard_files(&repo_root);
@@ -296,16 +297,14 @@ fn discover_standard_files(repo_root: &Path) -> Vec<ContextFile> {
     .collect()
 }
 
-fn collect_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
+fn collect_markdown_files(dir: &Path) -> AwoResult<Vec<PathBuf>> {
     let mut files = Vec::new();
     if !dir.exists() {
         return Ok(files);
     }
 
-    for entry in
-        fs::read_dir(dir).with_context(|| format!("failed to read directory {}", dir.display()))?
-    {
-        let entry = entry.with_context(|| format!("failed to read entry in {}", dir.display()))?;
+    for entry in fs::read_dir(dir).map_err(|source| AwoError::io("read directory", dir, source))? {
+        let entry = entry.map_err(|source| AwoError::io("read directory entry", dir, source))?;
         let path = entry.path();
         if path.is_dir() {
             files.extend(collect_markdown_files(&path)?);

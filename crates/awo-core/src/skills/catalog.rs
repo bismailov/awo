@@ -1,14 +1,15 @@
 use super::{DiscoveredSkill, RepoSkillCatalog};
 use crate::diagnostics::Diagnostic;
-use anyhow::{Context, Result};
+use crate::error::{AwoError, AwoResult};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-pub fn discover_repo_skills(repo_root: &Path) -> Result<RepoSkillCatalog> {
+pub fn discover_repo_skills(repo_root: &Path) -> AwoResult<RepoSkillCatalog> {
+    let repo_root_display = repo_root.display().to_string();
     let repo_root = fs::canonicalize(repo_root)
-        .with_context(|| format!("failed to canonicalize repo root {}", repo_root.display()))?;
+        .map_err(|source| AwoError::io("canonicalize repo root", repo_root_display, source))?;
     let shared_root = repo_root.join(".agents/skills");
     let lockfile_path = repo_root.join("skills-lock.json");
     let mut diagnostics = Vec::new();
@@ -38,10 +39,10 @@ pub fn discover_repo_skills(repo_root: &Path) -> Result<RepoSkillCatalog> {
 
     let mut seen_names = BTreeSet::new();
     for entry in fs::read_dir(&shared_root)
-        .with_context(|| format!("failed to read skill root {}", shared_root.display()))?
+        .map_err(|source| AwoError::io("read skill root", &shared_root, source))?
     {
         let entry =
-            entry.with_context(|| format!("failed to read entry in {}", shared_root.display()))?;
+            entry.map_err(|source| AwoError::io("read skill root entry", &shared_root, source))?;
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -144,9 +145,9 @@ pub fn discover_repo_skills(repo_root: &Path) -> Result<RepoSkillCatalog> {
     })
 }
 
-fn load_skills_lock(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<SkillsLockFile> {
+fn load_skills_lock(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> AwoResult<SkillsLockFile> {
     let contents = fs::read_to_string(path)
-        .with_context(|| format!("failed to read skills lockfile {}", path.display()))?;
+        .map_err(|source| AwoError::io("read skills lockfile", path, source))?;
     match serde_json::from_str::<SkillsLockFile>(&contents) {
         Ok(lockfile) => Ok(lockfile),
         Err(error) => {
@@ -159,9 +160,9 @@ fn load_skills_lock(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<Sk
     }
 }
 
-fn read_skill_frontmatter(path: &Path) -> Result<SkillFrontmatter> {
-    let contents = fs::read_to_string(path)
-        .with_context(|| format!("failed to read skill file {}", path.display()))?;
+fn read_skill_frontmatter(path: &Path) -> AwoResult<SkillFrontmatter> {
+    let contents =
+        fs::read_to_string(path).map_err(|source| AwoError::io("read skill file", path, source))?;
     let mut lines = contents.lines();
     if lines.next().map(str::trim) != Some("---") {
         return Ok(SkillFrontmatter::default());
@@ -171,7 +172,7 @@ fn read_skill_frontmatter(path: &Path) -> Result<SkillFrontmatter> {
     for line in lines {
         if line.trim() == "---" {
             return serde_yaml::from_str::<SkillFrontmatter>(&yaml)
-                .with_context(|| format!("failed to parse frontmatter in {}", path.display()));
+                .map_err(|source| AwoError::yaml_parse(path, source));
         }
         yaml.push_str(line);
         yaml.push('\n');

@@ -1,5 +1,5 @@
 use super::{DiscoveredSkill, SkillInstallState, SkillLinkMode};
-use anyhow::{Context, Result};
+use crate::error::{AwoError, AwoResult};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -7,25 +7,24 @@ use std::path::Path;
 pub(super) fn determine_install_state(
     skill: &DiscoveredSkill,
     target_path: &Path,
-) -> Result<SkillInstallState> {
+) -> AwoResult<SkillInstallState> {
     let metadata = match fs::symlink_metadata(target_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(SkillInstallState::Missing);
         }
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to inspect runtime skill target {}",
-                    target_path.display()
-                )
-            });
+            return Err(AwoError::io(
+                "inspect runtime skill target",
+                target_path,
+                error,
+            ));
         }
     };
 
     if metadata.file_type().is_symlink() {
         let linked_to = fs::read_link(target_path)
-            .with_context(|| format!("failed to read symlink target {}", target_path.display()))?;
+            .map_err(|source| AwoError::io("read symlink target", target_path, source))?;
         let resolved = if linked_to.is_absolute() {
             linked_to
         } else {
@@ -56,7 +55,7 @@ pub(super) fn install_skill(
     source_path: &Path,
     target_path: &Path,
     mode: SkillLinkMode,
-) -> Result<()> {
+) -> AwoResult<()> {
     match mode {
         SkillLinkMode::Symlink => create_symlink(source_path, target_path),
         SkillLinkMode::Copy => copy_dir_all(source_path, target_path),
@@ -71,29 +70,25 @@ pub(super) fn matches_mode(mode: SkillLinkMode, state: SkillInstallState) -> boo
     )
 }
 
-pub(super) fn remove_target(target_path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(target_path).with_context(|| {
-        format!(
-            "failed to inspect runtime skill target {}",
-            target_path.display()
-        )
-    })?;
+pub(super) fn remove_target(target_path: &Path) -> AwoResult<()> {
+    let metadata = fs::symlink_metadata(target_path)
+        .map_err(|source| AwoError::io("inspect runtime skill target", target_path, source))?;
     if metadata.file_type().is_symlink() || metadata.is_file() {
         fs::remove_file(target_path)
-            .with_context(|| format!("failed to remove {}", target_path.display()))?;
+            .map_err(|source| AwoError::io("remove file", target_path, source))?;
     } else if metadata.is_dir() {
         fs::remove_dir_all(target_path)
-            .with_context(|| format!("failed to remove {}", target_path.display()))?;
+            .map_err(|source| AwoError::io("remove directory", target_path, source))?;
     }
     Ok(())
 }
 
-fn create_symlink(source_path: &Path, target_path: &Path) -> Result<()> {
-    create_dir_symlink(source_path, target_path).with_context(|| {
-        format!(
-            "failed to create skill symlink from {} to {}",
-            source_path.display(),
-            target_path.display()
+fn create_symlink(source_path: &Path, target_path: &Path) -> AwoResult<()> {
+    create_dir_symlink(source_path, target_path).map_err(|source| {
+        AwoError::io(
+            "create skill symlink",
+            format!("{} -> {}", source_path.display(), target_path.display()),
+            source,
         )
     })
 }
@@ -108,29 +103,25 @@ fn create_dir_symlink(source_path: &Path, target_path: &Path) -> std::io::Result
     std::os::windows::fs::symlink_dir(source_path, target_path)
 }
 
-fn copy_dir_all(source_path: &Path, target_path: &Path) -> Result<()> {
-    fs::create_dir_all(target_path).with_context(|| {
-        format!(
-            "failed to create copied skill directory {}",
-            target_path.display()
-        )
-    })?;
+fn copy_dir_all(source_path: &Path, target_path: &Path) -> AwoResult<()> {
+    fs::create_dir_all(target_path)
+        .map_err(|source| AwoError::io("create copied skill directory", target_path, source))?;
 
     for entry in fs::read_dir(source_path)
-        .with_context(|| format!("failed to read skill source {}", source_path.display()))?
+        .map_err(|source| AwoError::io("read skill source", source_path, source))?
     {
         let entry =
-            entry.with_context(|| format!("failed to read entry in {}", source_path.display()))?;
+            entry.map_err(|source| AwoError::io("read skill source entry", source_path, source))?;
         let source = entry.path();
         let target = target_path.join(entry.file_name());
         if source.is_dir() {
             copy_dir_all(&source, &target)?;
         } else {
-            fs::copy(&source, &target).with_context(|| {
-                format!(
-                    "failed to copy skill file from {} to {}",
-                    source.display(),
-                    target.display()
+            fs::copy(&source, &target).map_err(|source_err| {
+                AwoError::io(
+                    "copy skill file",
+                    format!("{} -> {}", source.display(), target.display()),
+                    source_err,
                 )
             })?;
         }
@@ -139,19 +130,19 @@ fn copy_dir_all(source_path: &Path, target_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn same_path(left: &Path, right: &Path) -> Result<bool> {
-    let left = fs::canonicalize(left)
-        .with_context(|| format!("failed to canonicalize {}", left.display()))?;
+fn same_path(left: &Path, right: &Path) -> AwoResult<bool> {
+    let left =
+        fs::canonicalize(left).map_err(|source| AwoError::io("canonicalize path", left, source))?;
     let right = fs::canonicalize(right)
-        .with_context(|| format!("failed to canonicalize {}", right.display()))?;
+        .map_err(|source| AwoError::io("canonicalize path", right, source))?;
     Ok(left == right)
 }
 
-fn same_directory_contents(left: &Path, right: &Path) -> Result<bool> {
+fn same_directory_contents(left: &Path, right: &Path) -> AwoResult<bool> {
     Ok(directory_fingerprint(left)? == directory_fingerprint(right)?)
 }
 
-fn directory_fingerprint(path: &Path) -> Result<String> {
+fn directory_fingerprint(path: &Path) -> AwoResult<String> {
     let mut entries = Vec::new();
     collect_directory_entries(path, path, &mut entries)?;
     let mut hasher = Sha256::new();
@@ -161,11 +152,11 @@ fn directory_fingerprint(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn collect_directory_entries(root: &Path, path: &Path, entries: &mut Vec<String>) -> Result<()> {
+fn collect_directory_entries(root: &Path, path: &Path, entries: &mut Vec<String>) -> AwoResult<()> {
     let mut children = fs::read_dir(path)
-        .with_context(|| format!("failed to read directory {}", path.display()))?
+        .map_err(|source| AwoError::io("read directory", path, source))?
         .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("failed to read entries in {}", path.display()))?;
+        .map_err(|source| AwoError::io("read directory entries", path, source))?;
     children.sort_by_key(|entry| entry.file_name());
 
     for entry in children {
@@ -176,10 +167,10 @@ fn collect_directory_entries(root: &Path, path: &Path, entries: &mut Vec<String>
             .display()
             .to_string();
         let metadata = fs::symlink_metadata(&child_path)
-            .with_context(|| format!("failed to inspect {}", child_path.display()))?;
+            .map_err(|source| AwoError::io("inspect path", &child_path, source))?;
         if metadata.file_type().is_symlink() {
             let link = fs::read_link(&child_path)
-                .with_context(|| format!("failed to read symlink {}", child_path.display()))?;
+                .map_err(|source| AwoError::io("read symlink", &child_path, source))?;
             entries.push(format!("symlink:{relative}:{}", link.display()));
         } else if metadata.is_dir() {
             entries.push(format!("dir:{relative}"));
@@ -192,9 +183,8 @@ fn collect_directory_entries(root: &Path, path: &Path, entries: &mut Vec<String>
     Ok(())
 }
 
-fn file_hash(path: &Path) -> Result<String> {
-    let contents =
-        fs::read(path).with_context(|| format!("failed to read file {}", path.display()))?;
+fn file_hash(path: &Path) -> AwoResult<String> {
+    let contents = fs::read(path).map_err(|source| AwoError::io("read file", path, source))?;
     let mut hasher = Sha256::new();
     hasher.update(contents);
     Ok(format!("{:x}", hasher.finalize()))
