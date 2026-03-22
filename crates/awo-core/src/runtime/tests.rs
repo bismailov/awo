@@ -1,5 +1,7 @@
 use super::*;
 use crate::app::AppPaths;
+#[cfg(not(windows))]
+use crate::platform::shell_script_args;
 use crate::platform::{default_shell_program, shell_command_args};
 use anyhow::Result;
 use std::fs;
@@ -301,9 +303,53 @@ fn prepare_command_shell_uses_platform_shell() {
     );
     let expected_shell = default_shell_program();
     assert_eq!(prepared.program, expected_shell);
-    let expected_args = shell_command_args("echo hello");
-    assert_eq!(prepared.args, expected_args);
+    let expected_display = shell_join(expected_shell, &shell_command_args("echo hello"));
+    assert_eq!(
+        prepared.display_command_line.as_deref(),
+        Some(expected_display.as_str())
+    );
+
+    #[cfg(windows)]
+    {
+        let expected_args = shell_command_args("echo hello");
+        assert_eq!(prepared.args, expected_args);
+        assert!(prepared.script_path.is_none());
+        assert!(prepared.script_body.is_none());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let expected_script = stdout.with_extension("sh");
+        let expected_args = shell_script_args(&expected_script);
+        assert_eq!(prepared.args, expected_args);
+        assert_eq!(
+            prepared.script_path.as_deref(),
+            Some(expected_script.as_path())
+        );
+        assert_eq!(prepared.script_body.as_deref(), Some("echo hello"));
+    }
     assert_eq!(prepared.cwd, slot);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn materialize_shell_script_writes_prompt_body() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = temp_dir.path().join("prompt.sh");
+    let prepared = PreparedCommand {
+        program: default_shell_program().to_string(),
+        args: shell_script_args(&script_path),
+        cwd: temp_dir.path().to_path_buf(),
+        display_command_line: None,
+        script_path: Some(script_path.clone()),
+        script_body: Some("echo hello".to_string()),
+    };
+
+    materialize_shell_script(&prepared)?;
+
+    let contents = fs::read_to_string(&script_path)?;
+    assert_eq!(contents, "echo hello\n");
+    Ok(())
 }
 
 #[test]
@@ -379,6 +425,9 @@ fn format_command_line_produces_shell_quoted_output() {
         program: "codex".to_string(),
         args: vec!["exec".to_string(), "--full-auto".to_string()],
         cwd: Path::new("/tmp").to_path_buf(),
+        display_command_line: None,
+        script_path: None,
+        script_body: None,
     };
     let line = format_command_line(&prepared);
     assert_eq!(line, "'codex' 'exec' '--full-auto'");

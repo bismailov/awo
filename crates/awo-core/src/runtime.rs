@@ -11,8 +11,9 @@ mod supervisor;
 
 use supervisor::{
     PreparedCommand, SessionSupervisor, build_session_id, clear_sidecar_if_exists,
-    exit_code_path_for, format_command_line, pid_path_for, pid_sidecar_exists, prepare_command,
-    process_is_running, pty_supervision_available, read_exit_code, read_pid, session_io_layout,
+    exit_code_path_for, format_command_line, materialize_shell_script, pid_path_for,
+    pid_sidecar_exists, prepare_command, process_is_running, pty_supervision_available,
+    read_exit_code, read_pid, session_io_layout,
 };
 #[cfg(test)]
 use supervisor::{shell_join, shell_quote, supervisor_ref};
@@ -218,6 +219,7 @@ pub fn execute_prepared_session(
     let exit_path = exit_code_path_for(&logs_dir, &prepared_session.session.id);
     let pid_path = pid_path_for(&logs_dir, &prepared_session.session.id);
     clear_sidecar_if_exists(&exit_path)?;
+    materialize_shell_script(&prepared_session.prepared)?;
 
     let child = Command::new(&prepared_session.prepared.program)
         .args(&prepared_session.prepared.args)

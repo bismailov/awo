@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 pub fn executable_exists(name: &str) -> bool {
@@ -49,6 +50,18 @@ pub fn shell_command_args(command: &str) -> Vec<String> {
     #[cfg(not(windows))]
     {
         vec!["-lc".to_string(), command.to_string()]
+    }
+}
+
+pub fn shell_script_args(script_path: &Path) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        vec!["-File".to_string(), script_path.display().to_string()]
+    }
+
+    #[cfg(not(windows))]
+    {
+        vec![script_path.display().to_string()]
     }
 }
 

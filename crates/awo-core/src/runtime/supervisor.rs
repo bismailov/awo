@@ -3,7 +3,10 @@ mod tmux;
 use super::{RuntimeKind, SessionLaunchMode, SessionRecord};
 use crate::app::AppPaths;
 use crate::error::{AwoError, AwoResult};
-use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
+use crate::platform::{
+    default_shell_program, shell_command_args, shell_script_args, supports_tmux_supervision,
+};
+use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,6 +27,9 @@ pub(super) struct PreparedCommand {
     pub(super) program: String,
     pub(super) args: Vec<String>,
     pub(super) cwd: PathBuf,
+    pub(super) display_command_line: Option<String>,
+    pub(super) script_path: Option<PathBuf>,
+    pub(super) script_body: Option<String>,
 }
 
 impl SessionSupervisor {
@@ -179,6 +185,9 @@ pub(super) fn prepare_command(
                 program: "codex".to_string(),
                 args,
                 cwd: slot_path.to_path_buf(),
+                display_command_line: None,
+                script_path: None,
+                script_body: None,
             }
         }
         RuntimeKind::Claude => {
@@ -195,6 +204,9 @@ pub(super) fn prepare_command(
                 program: "claude".to_string(),
                 args,
                 cwd: slot_path.to_path_buf(),
+                display_command_line: None,
+                script_path: None,
+                script_body: None,
             }
         }
         RuntimeKind::Gemini => {
@@ -215,18 +227,67 @@ pub(super) fn prepare_command(
                 program: "gemini".to_string(),
                 args,
                 cwd: slot_path.to_path_buf(),
+                display_command_line: None,
+                script_path: None,
+                script_body: None,
             }
         }
-        RuntimeKind::Shell => PreparedCommand {
-            program: default_shell_program().to_string(),
-            args: shell_command_args(prompt),
-            cwd: slot_path.to_path_buf(),
-        },
+        RuntimeKind::Shell => {
+            let display_command_line =
+                shell_join(default_shell_program(), &shell_command_args(prompt));
+            #[cfg(windows)]
+            {
+                PreparedCommand {
+                    program: default_shell_program().to_string(),
+                    args: shell_command_args(prompt),
+                    cwd: slot_path.to_path_buf(),
+                    display_command_line: Some(display_command_line),
+                    script_path: None,
+                    script_body: None,
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let script_path = stdout_path.with_extension("sh");
+                PreparedCommand {
+                    program: default_shell_program().to_string(),
+                    args: shell_script_args(&script_path),
+                    cwd: slot_path.to_path_buf(),
+                    display_command_line: Some(display_command_line),
+                    script_path: Some(script_path),
+                    script_body: Some(prompt.to_string()),
+                }
+            }
+        }
     }
 }
 
 pub(super) fn format_command_line(prepared: &PreparedCommand) -> String {
+    if let Some(display_command_line) = &prepared.display_command_line {
+        return display_command_line.clone();
+    }
     shell_join(&prepared.program, &prepared.args)
+}
+
+pub(super) fn materialize_shell_script(prepared: &PreparedCommand) -> AwoResult<()> {
+    let (Some(script_path), Some(script_body)) = (&prepared.script_path, &prepared.script_body)
+    else {
+        return Ok(());
+    };
+
+    if let Some(parent) = script_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create shell script dir at {}", parent.display())
+        })?;
+    }
+
+    let mut contents = script_body.clone();
+    if !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    fs::write(script_path, contents)
+        .with_context(|| format!("failed to write shell script at {}", script_path.display()))?;
+    Ok(())
 }
 
 pub(super) fn build_session_id(slot_id: &str, runtime: RuntimeKind) -> String {

@@ -1,4 +1,7 @@
-use super::{PreparedCommand, exit_code_path_for, read_exit_code, shell_join, shell_quote};
+use super::{
+    PreparedCommand, exit_code_path_for, materialize_shell_script, read_exit_code, shell_join,
+    shell_quote,
+};
 use crate::app::AppPaths;
 use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
 use anyhow::{Context, Result, bail};
@@ -41,6 +44,8 @@ pub(super) fn launch(
             )
         })?;
     }
+    materialize_shell_script(prepared)
+        .with_context(|| format!("failed to materialize shell prompt script for `{session_id}`"))?;
 
     let supervisor_ref = supervisor_ref(session_id);
     let wrapped_command = build_wrapper(prepared, &combined_log_path, &exit_path);
@@ -185,6 +190,9 @@ mod tests {
             program: "echo".to_string(),
             args: vec!["hello".to_string()],
             cwd: PathBuf::from("/tmp"),
+            display_command_line: None,
+            script_path: None,
+            script_body: None,
         };
         let wrapper = build_wrapper(
             &prepared,
