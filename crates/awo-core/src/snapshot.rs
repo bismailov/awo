@@ -10,7 +10,7 @@ use crate::runtime::SessionRecord;
 use crate::skills::{
     RuntimeSkillRoots, SkillInstallState, SkillRuntime, discover_repo_skills, doctor_repo_skills,
 };
-use crate::slot::SlotRecord;
+use crate::slot::{SlotRecord, SlotStrategy};
 use crate::store::Store;
 use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
 use serde::Serialize;
@@ -449,8 +449,46 @@ impl From<&RoutingPreferences> for RoutingPreferencesSummary {
 }
 
 impl SessionSummary {
+    fn is_completed(&self) -> bool {
+        self.status == "completed"
+    }
+
+    fn is_failed(&self) -> bool {
+        self.status == "failed"
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.status == "cancelled"
+    }
+
     fn is_terminal(&self) -> bool {
-        matches!(self.status.as_str(), "completed" | "failed" | "cancelled")
+        self.is_completed() || self.is_failed() || self.is_cancelled()
+    }
+}
+
+impl SlotSummary {
+    fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+
+    fn is_released(&self) -> bool {
+        self.status == "released"
+    }
+
+    fn is_missing(&self) -> bool {
+        self.status == "missing"
+    }
+
+    fn uses_warm_strategy(&self) -> bool {
+        self.strategy == SlotStrategy::Warm.as_str()
+    }
+
+    fn fingerprint_is_ready(&self) -> bool {
+        self.fingerprint_status == "ready"
+    }
+
+    fn fingerprint_is_stale(&self) -> bool {
+        self.fingerprint_status == "stale"
     }
 }
 
@@ -458,15 +496,19 @@ fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> Rev
     build_review_summary_impl(
         slots.iter().map(|slot| SlotReviewView {
             id: slot.id.as_str(),
-            status: slot.status.as_str(),
+            is_active: slot.is_active(),
+            is_released: slot.is_released(),
+            is_missing: slot.is_missing(),
             dirty: slot.dirty,
-            fingerprint_status: slot.fingerprint_status.as_str(),
-            strategy: slot.strategy.as_str(),
+            uses_warm_strategy: slot.uses_warm_strategy(),
+            fingerprint_is_ready: slot.fingerprint_is_ready(),
+            fingerprint_is_stale: slot.fingerprint_is_stale(),
         }),
         sessions.iter().map(|session| SessionReviewView {
             id: session.id.as_str(),
             slot_id: session.slot_id.as_str(),
-            status: session.status.as_str(),
+            is_completed: session.is_completed(),
+            is_failed: session.is_failed(),
             is_terminal: session.is_terminal(),
         }),
     )
@@ -479,15 +521,19 @@ fn build_review_summary_from_summaries(
     build_review_summary_impl(
         slots.iter().map(|slot| SlotReviewView {
             id: slot.id.as_str(),
-            status: slot.status.as_str(),
+            is_active: slot.is_active(),
+            is_released: slot.is_released(),
+            is_missing: slot.is_missing(),
             dirty: slot.dirty,
-            fingerprint_status: slot.fingerprint_status.as_str(),
-            strategy: slot.strategy.as_str(),
+            uses_warm_strategy: slot.uses_warm_strategy(),
+            fingerprint_is_ready: slot.fingerprint_is_ready(),
+            fingerprint_is_stale: slot.fingerprint_is_stale(),
         }),
         sessions.iter().map(|session| SessionReviewView {
             id: session.id.as_str(),
             slot_id: session.slot_id.as_str(),
-            status: session.status.as_str(),
+            is_completed: session.is_completed(),
+            is_failed: session.is_failed(),
             is_terminal: session.is_terminal(),
         }),
     )
@@ -495,16 +541,20 @@ fn build_review_summary_from_summaries(
 
 struct SlotReviewView<'a> {
     id: &'a str,
-    status: &'a str,
+    is_active: bool,
+    is_released: bool,
+    is_missing: bool,
     dirty: bool,
-    fingerprint_status: &'a str,
-    strategy: &'a str,
+    uses_warm_strategy: bool,
+    fingerprint_is_ready: bool,
+    fingerprint_is_stale: bool,
 }
 
 struct SessionReviewView<'a> {
     id: &'a str,
     slot_id: &'a str,
-    status: &'a str,
+    is_completed: bool,
+    is_failed: bool,
     is_terminal: bool,
 }
 
@@ -516,9 +566,9 @@ fn build_review_summary_impl<'a>(
     let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
 
     for session in sessions {
-        if session.status == "completed" {
+        if session.is_completed {
             summary.completed_sessions += 1;
-        } else if session.status == "failed" {
+        } else if session.is_failed {
             summary.failed_sessions += 1;
             summary.warnings.push(ReviewWarning {
                 kind: "failed-session".to_string(),
@@ -538,13 +588,13 @@ fn build_review_summary_impl<'a>(
     }
 
     for slot in slots {
-        if slot.status == "active" {
+        if slot.is_active {
             summary.active_slots += 1;
         }
         if slot.dirty {
             summary.dirty_slots += 1;
         }
-        if slot.fingerprint_status == "stale" {
+        if slot.fingerprint_is_stale {
             summary.stale_slots += 1;
         }
 
@@ -552,15 +602,11 @@ fn build_review_summary_impl<'a>(
             .get(slot.id)
             .copied()
             .unwrap_or_default();
-        if slot.status == "active"
-            && !slot.dirty
-            && slot.fingerprint_status == "ready"
-            && pending_sessions == 0
-        {
+        if slot.is_active && !slot.dirty && slot.fingerprint_is_ready && pending_sessions == 0 {
             summary.releasable_slots += 1;
         }
 
-        if slot.status == "active" && slot.dirty {
+        if slot.is_active && slot.dirty {
             summary.warnings.push(ReviewWarning {
                 kind: "dirty-slot".to_string(),
                 slot_id: Some(slot.id.to_string()),
@@ -572,7 +618,7 @@ fn build_review_summary_impl<'a>(
             });
         }
 
-        if slot.status == "active" && slot.fingerprint_status == "stale" {
+        if slot.is_active && slot.fingerprint_is_stale {
             summary.warnings.push(ReviewWarning {
                 kind: "stale-active-slot".to_string(),
                 slot_id: Some(slot.id.to_string()),
@@ -584,10 +630,7 @@ fn build_review_summary_impl<'a>(
             });
         }
 
-        if slot.strategy == "warm"
-            && slot.status == "released"
-            && slot.fingerprint_status == "stale"
-        {
+        if slot.uses_warm_strategy && slot.is_released && slot.fingerprint_is_stale {
             summary.warnings.push(ReviewWarning {
                 kind: "stale-warm-slot".to_string(),
                 slot_id: Some(slot.id.to_string()),
@@ -599,7 +642,7 @@ fn build_review_summary_impl<'a>(
             });
         }
 
-        if slot.status == "missing" {
+        if slot.is_missing {
             summary.warnings.push(ReviewWarning {
                 kind: "missing-slot".to_string(),
                 slot_id: Some(slot.id.to_string()),

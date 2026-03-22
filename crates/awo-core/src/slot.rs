@@ -20,6 +20,32 @@ pub struct SlotRecord {
     pub updated_at: String,
 }
 
+impl SlotRecord {
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+
+    pub fn is_released(&self) -> bool {
+        self.status == "released"
+    }
+
+    pub fn is_missing(&self) -> bool {
+        self.status == "missing"
+    }
+
+    pub fn uses_warm_strategy(&self) -> bool {
+        self.strategy == SlotStrategy::Warm.as_str()
+    }
+
+    pub fn fingerprint_is_ready(&self) -> bool {
+        self.fingerprint_status == "ready"
+    }
+
+    pub fn fingerprint_is_stale(&self) -> bool {
+        self.fingerprint_status == "stale"
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -72,5 +98,45 @@ fn slugify(input: &str) -> String {
         "task".to_string()
     } else {
         output.trim_matches('-').to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_slot(status: &str, strategy: &str, fingerprint_status: &str) -> SlotRecord {
+        SlotRecord {
+            id: "slot-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            task_name: "task".to_string(),
+            slot_path: "/tmp/slot".to_string(),
+            branch_name: "awo/task/slot-1".to_string(),
+            base_branch: "main".to_string(),
+            strategy: strategy.to_string(),
+            status: status.to_string(),
+            fingerprint_hash: None,
+            fingerprint_status: fingerprint_status.to_string(),
+            dirty: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn slot_record_status_helpers_classify_known_states() {
+        let active = sample_slot("active", "warm", "ready");
+        assert!(active.is_active());
+        assert!(active.uses_warm_strategy());
+        assert!(active.fingerprint_is_ready());
+        assert!(!active.is_released());
+        assert!(!active.is_missing());
+        assert!(!active.fingerprint_is_stale());
+
+        let released = sample_slot("released", "fresh", "stale");
+        assert!(released.is_released());
+        assert!(released.fingerprint_is_stale());
+        assert!(!released.is_active());
+        assert!(!released.uses_warm_strategy());
     }
 }

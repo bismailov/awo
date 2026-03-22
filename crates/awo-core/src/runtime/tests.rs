@@ -610,6 +610,33 @@ fn session_record_non_terminal_states() {
 }
 
 #[test]
+fn session_record_status_helpers_classify_known_states() {
+    let mut session = running_oneshot_session("s1");
+    session.status = "running".to_string();
+    assert!(session.is_running());
+    assert!(!session.is_supervised());
+    assert!(!session.is_prepared());
+    assert!(!session.is_terminal());
+
+    session.status = "prepared".to_string();
+    assert!(session.is_prepared());
+    assert!(!session.is_running());
+    assert!(!session.is_terminal());
+
+    session.status = "completed".to_string();
+    assert!(session.is_completed());
+    assert!(session.is_terminal());
+
+    session.status = "failed".to_string();
+    assert!(session.is_failed());
+    assert!(session.is_terminal());
+
+    session.status = "cancelled".to_string();
+    assert!(session.is_cancelled());
+    assert!(session.is_terminal());
+}
+
+#[test]
 fn session_record_write_capable() {
     let mut session = running_oneshot_session("s1");
     session.read_only = false;

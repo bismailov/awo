@@ -505,6 +505,55 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
 }
 
 #[test]
+fn failed_session_is_reflected_in_review_summary() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("failed-review")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "failed task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing failed-review slot")?;
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "exit 7".to_string(),
+        read_only: true,
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+
+    let session = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .context("missing failed session")?;
+    assert_eq!(session.status, "failed");
+    assert_eq!(session.exit_code, Some(7));
+
+    let review = core.snapshot()?.review_for_repo(Some(repo_id.as_str()));
+    assert_eq!(review.failed_sessions, 1);
+    assert!(
+        review
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == "failed-session")
+    );
+
+    Ok(())
+}
+
+#[test]
 fn oneshot_session_is_visible_while_running() -> Result<()> {
     let harness = TestHarness::new()?;
     let repo_id = harness.register_repo(harness.create_repo("oneshot-visible")?)?;

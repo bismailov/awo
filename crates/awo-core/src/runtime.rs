@@ -38,8 +38,28 @@ pub struct SessionRecord {
 }
 
 impl SessionRecord {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    pub fn is_prepared(&self) -> bool {
+        self.status == "prepared"
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.status == "completed"
+    }
+
+    pub fn is_failed(&self) -> bool {
+        self.status == "failed"
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.status == "cancelled"
+    }
+
     pub fn is_terminal(&self) -> bool {
-        matches!(self.status.as_str(), "completed" | "failed" | "cancelled")
+        self.is_completed() || self.is_failed() || self.is_cancelled()
     }
 
     pub fn blocks_release(&self) -> bool {
@@ -51,7 +71,7 @@ impl SessionRecord {
     }
 
     pub fn is_supervised(&self) -> bool {
-        self.status == "running" && SessionSupervisor::from_session(self).is_some()
+        self.is_running() && SessionSupervisor::from_session(self).is_some()
     }
 }
 
