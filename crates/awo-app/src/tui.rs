@@ -449,8 +449,10 @@ fn render_repo_detail(
     lines.push(Line::from("Runtime capabilities:"));
     for capability in runtime_capabilities {
         lines.push(Line::from(format!(
-            "  - {} launch={} subagents={} teams={}",
+            "  - {} tier={} limit={} launch={} subagents={} teams={}",
             capability.runtime,
+            capability.cost_tier.as_str(),
+            capability.limit_profile.as_str(),
             capability.default_launch_mode,
             capability.inline_subagents.as_str(),
             capability.multi_session_teams.as_str()

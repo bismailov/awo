@@ -267,9 +267,11 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
     println!("Runtime capabilities:");
     for capability in capabilities {
         println!(
-            "- {} ({}) launch={} subagents={} teams={} skills={} mcp_reasoning={} interrupt={} resume={} structured={} read_only_hint={}",
+            "- {} ({}) tier={} limit={} launch={} subagents={} teams={} skills={} mcp_reasoning={} interrupt={} resume={} structured={} read_only_hint={}",
             capability.display_name,
             capability.runtime,
+            capability.cost_tier.as_str(),
+            capability.limit_profile.as_str(),
             capability.default_launch_mode,
             capability.inline_subagents.as_str(),
             capability.multi_session_teams.as_str(),
@@ -280,6 +282,7 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
             capability.structured_output.as_str(),
             capability.read_only_hint.as_str()
         );
+        println!("  - operator_note: {}", capability.operator_note);
         for note in &capability.notes {
             println!("  - note: {note}");
         }

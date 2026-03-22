@@ -36,6 +36,8 @@ fn sample_manifest() -> TeamManifest {
             context_packs: vec!["architecture".to_string()],
             skills: vec!["planning-with-files".to_string()],
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
         members: vec![TeamMember {
             member_id: "worker-a".to_string(),
@@ -50,6 +52,8 @@ fn sample_manifest() -> TeamManifest {
             context_packs: vec!["architecture".to_string()],
             skills: vec!["rust-skills".to_string()],
             notes: Some("Owns runtime changes".to_string()),
+            fallback_runtime: None,
+            fallback_model: None,
         }],
         tasks: vec![TaskCard {
             task_id: "task-1".to_string(),
@@ -108,6 +112,8 @@ fn starter_manifest_defaults_to_planning_lead() {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
 
     assert_eq!(manifest.status, TeamStatus::Planning);
@@ -126,6 +132,8 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     manifest.add_member(TeamMember {
         member_id: "worker-a".to_string(),
@@ -140,6 +148,8 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         context_packs: vec!["architecture".to_string()],
         skills: vec!["rust-skills".to_string()],
         notes: Some("Own the runtime layer.".to_string()),
+        fallback_runtime: None,
+        fallback_model: None,
     })?;
     manifest.add_task(TaskCard {
         task_id: "task-1".to_string(),
@@ -175,6 +185,8 @@ fn concurrent_manifest_mutations_preserve_all_members() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     save_team_manifest(&paths, &manifest)?;
 
@@ -200,6 +212,8 @@ fn concurrent_manifest_mutations_preserve_all_members() -> Result<()> {
                 context_packs: Vec::new(),
                 skills: Vec::new(),
                 notes: None,
+                fallback_runtime: None,
+                fallback_model: None,
             })?;
             Ok(guard.save()?)
         }));
@@ -285,6 +299,8 @@ fn archive_empty_task_list_succeeds() -> Result<()> {
         Some("claude"),
         None,
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     assert!(manifest.can_archive());
     manifest.archive()?;
@@ -391,5 +407,107 @@ fn archived_status_survives_toml_roundtrip() -> Result<()> {
     let path = save_team_manifest(&paths, &manifest)?;
     let loaded = load_team_manifest(&path)?;
     assert_eq!(loaded.status, TeamStatus::Archived);
+    Ok(())
+}
+
+#[test]
+fn starter_manifest_with_fallback_fields() {
+    let manifest = starter_team_manifest(
+        "repo-1",
+        "team-fb",
+        "Test fallbacks",
+        Some("claude"),
+        Some("opus"),
+        TeamExecutionMode::ExternalSlots,
+        Some("gemini"),
+        Some("flash"),
+    );
+
+    assert_eq!(manifest.lead.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(manifest.lead.fallback_model.as_deref(), Some("flash"));
+}
+
+#[test]
+fn starter_manifest_without_fallback_fields() {
+    let manifest = starter_team_manifest(
+        "repo-1",
+        "team-nofb",
+        "Test no fallbacks",
+        Some("claude"),
+        None,
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+
+    assert!(manifest.lead.fallback_runtime.is_none());
+    assert!(manifest.lead.fallback_model.is_none());
+}
+
+#[test]
+fn fallback_fields_survive_toml_roundtrip() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let mut manifest = sample_manifest();
+    manifest.lead.fallback_runtime = Some("gemini".to_string());
+    manifest.lead.fallback_model = Some("flash".to_string());
+    manifest.members[0].fallback_runtime = Some("shell".to_string());
+
+    let path = save_team_manifest(&paths, &manifest)?;
+    let loaded = load_team_manifest(&path)?;
+    assert_eq!(loaded.lead.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(loaded.lead.fallback_model.as_deref(), Some("flash"));
+    assert_eq!(loaded.members[0].fallback_runtime.as_deref(), Some("shell"));
+    assert!(loaded.members[0].fallback_model.is_none());
+    Ok(())
+}
+
+#[test]
+fn manifest_without_fallback_fields_loads_as_none() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let manifest = sample_manifest();
+
+    let path = save_team_manifest(&paths, &manifest)?;
+    let loaded = load_team_manifest(&path)?;
+    assert!(loaded.lead.fallback_runtime.is_none());
+    assert!(loaded.lead.fallback_model.is_none());
+    assert!(loaded.members[0].fallback_runtime.is_none());
+    assert!(loaded.members[0].fallback_model.is_none());
+    Ok(())
+}
+
+#[test]
+fn add_member_with_fallback_fields() -> Result<()> {
+    let mut manifest = starter_team_manifest(
+        "repo-1",
+        "team-fb-member",
+        "Test member fallbacks",
+        Some("claude"),
+        None,
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    manifest.add_member(TeamMember {
+        member_id: "worker-fb".to_string(),
+        role: "implementer".to_string(),
+        runtime: Some("claude".to_string()),
+        model: Some("opus".to_string()),
+        execution_mode: TeamExecutionMode::ExternalSlots,
+        slot_id: None,
+        branch_name: None,
+        read_only: false,
+        write_scope: Vec::new(),
+        context_packs: Vec::new(),
+        skills: Vec::new(),
+        notes: None,
+        fallback_runtime: Some("codex".to_string()),
+        fallback_model: Some("mini".to_string()),
+    })?;
+
+    let member = manifest.member("worker-fb").expect("member should exist");
+    assert_eq!(member.fallback_runtime.as_deref(), Some("codex"));
+    assert_eq!(member.fallback_model.as_deref(), Some("mini"));
     Ok(())
 }

@@ -98,6 +98,8 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
 
@@ -116,6 +118,8 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             context_packs: Vec::new(),
             skills: Vec::new(),
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
     )?;
     let manifest = core.add_team_task(
@@ -164,6 +168,8 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
     core.add_team_member(
@@ -181,6 +187,8 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             context_packs: Vec::new(),
             skills: Vec::new(),
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
     )?;
     core.add_team_task(
@@ -255,6 +263,8 @@ fn create_team_with_bound_slot(
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
     core.add_team_member(
@@ -272,6 +282,8 @@ fn create_team_with_bound_slot(
             context_packs: Vec::new(),
             skills: Vec::new(),
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
     )?;
     core.add_team_task(
@@ -438,6 +450,8 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
     core.add_team_member(
@@ -455,6 +469,8 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             context_packs: Vec::new(),
             skills: Vec::new(),
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
     )?;
     core.add_team_task(
@@ -519,6 +535,8 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
     core.add_team_member(
@@ -536,6 +554,8 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             context_packs: Vec::new(),
             skills: Vec::new(),
             notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
         },
     )?;
     core.add_team_task(
@@ -722,6 +742,8 @@ fn delete_team_removes_manifest_once_bindings_are_gone() -> Result<()> {
         Some("claude"),
         Some("sonnet"),
         TeamExecutionMode::ExternalSlots,
+        None,
+        None,
     );
     core.save_team_manifest(&manifest)?;
 

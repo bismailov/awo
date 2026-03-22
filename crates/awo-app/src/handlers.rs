@@ -259,6 +259,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             lead_runtime,
             lead_model,
             execution_mode,
+            fallback_runtime,
+            fallback_model,
             force,
         } => {
             let snapshot = core.snapshot()?;
@@ -273,15 +275,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             let execution_mode = execution_mode
                 .parse::<TeamExecutionMode>()
                 .map_err(anyhow::Error::msg)?;
-            let lead_runtime = lead_runtime
-                .as_deref()
-                .map(|runtime| {
-                    runtime
-                        .parse::<RuntimeKind>()
-                        .map(|runtime| runtime.as_str().to_string())
-                        .map_err(anyhow::Error::msg)
-                })
-                .transpose()?;
+            let lead_runtime = parse_optional_runtime(lead_runtime.as_deref())?;
+            let fallback_runtime = parse_optional_runtime(fallback_runtime.as_deref())?;
             let manifest_path = default_team_manifest_path(core.paths(), &team_id);
             if manifest_path.exists() && !force {
                 bail!(
@@ -297,6 +292,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 lead_runtime.as_deref(),
                 lead_model.as_deref(),
                 execution_mode,
+                fallback_runtime.as_deref(),
+                fallback_model.as_deref(),
             );
             let path = core.save_team_manifest(&manifest)?;
             if output.json {
@@ -347,6 +344,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 context_pack,
                 skill,
                 notes,
+                fallback_runtime,
+                fallback_model,
             } => {
                 let manifest = core.add_team_member(
                     &team_id,
@@ -365,6 +364,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         context_packs: context_pack,
                         skills: skill,
                         notes,
+                        fallback_runtime: parse_optional_runtime(fallback_runtime.as_deref())?,
+                        fallback_model,
                     },
                 )?;
                 if output.json {

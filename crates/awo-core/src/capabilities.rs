@@ -20,11 +20,47 @@ impl CapabilitySupport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum CostTier {
+    Local,
+    Cheap,
+    Standard,
+    Premium,
+    Unknown,
+}
+
+impl CostTier {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, IntoStaticStr)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum LimitProfile {
+    LocalUnlimited,
+    ApiMetered,
+    SeatWithSoftLimits,
+    Unknown,
+}
+
+impl LimitProfile {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeCapabilityDescriptor {
     pub runtime: String,
     pub display_name: String,
     pub default_launch_mode: String,
+    pub cost_tier: CostTier,
+    pub limit_profile: LimitProfile,
+    pub operator_note: String,
     pub inline_subagents: CapabilitySupport,
     pub multi_session_teams: CapabilitySupport,
     pub skill_preload: CapabilitySupport,
@@ -43,6 +79,10 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             runtime: runtime.as_str().to_string(),
             display_name: "Claude Code".to_string(),
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            cost_tier: CostTier::Premium,
+            limit_profile: LimitProfile::ApiMetered,
+            operator_note: "High intelligence, higher spend. Use for complex planning and difficult code review."
+                .to_string(),
             inline_subagents: CapabilitySupport::Native,
             multi_session_teams: CapabilitySupport::Native,
             skill_preload: CapabilitySupport::Native,
@@ -61,6 +101,10 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             runtime: runtime.as_str().to_string(),
             display_name: "Codex CLI".to_string(),
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            cost_tier: CostTier::Standard,
+            limit_profile: LimitProfile::ApiMetered,
+            operator_note: "Good default balance for one-shot implementation and review loops."
+                .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
             multi_session_teams: CapabilitySupport::Unsupported,
             skill_preload: CapabilitySupport::AdapterManaged,
@@ -79,6 +123,10 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             runtime: runtime.as_str().to_string(),
             display_name: "Gemini CLI".to_string(),
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            cost_tier: CostTier::Cheap,
+            limit_profile: LimitProfile::ApiMetered,
+            operator_note: "Useful for large-context reads, audits, and lower-cost fallback work."
+                .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
             multi_session_teams: CapabilitySupport::Unsupported,
             skill_preload: CapabilitySupport::Native,
@@ -96,6 +144,10 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             runtime: runtime.as_str().to_string(),
             display_name: "Shell".to_string(),
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            cost_tier: CostTier::Local,
+            limit_profile: LimitProfile::LocalUnlimited,
+            operator_note: "Local validation and orchestration helper with no model quota pressure."
+                .to_string(),
             inline_subagents: CapabilitySupport::Unsupported,
             multi_session_teams: CapabilitySupport::Unsupported,
             skill_preload: CapabilitySupport::Unsupported,
@@ -134,6 +186,8 @@ mod tests {
         assert_eq!(capabilities.inline_subagents, CapabilitySupport::Native);
         assert_eq!(capabilities.multi_session_teams, CapabilitySupport::Native);
         assert_eq!(capabilities.skill_preload, CapabilitySupport::Native);
+        assert_eq!(capabilities.cost_tier, CostTier::Premium);
+        assert_eq!(capabilities.limit_profile, LimitProfile::ApiMetered);
     }
 
     #[test]
@@ -144,5 +198,13 @@ mod tests {
             capabilities.structured_output,
             CapabilitySupport::Unsupported
         );
+        assert_eq!(capabilities.cost_tier, CostTier::Standard);
+    }
+
+    #[test]
+    fn shell_capabilities_reflect_local_runtime_profile() {
+        let capabilities = runtime_capabilities(RuntimeKind::Shell);
+        assert_eq!(capabilities.cost_tier, CostTier::Local);
+        assert_eq!(capabilities.limit_profile, LimitProfile::LocalUnlimited);
     }
 }

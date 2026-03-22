@@ -115,6 +115,10 @@ pub enum TeamCommand {
         #[arg(long, default_value = "external_slots")]
         execution_mode: String,
         #[arg(long)]
+        fallback_runtime: Option<String>,
+        #[arg(long)]
+        fallback_model: Option<String>,
+        #[arg(long)]
         force: bool,
     },
     List,
@@ -154,6 +158,7 @@ pub enum TeamCommand {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum TeamMemberCommand {
     Add {
         team_id: String,
@@ -175,6 +180,10 @@ pub enum TeamMemberCommand {
         skill: Vec<String>,
         #[arg(long)]
         notes: Option<String>,
+        #[arg(long)]
+        fallback_runtime: Option<String>,
+        #[arg(long)]
+        fallback_model: Option<String>,
     },
     Remove {
         team_id: String,
