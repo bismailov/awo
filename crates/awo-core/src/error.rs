@@ -81,6 +81,14 @@ pub enum AwoError {
     },
     #[error("could not resolve `{runtime}` user skill directory")]
     SkillTargetDirUnresolved { runtime: String },
+    #[error("store error: {message}")]
+    Store {
+        message: String,
+        #[source]
+        source: rusqlite::Error,
+    },
+    #[error("store error: {message}")]
+    StoreInit { message: String },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -143,7 +151,11 @@ impl AwoError {
         }
     }
 
-    pub fn file_lock(mode: &'static str, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+    pub fn file_lock(
+        mode: &'static str,
+        path: impl Into<PathBuf>,
+        source: std::io::Error,
+    ) -> Self {
         Self::FileLock {
             mode,
             path: path.into(),
@@ -222,6 +234,19 @@ impl AwoError {
     pub fn skill_target_dir_unresolved(runtime: impl Into<String>) -> Self {
         Self::SkillTargetDirUnresolved {
             runtime: runtime.into(),
+        }
+    }
+
+    pub fn store(message: impl Into<String>, source: rusqlite::Error) -> Self {
+        Self::Store {
+            message: message.into(),
+            source,
+        }
+    }
+
+    pub fn store_init(message: impl Into<String>) -> Self {
+        Self::StoreInit {
+            message: message.into(),
         }
     }
 }

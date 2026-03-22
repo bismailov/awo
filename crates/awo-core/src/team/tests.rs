@@ -655,3 +655,306 @@ fn update_lead_member_policy() -> Result<()> {
     assert_eq!(lead.model.as_deref(), Some("flash"));
     Ok(())
 }
+
+// ── Negative-path parsing tests ────────────────────────────────────
+
+#[test]
+fn load_manifest_fails_on_malformed_toml() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("malformed.toml");
+    std::fs::write(&path, "this is not valid toml = = =")?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn load_manifest_fails_on_missing_team_id() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("missing_team_id.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+tasks = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("missing field `team_id`"));
+    Ok(())
+}
+
+#[test]
+fn load_manifest_fails_on_missing_repo_id() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("missing_repo_id.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+tasks = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("missing field `repo_id`"));
+    Ok(())
+}
+
+#[test]
+fn load_manifest_fails_on_missing_objective() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("missing_objective.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+status = "planning"
+members = []
+tasks = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("missing field `objective`"));
+    Ok(())
+}
+
+#[test]
+fn load_manifest_fails_on_missing_lead() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("missing_lead.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+tasks = []
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("missing field `lead`"));
+    Ok(())
+}
+
+#[test]
+fn load_manifest_fails_on_invalid_task_state() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("invalid_task_state.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[tasks]]
+task_id = "task-1"
+title = "Implement running-session persistence"
+summary = "Persist the session before one-shot completion."
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "A tested patch"
+verification = []
+depends_on = []
+state = "exploded"
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn validation_catches_duplicate_member_ids() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("duplicate_member.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+tasks = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[members]]
+member_id = "lead"
+role = "implementer"
+execution_mode = "external_slots"
+read_only = false
+write_scope = []
+context_packs = []
+skills = []
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("duplicate team member id `lead`"));
+    Ok(())
+}
+
+#[test]
+fn validation_catches_duplicate_task_ids() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("duplicate_task.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[tasks]]
+task_id = "task-1"
+title = "Implement 1"
+summary = "Do it"
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "Code"
+verification = []
+depends_on = []
+state = "todo"
+
+[[tasks]]
+task_id = "task-1"
+title = "Implement 2"
+summary = "Do it again"
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "Code"
+verification = []
+depends_on = []
+state = "todo"
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("duplicate task id `task-1`"));
+    Ok(())
+}
+
+#[test]
+fn validation_catches_nonexistent_task_dependency() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("unknown_dependency.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "team-alpha"
+repo_id = "repo-1"
+objective = "Ship a safe parallel implementation"
+status = "planning"
+members = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[tasks]]
+task_id = "task-1"
+title = "Implement 1"
+summary = "Do it"
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "Code"
+verification = []
+depends_on = ["nonexistent-task"]
+state = "todo"
+"#,
+    )?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(
+        format!("{:?}", result.unwrap_err()).contains("depends on unknown task `nonexistent-task`")
+    );
+    Ok(())
+}

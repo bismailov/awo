@@ -3,7 +3,6 @@ use crate::repo::RegisteredRepo;
 use crate::runtime::SessionRecord;
 use crate::slot::SlotRecord;
 use crate::snapshot::CommandLogEntry;
-use anyhow::Context;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
@@ -82,8 +81,12 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path) -> AwoResult<Self> {
-        let connection = Connection::open(path)
-            .with_context(|| format!("failed to open SQLite database at {}", path.display()))?;
+        let connection = Connection::open(path).map_err(|e| {
+            AwoError::store(
+                format!("failed to open SQLite database at {}", path.display()),
+                e,
+            )
+        })?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -96,7 +99,7 @@ impl Store {
             .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute_batch(BASE_SCHEMA_SQL)
-            .context("failed to initialize SQLite schema")?;
+            .map_err(|e| AwoError::store("failed to initialize SQLite schema", e))?;
         enable_wal_mode(&connection)?;
         let schema_version = schema_version(&connection)?.unwrap_or(BASE_SCHEMA_VERSION);
         apply_schema_migrations(&connection, schema_version)?;
@@ -107,7 +110,7 @@ impl Store {
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION.to_string()],
             )
-            .context("failed to update SQLite schema version")?;
+            .map_err(|e| AwoError::store("failed to update SQLite schema version", e))?;
         Ok(())
     }
 
@@ -121,7 +124,12 @@ impl Store {
                 "INSERT INTO action_log (command_name, payload) VALUES (?1, ?2)",
                 params![command_name, payload],
             )
-            .with_context(|| format!("failed to insert action log for command `{command_name}`"))?;
+            .map_err(|e| {
+                AwoError::store(
+                    format!("failed to insert action log for command `{command_name}`"),
+                    e,
+                )
+            })?;
         Ok(())
     }
 
@@ -137,7 +145,7 @@ impl Store {
                  ORDER BY id DESC
                  LIMIT ?1",
             )
-            .context("failed to prepare recent action query")?;
+            .map_err(|e| AwoError::store("failed to prepare recent action query", e))?;
 
         let rows = statement
             .query_map([limit as i64], |row| {
@@ -148,11 +156,11 @@ impl Store {
                     created_at: row.get(3)?,
                 })
             })
-            .context("failed to query recent actions")?;
+            .map_err(|e| AwoError::store("failed to query recent actions", e))?;
 
         let entries = rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect recent action rows")?;
+            .map_err(|e| AwoError::store("failed to collect recent action rows", e))?;
         Ok(entries)
     }
 
@@ -187,7 +195,9 @@ impl Store {
                     repo.shared_manifest_present as i64
                 ],
             )
-            .with_context(|| format!("failed to upsert repository `{}`", repo.id))?;
+            .map_err(|e| {
+                AwoError::store(format!("failed to upsert repository `{}`", repo.id), e)
+            })?;
         Ok(())
     }
 
@@ -204,7 +214,7 @@ impl Store {
                  FROM repositories
                  ORDER BY name ASC",
             )
-            .context("failed to prepare repository list query")?;
+            .map_err(|e| AwoError::store("failed to prepare repository list query", e))?;
 
         let rows = statement
             .query_map([], |row| {
@@ -221,11 +231,11 @@ impl Store {
                     updated_at: row.get(9)?,
                 })
             })
-            .context("failed to query repositories")?;
+            .map_err(|e| AwoError::store("failed to query repositories", e))?;
 
         let repos = rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect repository rows")?;
+            .map_err(|e| AwoError::store("failed to collect repository rows", e))?;
         Ok(repos)
     }
 
@@ -242,7 +252,7 @@ impl Store {
                  FROM repositories
                  WHERE id = ?1",
             )
-            .context("failed to prepare repository lookup query")?;
+            .map_err(|e| AwoError::store("failed to prepare repository lookup query", e))?;
 
         let repo = statement
             .query_row([repo_id], |row| {
@@ -260,7 +270,7 @@ impl Store {
                 })
             })
             .optional()
-            .context("failed to lookup repository")?;
+            .map_err(|e| AwoError::store("failed to lookup repository", e))?;
         Ok(repo)
     }
 
@@ -301,7 +311,7 @@ impl Store {
                     slot.dirty as i64
                 ],
             )
-            .with_context(|| format!("failed to upsert slot `{}`", slot.id))?;
+            .map_err(|e| AwoError::store(format!("failed to upsert slot `{}`", slot.id), e))?;
         Ok(())
     }
 
@@ -319,7 +329,7 @@ impl Store {
                  FROM slots
                  WHERE id = ?1",
             )
-            .context("failed to prepare slot lookup query")?;
+            .map_err(|e| AwoError::store("failed to prepare slot lookup query", e))?;
 
         let slot = statement
             .query_row([slot_id], |row| {
@@ -340,7 +350,7 @@ impl Store {
                 })
             })
             .optional()
-            .context("failed to lookup slot")?;
+            .map_err(|e| AwoError::store("failed to lookup slot", e))?;
         Ok(slot)
     }
 
@@ -367,7 +377,7 @@ impl Store {
         };
         let mut statement = connection
             .prepare(query)
-            .context("failed to prepare slot list query")?;
+            .map_err(|e| AwoError::store("failed to prepare slot list query", e))?;
 
         let map_row = |row: &rusqlite::Row<'_>| {
             Ok(SlotRecord {
@@ -390,16 +400,16 @@ impl Store {
         let rows = if let Some(repo_id) = repo_id {
             statement
                 .query_map([repo_id], map_row)
-                .context("failed to query slots")?
+                .map_err(|e| AwoError::store("failed to query slots", e))?
         } else {
             statement
                 .query_map([], map_row)
-                .context("failed to query slots")?
+                .map_err(|e| AwoError::store("failed to query slots", e))?
         };
 
         let slots = rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect slot rows")?;
+            .map_err(|e| AwoError::store("failed to collect slot rows", e))?;
         Ok(slots)
     }
 
@@ -422,7 +432,7 @@ impl Store {
                  ORDER BY updated_at ASC
                  LIMIT 1",
             )
-            .context("failed to prepare reusable warm slot query")?;
+            .map_err(|e| AwoError::store("failed to prepare reusable warm slot query", e))?;
 
         let slot = statement
             .query_row([repo_id], |row| {
@@ -443,7 +453,7 @@ impl Store {
                 })
             })
             .optional()
-            .context("failed to find reusable warm slot")?;
+            .map_err(|e| AwoError::store("failed to find reusable warm slot", e))?;
         Ok(slot)
     }
 
@@ -488,7 +498,9 @@ impl Store {
                     session.exit_code
                 ],
             )
-            .with_context(|| format!("failed to upsert session `{}`", session.id))?;
+            .map_err(|e| {
+                AwoError::store(format!("failed to upsert session `{}`", session.id), e)
+            })?;
         Ok(())
     }
 
@@ -499,7 +511,9 @@ impl Store {
             .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .with_context(|| format!("failed to delete session `{session_id}`"))?;
+            .map_err(|e| {
+                AwoError::store(format!("failed to delete session `{session_id}`"), e)
+            })?;
         Ok(())
     }
 
@@ -524,7 +538,7 @@ impl Store {
         };
         let mut statement = connection
             .prepare(query)
-            .context("failed to prepare session list query")?;
+            .map_err(|e| AwoError::store("failed to prepare session list query", e))?;
 
         let map_row = |row: &rusqlite::Row<'_>| {
             Ok(SessionRecord {
@@ -549,16 +563,16 @@ impl Store {
         let rows = if let Some(repo_id) = repo_id {
             statement
                 .query_map([repo_id], map_row)
-                .context("failed to query sessions")?
+                .map_err(|e| AwoError::store("failed to query sessions", e))?
         } else {
             statement
                 .query_map([], map_row)
-                .context("failed to query sessions")?
+                .map_err(|e| AwoError::store("failed to query sessions", e))?
         };
 
         let sessions = rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect session rows")?;
+            .map_err(|e| AwoError::store("failed to collect session rows", e))?;
         Ok(sessions)
     }
 
@@ -575,7 +589,7 @@ impl Store {
                  FROM sessions
                  WHERE id = ?1",
             )
-            .context("failed to prepare session lookup query")?;
+            .map_err(|e| AwoError::store("failed to prepare session lookup query", e))?;
 
         let session = statement
             .query_row([session_id], |row| {
@@ -598,7 +612,7 @@ impl Store {
                 })
             })
             .optional()
-            .context("failed to lookup session")?;
+            .map_err(|e| AwoError::store("failed to lookup session", e))?;
         Ok(session)
     }
 
@@ -616,7 +630,7 @@ impl Store {
                  WHERE slot_id = ?1
                  ORDER BY created_at DESC",
             )
-            .context("failed to prepare slot session list query")?;
+            .map_err(|e| AwoError::store("failed to prepare slot session list query", e))?;
 
         let rows = statement
             .query_map([slot_id], |row| {
@@ -638,11 +652,11 @@ impl Store {
                     updated_at: row.get(14)?,
                 })
             })
-            .context("failed to query slot sessions")?;
+            .map_err(|e| AwoError::store("failed to query slot sessions", e))?;
 
         let sessions = rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .context("failed to collect slot session rows")?;
+            .map_err(|e| AwoError::store("failed to collect slot session rows", e))?;
         Ok(sessions)
     }
 }
@@ -650,7 +664,7 @@ impl Store {
 fn enable_wal_mode(connection: &Connection) -> AwoResult<()> {
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
-        .context("failed to enable SQLite WAL mode")?;
+        .map_err(|e| AwoError::store("failed to enable SQLite WAL mode", e))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(AwoError::invalid_state(format!(
             "failed to enable SQLite WAL mode: journal_mode={journal_mode}"
@@ -667,7 +681,7 @@ fn schema_version(connection: &Connection) -> AwoResult<Option<i64>> {
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .context("failed to read SQLite schema version")?
+        .map_err(|e| AwoError::store("failed to read SQLite schema version", e))?
         .map(|value| {
             value.parse::<i64>().map_err(|error| {
                 AwoError::invalid_state(format!("invalid SQLite schema version `{value}`: {error}"))
@@ -686,7 +700,12 @@ fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoR
     if schema_version < 4 {
         connection
             .execute(MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL, [])
-            .context("failed to add `supervisor` column to sessions table")?;
+            .map_err(|e| {
+                AwoError::store(
+                    "failed to add `supervisor` column to sessions table",
+                    e,
+                )
+            })?;
     }
 
     Ok(())
