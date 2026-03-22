@@ -494,10 +494,15 @@ impl AppCore {
             } else {
                 None
             };
+            let routing_preferences = options
+                .routing_preferences
+                .clone()
+                .or_else(|| manifest.manifest().routing_preferences.clone())
+                .unwrap_or_default();
             let routing_decision = crate::routing::route_runtime(
                 primary_target,
                 fallback_target,
-                &options.routing_preferences,
+                &routing_preferences,
             );
             let runtime = routing_decision.selected_runtime;
             let runtime_name = runtime.as_str().to_string();

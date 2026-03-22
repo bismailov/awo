@@ -213,6 +213,49 @@ fn team_init_creates_manifest_and_shows_it() {
 }
 
 #[test]
+fn team_init_with_routing_defaults_persists_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-routing-defaults");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "routing-team",
+        "Route carefully",
+        "--prefer-local",
+        "--max-cost-tier",
+        "standard",
+        "--no-fallback",
+    ]);
+    assert_eq!(init_result["ok"], true, "team init failed: {init_result}");
+    let manifest = &init_result["data"]["manifest"];
+    assert_eq!(manifest["routing_preferences"]["prefer_local"], true);
+    assert_eq!(manifest["routing_preferences"]["avoid_metered"], false);
+    assert_eq!(manifest["routing_preferences"]["max_cost_tier"], "standard");
+    assert_eq!(manifest["routing_preferences"]["allow_fallback"], false);
+
+    let show_result = env.run(&["team", "show", "routing-team"]);
+    assert_eq!(show_result["ok"], true);
+    let show_manifest = &show_result["data"];
+    assert_eq!(show_manifest["routing_preferences"]["prefer_local"], true);
+    assert_eq!(show_manifest["routing_preferences"]["avoid_metered"], false);
+    assert_eq!(
+        show_manifest["routing_preferences"]["max_cost_tier"],
+        "standard"
+    );
+    assert_eq!(
+        show_manifest["routing_preferences"]["allow_fallback"],
+        false
+    );
+}
+
+#[test]
 fn team_init_rejects_unknown_repo_id() {
     let env = TestEnv::new();
     let result = env.run(&[

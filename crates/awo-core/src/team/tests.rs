@@ -23,6 +23,7 @@ fn sample_manifest() -> TeamManifest {
         repo_id: "repo-1".to_string(),
         objective: "Ship a safe parallel implementation".to_string(),
         status: TeamStatus::Planning,
+        routing_preferences: None,
         lead: TeamMember {
             member_id: "lead".to_string(),
             role: "lead".to_string(),
@@ -117,6 +118,7 @@ fn starter_manifest_defaults_to_planning_lead() {
     );
 
     assert_eq!(manifest.status, TeamStatus::Planning);
+    assert_eq!(manifest.routing_preferences, None);
     assert_eq!(manifest.lead.member_id, "lead");
     assert_eq!(manifest.lead.runtime.as_deref(), Some("claude"));
     assert!(manifest.members.is_empty());

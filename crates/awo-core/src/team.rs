@@ -107,7 +107,7 @@ pub struct TeamTaskStartOptions {
     pub dry_run: bool,
     pub launch_mode: String,
     pub attach_context: bool,
-    pub routing_preferences: crate::routing::RoutingPreferences,
+    pub routing_preferences: Option<crate::routing::RoutingPreferences>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +133,8 @@ pub struct TeamManifest {
     pub repo_id: String,
     pub objective: String,
     pub status: TeamStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_preferences: Option<crate::routing::RoutingPreferences>,
     pub lead: TeamMember,
     pub members: Vec<TeamMember>,
     pub tasks: Vec<TaskCard>,
@@ -532,6 +534,7 @@ pub fn starter_team_manifest(
         repo_id: repo_id.to_string(),
         objective: objective.to_string(),
         status: TeamStatus::Planning,
+        routing_preferences: None,
         lead: TeamMember {
             member_id: "lead".to_string(),
             role: "lead".to_string(),

@@ -84,7 +84,7 @@ fn team_task_start_options(team_id: &str, task_id: &str) -> TeamTaskStartOptions
         dry_run: false,
         launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
         attach_context: false,
-        routing_preferences: crate::routing::RoutingPreferences::default(),
+        routing_preferences: None,
     }
 }
 
@@ -149,6 +149,18 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             state: TaskCardState::Todo,
         },
     )?;
+    Ok(())
+}
+
+fn create_routed_team_with_manifest_defaults(
+    core: &mut AppCore,
+    team_id: &str,
+    routing_preferences: crate::routing::RoutingPreferences,
+) -> Result<()> {
+    create_routed_team_task(core, team_id)?;
+    let mut manifest = core.load_team_manifest(team_id)?;
+    manifest.routing_preferences = Some(routing_preferences);
+    core.save_team_manifest(&manifest)?;
     Ok(())
 }
 
@@ -391,7 +403,10 @@ fn start_team_task_prefers_fallback_under_cost_ceiling() -> Result<()> {
 
     let mut options = team_task_start_options("team-routing-fallback", "task-1");
     options.dry_run = true;
-    options.routing_preferences.max_cost_tier = Some(crate::capabilities::CostTier::Standard);
+    options.routing_preferences = Some(crate::routing::RoutingPreferences {
+        max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+        ..Default::default()
+    });
 
     let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
 
@@ -412,8 +427,11 @@ fn start_team_task_no_fallback_preserves_primary_selection() -> Result<()> {
 
     let mut options = team_task_start_options("team-routing-primary", "task-1");
     options.dry_run = true;
-    options.routing_preferences.max_cost_tier = Some(crate::capabilities::CostTier::Standard);
-    options.routing_preferences.allow_fallback = false;
+    options.routing_preferences = Some(crate::routing::RoutingPreferences {
+        allow_fallback: false,
+        max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+        ..Default::default()
+    });
 
     let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
 
@@ -424,6 +442,46 @@ fn start_team_task_no_fallback_preserves_primary_selection() -> Result<()> {
         crate::routing::RoutingSource::Primary
     );
     assert_eq!(execution.session_status, "prepared");
+    Ok(())
+}
+
+#[test]
+fn team_task_routing_policy_persistence() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_with_manifest_defaults(
+        &mut core,
+        "team-routing-policy",
+        crate::routing::RoutingPreferences {
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            ..Default::default()
+        },
+    )?;
+
+    let mut inherited = team_task_start_options("team-routing-policy", "task-1");
+    inherited.dry_run = true;
+    let (_manifest, _slot_outcome, _session_outcome, inherited_execution) =
+        core.start_team_task(inherited)?;
+    assert_eq!(inherited_execution.runtime, "gemini");
+    assert_eq!(
+        inherited_execution.routing_source,
+        crate::routing::RoutingSource::Fallback
+    );
+
+    let mut override_cli = team_task_start_options("team-routing-policy", "task-1");
+    override_cli.dry_run = true;
+    override_cli.routing_preferences = Some(crate::routing::RoutingPreferences {
+        allow_fallback: false,
+        max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+        ..Default::default()
+    });
+    let (_manifest, _slot_outcome, _session_outcome, override_execution) =
+        core.start_team_task(override_cli)?;
+    assert_eq!(override_execution.runtime, "claude");
+    assert_eq!(
+        override_execution.routing_source,
+        crate::routing::RoutingSource::Primary
+    );
+
     Ok(())
 }
 

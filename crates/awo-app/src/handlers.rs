@@ -305,6 +305,10 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             execution_mode,
             fallback_runtime,
             fallback_model,
+            prefer_local,
+            avoid_metered,
+            max_cost_tier,
+            no_fallback,
             force,
         } => {
             let snapshot = core.snapshot()?;
@@ -321,6 +325,12 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 .map_err(anyhow::Error::msg)?;
             let lead_runtime = parse_optional_runtime(lead_runtime.as_deref())?;
             let fallback_runtime = parse_optional_runtime(fallback_runtime.as_deref())?;
+            let routing_preferences = parse_routing_preferences(
+                prefer_local,
+                avoid_metered,
+                max_cost_tier.as_deref(),
+                no_fallback,
+            )?;
             let manifest_path = default_team_manifest_path(core.paths(), &team_id);
             if manifest_path.exists() && !force {
                 bail!(
@@ -329,7 +339,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 );
             }
 
-            let manifest = starter_team_manifest(
+            let mut manifest = starter_team_manifest(
                 &repo_id,
                 &team_id,
                 &objective,
@@ -339,6 +349,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 fallback_runtime.as_deref(),
                 fallback_model.as_deref(),
             );
+            manifest.routing_preferences = routing_preferences;
             let path = core.save_team_manifest(&manifest)?;
             if output.json {
                 #[derive(Serialize)]
@@ -517,12 +528,12 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 max_cost_tier,
                 no_fallback,
             } => {
-                let routing_preferences = RoutingPreferences {
-                    allow_fallback: !no_fallback,
+                let routing_preferences = parse_routing_preferences(
                     prefer_local,
                     avoid_metered,
-                    max_cost_tier: parse_optional_cost_tier(max_cost_tier.as_deref())?,
-                };
+                    max_cost_tier.as_deref(),
+                    no_fallback,
+                )?;
                 let (manifest, slot_outcome, session_outcome, execution) =
                     core.start_team_task(TeamTaskStartOptions {
                         team_id,
@@ -827,4 +838,24 @@ fn parse_optional_cost_tier(cost_tier: Option<&str>) -> Result<Option<CostTier>>
     cost_tier
         .map(|value| value.parse::<CostTier>().map_err(anyhow::Error::msg))
         .transpose()
+}
+
+fn parse_routing_preferences(
+    prefer_local: bool,
+    avoid_metered: bool,
+    max_cost_tier: Option<&str>,
+    no_fallback: bool,
+) -> Result<Option<RoutingPreferences>> {
+    let max_cost_tier = parse_optional_cost_tier(max_cost_tier)?;
+    let has_override = prefer_local || avoid_metered || max_cost_tier.is_some() || no_fallback;
+    if !has_override {
+        return Ok(None);
+    }
+
+    Ok(Some(RoutingPreferences {
+        allow_fallback: !no_fallback,
+        prefer_local,
+        avoid_metered,
+        max_cost_tier,
+    }))
 }

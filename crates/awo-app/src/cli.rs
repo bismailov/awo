@@ -139,6 +139,14 @@ pub enum TeamCommand {
         #[arg(long)]
         fallback_model: Option<String>,
         #[arg(long)]
+        prefer_local: bool,
+        #[arg(long)]
+        avoid_metered: bool,
+        #[arg(long)]
+        max_cost_tier: Option<String>,
+        #[arg(long)]
+        no_fallback: bool,
+        #[arg(long)]
         force: bool,
     },
     List,

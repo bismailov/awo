@@ -335,6 +335,18 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
     println!("- repo id: {}", manifest.repo_id);
     println!("- objective: {}", manifest.objective);
     println!("- status: {}", manifest.status);
+    if let Some(routing_preferences) = &manifest.routing_preferences {
+        println!(
+            "- routing defaults: prefer_local={} avoid_metered={} max_cost_tier={} allow_fallback={}",
+            routing_preferences.prefer_local,
+            routing_preferences.avoid_metered,
+            routing_preferences
+                .max_cost_tier
+                .map(|tier| tier.as_str())
+                .unwrap_or("-"),
+            routing_preferences.allow_fallback
+        );
+    }
     println!(
         "- lead: {} role={} runtime={} model={} mode={} read_only={}",
         manifest.lead.member_id,
