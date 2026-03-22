@@ -10,6 +10,7 @@ pub mod fingerprint;
 pub mod git;
 pub mod platform;
 pub mod repo;
+pub mod routing;
 pub mod runtime;
 pub mod skills;
 pub mod slot;
@@ -26,6 +27,9 @@ pub use context::{ContextDoctorReport, RepoContext};
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
 pub use error::{AwoError, AwoResult};
 pub use events::DomainEvent;
+pub use routing::{
+    RoutingDecision, RoutingPreferences, RoutingSource, RoutingTarget, route_runtime,
+};
 pub use runtime::{RuntimeKind, SessionLaunchMode};
 pub use skills::{
     RepoSkillCatalog, SkillDoctorReport, SkillLinkMode, SkillLinkReport, SkillRuntime,

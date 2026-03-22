@@ -267,7 +267,7 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
     println!("Runtime capabilities:");
     for capability in capabilities {
         println!(
-            "- {} ({}) tier={} limit={} launch={} subagents={} teams={} skills={} mcp_reasoning={} interrupt={} resume={} structured={} read_only_hint={}",
+            "- {} ({}) tier={} limit={} launch={} subagents={} teams={} skills={}",
             capability.display_name,
             capability.runtime,
             capability.cost_tier.as_str(),
@@ -276,15 +276,18 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
             capability.inline_subagents.as_str(),
             capability.multi_session_teams.as_str(),
             capability.skill_preload.as_str(),
+        );
+        println!(
+            "  mcp_reasoning={} interrupt={} resume={} structured={} read_only_hint={}",
             capability.reasoning_mcp_tools.as_str(),
             capability.interrupt.as_str(),
             capability.resume.as_str(),
             capability.structured_output.as_str(),
             capability.read_only_hint.as_str()
         );
-        println!("  - operator_note: {}", capability.operator_note);
+        println!("  operator_note: {}", capability.operator_note);
         for note in &capability.notes {
-            println!("  - note: {note}");
+            println!("  note: {note}");
         }
     }
 }
@@ -324,6 +327,13 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
         manifest.lead.execution_mode,
         manifest.lead.read_only
     );
+    if manifest.lead.fallback_runtime.is_some() || manifest.lead.fallback_model.is_some() {
+        println!(
+            "  fallback: runtime={} model={}",
+            manifest.lead.fallback_runtime.as_deref().unwrap_or("-"),
+            manifest.lead.fallback_model.as_deref().unwrap_or("-"),
+        );
+    }
     if manifest.lead.context_packs.is_empty() {
         println!("- lead context packs: none");
     } else {
@@ -356,6 +366,13 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
                     member.write_scope.join(", ")
                 }
             );
+            if member.fallback_runtime.is_some() || member.fallback_model.is_some() {
+                println!(
+                    "    fallback: runtime={} model={}",
+                    member.fallback_runtime.as_deref().unwrap_or("-"),
+                    member.fallback_model.as_deref().unwrap_or("-"),
+                );
+            }
         }
     }
 

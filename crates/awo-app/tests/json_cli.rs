@@ -250,3 +250,44 @@ fn team_show_unknown_id_returns_json_error() {
     assert_eq!(json["ok"], false);
     assert!(json["error"].is_string());
 }
+
+#[test]
+fn runtime_list_json_entries_include_budget_fields() {
+    let (_output, json) = run_awo_json(&["runtime", "list"]);
+    let entries = json["data"].as_array().expect("data should be an array");
+    assert!(
+        !entries.is_empty(),
+        "expected at least one runtime capability"
+    );
+    for entry in entries {
+        assert!(entry["cost_tier"].is_string());
+        assert!(entry["limit_profile"].is_string());
+        assert!(entry["operator_note"].is_string());
+        assert!(entry["notes"].is_array());
+    }
+}
+
+#[test]
+fn runtime_show_json_includes_budget_metadata_and_notes() {
+    let (_output, json) = run_awo_json(&["runtime", "show", "claude"]);
+    let entry = &json["data"][0];
+    assert_eq!(entry["runtime"], "claude");
+    assert_eq!(entry["cost_tier"], "premium");
+    assert_eq!(entry["limit_profile"], "api_metered");
+    assert!(entry["operator_note"].is_string());
+    assert!(
+        !entry["notes"]
+            .as_array()
+            .expect("notes should be an array")
+            .is_empty()
+    );
+}
+
+#[test]
+fn runtime_show_claude_has_native_team_capabilities() {
+    let (_output, json) = run_awo_json(&["runtime", "show", "claude"]);
+    let entry = &json["data"][0];
+    assert_eq!(entry["inline_subagents"], "native");
+    assert_eq!(entry["multi_session_teams"], "native");
+    assert_eq!(entry["skill_preload"], "native");
+}

@@ -622,3 +622,158 @@ fn task_state_transitions_through_lifecycle() {
     assert_eq!(done["data"]["tasks"][0]["state"], "done");
     assert_eq!(done["data"]["status"], "complete");
 }
+
+#[test]
+fn team_init_with_fallback_fields_persists_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("fallback-team-init");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "fb-team",
+        "Use a fallback",
+        "--lead-runtime",
+        "claude",
+        "--lead-model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+    assert_eq!(init["ok"], true, "team init failed: {init}");
+
+    let show = env.run(&["team", "show", "fb-team"]);
+    let lead = &show["data"]["lead"];
+    assert_eq!(lead["fallback_runtime"], "gemini");
+    assert_eq!(lead["fallback_model"], "flash");
+}
+
+#[test]
+fn team_init_without_fallback_fields_shows_null() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("fallback-team-none");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init = env.run(&["team", "init", &repo_id, "fb-none", "No fallback"]);
+    assert_eq!(init["ok"], true, "team init failed: {init}");
+
+    let show = env.run(&["team", "show", "fb-none"]);
+    let lead = &show["data"]["lead"];
+    assert!(lead["fallback_runtime"].is_null());
+    assert!(lead["fallback_model"].is_null());
+}
+
+#[test]
+fn team_member_add_with_fallback_fields_persists_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("fallback-member");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "fb-member-team",
+        "Member fallback",
+    ]);
+    let add_member = env.run(&[
+        "team",
+        "member",
+        "add",
+        "fb-member-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--fallback-runtime",
+        "codex",
+        "--fallback-model",
+        "gpt-5.4-mini",
+    ]);
+    assert_eq!(add_member["ok"], true, "member add failed: {add_member}");
+
+    let show = env.run(&["team", "show", "fb-member-team"]);
+    let member = &show["data"]["members"][0];
+    assert_eq!(member["fallback_runtime"], "codex");
+    assert_eq!(member["fallback_model"], "gpt-5.4-mini");
+}
+
+#[test]
+fn team_member_add_without_fallback_fields_shows_null() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("fallback-member-none");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "fb-member-none-team",
+        "Member no fallback",
+    ]);
+    let add_member = env.run(&[
+        "team",
+        "member",
+        "add",
+        "fb-member-none-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "shell",
+    ]);
+    assert_eq!(add_member["ok"], true, "member add failed: {add_member}");
+
+    let show = env.run(&["team", "show", "fb-member-none-team"]);
+    let member = &show["data"]["members"][0];
+    assert!(member["fallback_runtime"].is_null());
+    assert!(member["fallback_model"].is_null());
+}
+
+#[test]
+fn team_init_fallback_runtime_is_validated() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("fallback-invalid");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "fb-invalid-team",
+        "Bad fallback",
+        "--fallback-runtime",
+        "nonexistent-runtime",
+    ]);
+    assert_eq!(init["ok"], false);
+    let error = init["error"].as_str().expect("error should be a string");
+    assert!(
+        error.contains("unsupported value")
+            || error.contains("nonexistent-runtime")
+            || error.contains("Matching variant not found"),
+        "unexpected error: {error}"
+    );
+}

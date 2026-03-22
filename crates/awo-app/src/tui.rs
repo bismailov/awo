@@ -210,11 +210,11 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                 .runtime_capabilities
                 .iter()
                 .map(|capability| format!(
-                    "{}(subagents={},teams={},skills={})",
+                    "{}(launch={},subagents={},teams={})",
                     capability.runtime,
+                    capability.default_launch_mode,
                     capability.inline_subagents.as_str(),
                     capability.multi_session_teams.as_str(),
-                    capability.skill_preload.as_str()
                 ))
                 .collect::<Vec<_>>()
                 .join(" ")
@@ -449,14 +449,18 @@ fn render_repo_detail(
     lines.push(Line::from("Runtime capabilities:"));
     for capability in runtime_capabilities {
         lines.push(Line::from(format!(
-            "  - {} tier={} limit={} launch={} subagents={} teams={}",
+            "  - {} tier={} limit={} launch={} subagents={} teams={} skills={}",
             capability.runtime,
             capability.cost_tier.as_str(),
             capability.limit_profile.as_str(),
             capability.default_launch_mode,
             capability.inline_subagents.as_str(),
-            capability.multi_session_teams.as_str()
+            capability.multi_session_teams.as_str(),
+            capability.skill_preload.as_str()
         )));
+        if let Some(note) = capability.notes.first() {
+            lines.push(Line::from(format!("    {note}")));
+        }
     }
 
     lines
