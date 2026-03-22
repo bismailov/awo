@@ -153,6 +153,13 @@ pub enum TeamCommand {
     Show {
         team_id: String,
     },
+    Recommend {
+        team_id: String,
+        #[arg(long)]
+        member: Option<String>,
+        #[arg(long)]
+        task: Option<String>,
+    },
     Member {
         #[command(subcommand)]
         command: TeamMemberCommand,

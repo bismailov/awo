@@ -667,6 +667,45 @@ impl AppCore {
         Ok((manifest, slot_outcome, session_outcome, execution))
     }
 
+    pub fn recommend_team_routing(
+        &self,
+        team_id: &str,
+        member_id: Option<&str>,
+        task_id: Option<&str>,
+    ) -> AwoResult<crate::routing::RoutingRecommendation> {
+        match (member_id, task_id) {
+            (Some(_), Some(_)) => {
+                return Err(AwoError::invalid_state(
+                    "choose either `--member` or `--task`, not both",
+                ));
+            }
+            (None, None) => {
+                return Err(AwoError::invalid_state(
+                    "choose one selector: `--member` or `--task`",
+                ));
+            }
+            _ => {}
+        }
+
+        let manifest = self.load_team_manifest(team_id)?;
+        let preferences = manifest.routing_preferences.clone().unwrap_or_default();
+
+        let (member, task_id, primary_target, fallback_target) =
+            resolve_team_routing_targets(&manifest, member_id, task_id)?;
+        let decision = crate::routing::route_runtime(primary_target, fallback_target, &preferences);
+        let team_id = manifest.team_id.clone();
+        let member_id = member.member_id.clone();
+        let task_id = task_id.map(|value| value.to_string());
+
+        Ok(crate::routing::RoutingRecommendation {
+            team_id,
+            member_id,
+            task_id,
+            preferences,
+            decision,
+        })
+    }
+
     fn sync_runtime_state(&self, repo_id: Option<&str>) -> AwoResult<()> {
         let runner = CommandRunner::new(&self.config, &self.store);
         runner.sync_runtime_state(repo_id)?;
@@ -714,6 +753,65 @@ fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn resolve_team_routing_targets<'a>(
+    manifest: &'a TeamManifest,
+    member_id: Option<&str>,
+    task_id: Option<&'a str>,
+) -> AwoResult<(
+    &'a TeamMember,
+    Option<&'a str>,
+    crate::routing::RoutingTarget,
+    Option<crate::routing::RoutingTarget>,
+)> {
+    let (member, selected_task_id, primary_runtime_name) = if let Some(task_id) = task_id {
+        let task = manifest
+            .task(task_id)
+            .ok_or_else(|| AwoError::unknown_task(task_id))?;
+        let member = manifest
+            .member(&task.owner_id)
+            .ok_or_else(|| AwoError::unknown_owner(&task.owner_id))?;
+        let primary_runtime_name = task
+            .runtime
+            .as_deref()
+            .or(member.runtime.as_deref())
+            .ok_or_else(|| {
+                AwoError::invalid_state(format!(
+                    "task `{}` has no runtime; set one on the task or owner `{}`",
+                    task.task_id, member.member_id
+                ))
+            })?;
+        (member, Some(task.task_id.as_str()), primary_runtime_name)
+    } else if let Some(member_id) = member_id {
+        let member = manifest
+            .member(member_id)
+            .ok_or_else(|| AwoError::unknown_owner(member_id))?;
+        let primary_runtime_name = member.runtime.as_deref().ok_or_else(|| {
+            AwoError::invalid_state(format!("member `{}` has no runtime", member.member_id))
+        })?;
+        (member, None, primary_runtime_name)
+    } else {
+        unreachable!("selectors are validated before target resolution");
+    };
+
+    let primary_runtime: RuntimeKind = primary_runtime_name
+        .parse()
+        .map_err(|_| AwoError::unsupported("runtime", primary_runtime_name))?;
+    let primary_target = crate::routing::RoutingTarget::new(primary_runtime, member.model.clone());
+    let fallback_target = if let Some(fallback_runtime_name) = &member.fallback_runtime {
+        let fallback_runtime: RuntimeKind = fallback_runtime_name
+            .parse()
+            .map_err(|_| AwoError::unsupported("fallback runtime", fallback_runtime_name))?;
+        Some(crate::routing::RoutingTarget::new(
+            fallback_runtime,
+            member.fallback_model.clone(),
+        ))
+    } else {
+        None
+    };
+
+    Ok((member, selected_task_id, primary_target, fallback_target))
 }
 
 fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult<TeamTeardownPlan> {

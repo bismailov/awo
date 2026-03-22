@@ -48,6 +48,15 @@ pub struct RoutingDecision {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingRecommendation {
+    pub team_id: String,
+    pub member_id: String,
+    pub task_id: Option<String>,
+    pub preferences: RoutingPreferences,
+    pub decision: RoutingDecision,
+}
+
 pub fn route_runtime(
     primary: RoutingTarget,
     fallback: Option<RoutingTarget>,

@@ -5,9 +5,9 @@ use crate::cli::{
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
     print_outcome, print_registered_repos, print_review, print_routing_decision,
-    print_runtime_capabilities, print_sessions, print_skill_doctor, print_skills_catalog,
-    print_slots, print_team_manifest, print_team_manifests, print_team_task_execution,
-    print_team_teardown_plan, print_team_teardown_result,
+    print_routing_recommendation, print_runtime_capabilities, print_sessions, print_skill_doctor,
+    print_skills_catalog, print_slots, print_team_manifest, print_team_manifests,
+    print_team_task_execution, print_team_teardown_plan, print_team_teardown_result,
 };
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
@@ -384,6 +384,19 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 print_json_response(&manifest, None);
             } else {
                 print_team_manifest(&manifest);
+            }
+        }
+        TeamCommand::Recommend {
+            team_id,
+            member,
+            task,
+        } => {
+            let recommendation =
+                core.recommend_team_routing(&team_id, member.as_deref(), task.as_deref())?;
+            if output.json {
+                print_json_response(&recommendation, None);
+            } else {
+                print_routing_recommendation(&recommendation);
             }
         }
         TeamCommand::Member { command } => match command {

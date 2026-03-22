@@ -485,6 +485,89 @@ fn team_task_routing_policy_persistence() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn recommend_team_routing_for_member_uses_member_runtime() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-recommend-member")?;
+
+    let recommendation =
+        core.recommend_team_routing("team-recommend-member", Some("worker-a"), None)?;
+
+    assert_eq!(recommendation.member_id, "worker-a");
+    assert_eq!(recommendation.task_id, None);
+    assert_eq!(
+        recommendation.decision.selected_runtime,
+        crate::runtime::RuntimeKind::Claude
+    );
+    assert_eq!(
+        recommendation.decision.selected_model.as_deref(),
+        Some("sonnet")
+    );
+    assert_eq!(
+        recommendation.decision.source,
+        crate::routing::RoutingSource::Primary
+    );
+    Ok(())
+}
+
+#[test]
+fn recommend_team_routing_for_task_respects_manifest_defaults() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_with_manifest_defaults(
+        &mut core,
+        "team-recommend-task",
+        crate::routing::RoutingPreferences {
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            ..Default::default()
+        },
+    )?;
+
+    let recommendation =
+        core.recommend_team_routing("team-recommend-task", None, Some("task-1"))?;
+
+    assert_eq!(recommendation.member_id, "worker-a");
+    assert_eq!(recommendation.task_id.as_deref(), Some("task-1"));
+    assert_eq!(
+        recommendation.preferences.max_cost_tier,
+        Some(crate::capabilities::CostTier::Standard)
+    );
+    assert_eq!(
+        recommendation.decision.selected_runtime,
+        crate::runtime::RuntimeKind::Gemini
+    );
+    assert_eq!(
+        recommendation.decision.source,
+        crate::routing::RoutingSource::Fallback
+    );
+    Ok(())
+}
+
+#[test]
+fn recommend_team_routing_rejects_invalid_selector_usage() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-recommend-invalid")?;
+
+    let missing = core.recommend_team_routing("team-recommend-invalid", None, None);
+    assert!(missing.is_err());
+    assert!(
+        missing
+            .unwrap_err()
+            .to_string()
+            .contains("choose one selector")
+    );
+
+    let both =
+        core.recommend_team_routing("team-recommend-invalid", Some("worker-a"), Some("task-1"));
+    assert!(both.is_err());
+    assert!(
+        both.unwrap_err()
+            .to_string()
+            .contains("either `--member` or `--task`")
+    );
+
+    Ok(())
+}
+
 fn create_team_with_bound_slot(
     core: &mut AppCore,
     repo_name: &str,

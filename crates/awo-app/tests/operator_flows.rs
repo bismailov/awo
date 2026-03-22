@@ -256,6 +256,116 @@ fn team_init_with_routing_defaults_persists_in_show() {
 }
 
 #[test]
+fn team_recommend_returns_task_recommendation_using_manifest_defaults() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-recommend-routing");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "recommend-team",
+        "Route carefully",
+        "--max-cost-tier",
+        "standard",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "recommend-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+    assert_eq!(member_result["ok"], true);
+
+    let task_result = env.run(&[
+        "team",
+        "task",
+        "add",
+        "recommend-team",
+        "task-1",
+        "worker-a",
+        "Review task",
+        "Review safely",
+        "--deliverable",
+        "A recommendation",
+    ]);
+    assert_eq!(task_result["ok"], true);
+
+    let recommend = env.run(&["team", "recommend", "recommend-team", "--task", "task-1"]);
+    assert_eq!(recommend["ok"], true);
+    let data = &recommend["data"];
+    assert_eq!(data["team_id"], "recommend-team");
+    assert_eq!(data["member_id"], "worker-a");
+    assert_eq!(data["task_id"], "task-1");
+    assert_eq!(data["preferences"]["max_cost_tier"], "standard");
+    assert_eq!(data["decision"]["selected_runtime"], "gemini");
+    assert_eq!(data["decision"]["source"], "fallback");
+}
+
+#[test]
+fn team_recommend_rejects_invalid_selector_usage() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-recommend-invalid");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "recommend-invalid",
+        "Route safely",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let none = env.run(&["team", "recommend", "recommend-invalid"]);
+    assert_eq!(none["ok"], false);
+    assert!(
+        none["error"]
+            .as_str()
+            .expect("error should be a string")
+            .contains("choose one selector")
+    );
+
+    let both = env.run(&[
+        "team",
+        "recommend",
+        "recommend-invalid",
+        "--member",
+        "lead",
+        "--task",
+        "task-1",
+    ]);
+    assert_eq!(both["ok"], false);
+    assert!(
+        both["error"]
+            .as_str()
+            .expect("error should be a string")
+            .contains("either `--member` or `--task`")
+    );
+}
+
+#[test]
 fn team_init_rejects_unknown_repo_id() {
     let env = TestEnv::new();
     let result = env.run(&[

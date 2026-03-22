@@ -309,6 +309,28 @@ pub fn print_routing_decision(decision: &awo_core::routing::RoutingDecision) {
     println!("- reason: {}", decision.reason);
 }
 
+pub fn print_routing_recommendation(recommendation: &awo_core::RoutingRecommendation) {
+    println!("Routing recommendation:");
+    println!("- team id: {}", recommendation.team_id);
+    println!("- member id: {}", recommendation.member_id);
+    println!(
+        "- task id: {}",
+        recommendation.task_id.as_deref().unwrap_or("-")
+    );
+    println!(
+        "- preferences: prefer_local={} avoid_metered={} max_cost_tier={} allow_fallback={}",
+        recommendation.preferences.prefer_local,
+        recommendation.preferences.avoid_metered,
+        recommendation
+            .preferences
+            .max_cost_tier
+            .map(|tier| tier.as_str())
+            .unwrap_or("-"),
+        recommendation.preferences.allow_fallback
+    );
+    print_routing_decision(&recommendation.decision);
+}
+
 pub fn print_team_manifests(manifests: &[TeamManifest]) {
     if manifests.is_empty() {
         println!("No team manifests.");

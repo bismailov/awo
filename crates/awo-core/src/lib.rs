@@ -28,7 +28,8 @@ pub use diagnostics::{Diagnostic, DiagnosticSeverity};
 pub use error::{AwoError, AwoResult};
 pub use events::DomainEvent;
 pub use routing::{
-    RoutingDecision, RoutingPreferences, RoutingSource, RoutingTarget, route_runtime,
+    RoutingDecision, RoutingPreferences, RoutingRecommendation, RoutingSource, RoutingTarget,
+    route_runtime,
 };
 pub use runtime::{RuntimeKind, SessionLaunchMode};
 pub use skills::{
