@@ -1,10 +1,11 @@
 use anyhow::Error;
 use awo_core::{
     AppSnapshot, CommandOutcome, ContextDoctorReport, Diagnostic, DomainEvent, RepoContext,
-    RepoSkillCatalog, ReviewSummary, RuntimeCapabilityDescriptor, SkillDoctorReport, TeamManifest,
-    TeamTaskExecution, TeamTeardownPlan, TeamTeardownResult,
+    RepoSkillCatalog, ReviewSummary, RuntimeCapabilityDescriptor, RuntimeKind, RuntimePressure,
+    SkillDoctorReport, TeamManifest, TeamTaskExecution, TeamTeardownPlan, TeamTeardownResult,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
 pub struct OutputMode {
@@ -289,6 +290,24 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
         for note in &capability.notes {
             println!("  note: {note}");
         }
+    }
+}
+
+pub fn print_runtime_pressure_profile(profile: &HashMap<RuntimeKind, RuntimePressure>) {
+    if profile.is_empty() {
+        println!("No runtime pressure profile set.");
+        return;
+    }
+
+    let mut entries = profile
+        .iter()
+        .map(|(runtime, pressure)| (runtime.as_str(), pressure.as_str()))
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+
+    println!("Runtime pressure profile:");
+    for (runtime, pressure) in entries {
+        println!("- {runtime}={pressure}");
     }
 }
 

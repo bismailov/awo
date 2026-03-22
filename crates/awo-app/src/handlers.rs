@@ -1,13 +1,15 @@
 use crate::cli::{
     AppCommand, ContextCommand, DebugCommand, RepoCommand, ReviewCommand, RuntimeCommand,
-    SessionCommand, SkillsCommand, SlotCommand, TeamCommand, TeamMemberCommand, TeamTaskCommand,
+    RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand, TeamCommand,
+    TeamMemberCommand, TeamTaskCommand,
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
     print_outcome, print_registered_repos, print_review, print_routing_decision,
-    print_routing_recommendation, print_runtime_capabilities, print_sessions, print_skill_doctor,
-    print_skills_catalog, print_slots, print_team_manifest, print_team_manifests,
-    print_team_task_execution, print_team_teardown_plan, print_team_teardown_result,
+    print_routing_recommendation, print_runtime_capabilities, print_runtime_pressure_profile,
+    print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
+    print_team_manifests, print_team_task_execution, print_team_teardown_plan,
+    print_team_teardown_result,
 };
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
@@ -228,6 +230,7 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
+    let mut core = AppCore::bootstrap()?;
     match command {
         RuntimeCommand::List => {
             let capabilities = all_runtime_capabilities();
@@ -281,7 +284,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 avoid_metered,
                 max_cost_tier,
             };
-            let context = parse_routing_context(&pressure)?;
+            let context = resolve_routing_context(&core, &pressure)?;
 
             let decision = route_runtime(primary_target, fallback_target, &preferences, &context);
 
@@ -291,8 +294,64 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 print_routing_decision(&decision);
             }
         }
+        RuntimeCommand::Pressure { command } => {
+            handle_runtime_pressure_command(&mut core, command, output)?
+        }
     }
 
+    Ok(())
+}
+
+fn handle_runtime_pressure_command(
+    core: &mut AppCore,
+    command: RuntimePressureCommand,
+    output: OutputMode,
+) -> Result<()> {
+    match command {
+        RuntimePressureCommand::Set {
+            runtime_kind,
+            pressure_level,
+        } => {
+            let runtime_kind = runtime_kind
+                .parse::<RuntimeKind>()
+                .map_err(anyhow::Error::msg)?;
+            let pressure_level = pressure_level
+                .parse::<RuntimePressure>()
+                .map_err(anyhow::Error::msg)?;
+            core.config_mut()
+                .settings
+                .runtime_pressure_profile
+                .insert(runtime_kind, pressure_level);
+            core.config().save_settings()?;
+            if output.json {
+                print_json_response(&core.config().settings.runtime_pressure_profile, None);
+            } else {
+                print_runtime_pressure_profile(&core.config().settings.runtime_pressure_profile);
+            }
+        }
+        RuntimePressureCommand::Clear { runtime_kind } => {
+            let runtime_kind = runtime_kind
+                .parse::<RuntimeKind>()
+                .map_err(anyhow::Error::msg)?;
+            core.config_mut()
+                .settings
+                .runtime_pressure_profile
+                .remove(&runtime_kind);
+            core.config().save_settings()?;
+            if output.json {
+                print_json_response(&core.config().settings.runtime_pressure_profile, None);
+            } else {
+                print_runtime_pressure_profile(&core.config().settings.runtime_pressure_profile);
+            }
+        }
+        RuntimePressureCommand::List => {
+            if output.json {
+                print_json_response(&core.config().settings.runtime_pressure_profile, None);
+            } else {
+                print_runtime_pressure_profile(&core.config().settings.runtime_pressure_profile);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -395,7 +454,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             task,
             pressure,
         } => {
-            let context = parse_routing_context(&pressure)?;
+            let context = resolve_routing_context(&core, &pressure)?;
             let recommendation = core.recommend_team_routing(
                 &team_id,
                 member.as_deref(),
@@ -906,4 +965,14 @@ fn parse_routing_context(pressure_entries: &[String]) -> Result<RoutingContext> 
         context.pressure.insert(runtime, pressure);
     }
     Ok(context)
+}
+
+fn resolve_routing_context(core: &AppCore, pressure_entries: &[String]) -> Result<RoutingContext> {
+    if pressure_entries.is_empty() {
+        return Ok(RoutingContext {
+            pressure: core.config().settings.runtime_pressure_profile.clone(),
+        });
+    }
+
+    parse_routing_context(pressure_entries)
 }

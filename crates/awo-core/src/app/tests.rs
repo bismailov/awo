@@ -1,6 +1,6 @@
 use super::*;
 use crate::commands::Command;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, AppSettings};
 use crate::runtime::{SessionLaunchMode, SessionRecord};
 use crate::team::{TaskCard, TaskCardState, TeamExecutionMode, TeamMember, starter_team_manifest};
 use anyhow::{Context, Result};
@@ -31,6 +31,7 @@ fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
             clones_dir,
             teams_dir,
         },
+        settings: AppSettings::default(),
     };
     let store = Store::open(&config.paths.state_db_path)?;
     store.initialize_schema()?;

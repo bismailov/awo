@@ -122,6 +122,22 @@ pub enum RuntimeCommand {
         #[arg(long = "pressure")]
         pressure: Vec<String>,
     },
+    Pressure {
+        #[command(subcommand)]
+        command: RuntimePressureCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimePressureCommand {
+    Set {
+        runtime_kind: String,
+        pressure_level: String,
+    },
+    Clear {
+        runtime_kind: String,
+    },
+    List,
 }
 
 #[derive(Debug, Subcommand)]

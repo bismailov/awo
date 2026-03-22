@@ -7,6 +7,53 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+struct TestContext {
+    root: std::path::PathBuf,
+}
+
+impl TestContext {
+    fn new() -> Self {
+        Self {
+            root: unique_state_root(),
+        }
+    }
+
+    fn run_awo(&self, args: &[&str], json: bool) -> Output {
+        let mut cmd = awo();
+        if json {
+            cmd.arg("--json");
+        }
+        cmd.args(args);
+        let config_dir = self.root.join("config");
+        let data_dir = self.root.join("data");
+        std::fs::create_dir_all(&config_dir).expect("test config dir should be creatable");
+        std::fs::create_dir_all(&data_dir).expect("test data dir should be creatable");
+        cmd.env("AWO_CONFIG_DIR", &config_dir);
+        cmd.env("AWO_DATA_DIR", &data_dir);
+        cmd.env("HOME", &self.root);
+        cmd.env("XDG_CONFIG_HOME", &config_dir);
+        cmd.env("XDG_DATA_HOME", &data_dir);
+        #[cfg(windows)]
+        {
+            cmd.env("LOCALAPPDATA", self.root.join("local"));
+            cmd.env("APPDATA", self.root.join("roaming"));
+        }
+        cmd.output().expect("awo binary should run")
+    }
+
+    fn run_awo_json(&self, args: &[&str]) -> (Output, Value) {
+        let output = self.run_awo(args, true);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed = serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+            panic!(
+                "failed to parse JSON from awo stdout:\n{stdout}\nstderr: {}\nerror: {error}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        (output, parsed)
+    }
+}
+
 fn awo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_awo"))
 }
@@ -451,4 +498,96 @@ fn runtime_route_preview_rejects_malformed_pressure_value() {
             .unwrap()
             .contains("expected runtime=level")
     );
+}
+
+#[test]
+fn runtime_pressure_set_and_list_persists_locally() {
+    let test_context = TestContext::new();
+
+    let (output, json) =
+        test_context.run_awo_json(&["runtime", "pressure", "set", "claude", "soft_limit"]);
+    assert!(output.status.success());
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["claude"], "soft_limit");
+
+    let (_output, json) = test_context.run_awo_json(&["runtime", "pressure", "list"]);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["claude"], "soft_limit");
+
+    let (_output, json) =
+        test_context.run_awo_json(&["runtime", "pressure", "set", "gemini", "hard_limit"]);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["claude"], "soft_limit");
+    assert_eq!(json["data"]["gemini"], "hard_limit");
+}
+
+#[test]
+fn runtime_pressure_clear_removes_entry() {
+    let test_context = TestContext::new();
+
+    let (_output, json) =
+        test_context.run_awo_json(&["runtime", "pressure", "set", "claude", "soft_limit"]);
+    assert_eq!(json["ok"], true);
+
+    let (_output, json) = test_context.run_awo_json(&["runtime", "pressure", "clear", "claude"]);
+    assert_eq!(json["ok"], true);
+    assert!(json["data"].as_object().expect("object data").is_empty());
+
+    let (_output, json) = test_context.run_awo_json(&["runtime", "pressure", "list"]);
+    assert_eq!(json["ok"], true);
+    assert!(json["data"].as_object().expect("object data").is_empty());
+}
+
+#[test]
+fn runtime_route_preview_uses_stored_pressure_by_default() {
+    let test_context = TestContext::new();
+
+    let (_output, json) =
+        test_context.run_awo_json(&["runtime", "pressure", "set", "claude", "hard_limit"]);
+    assert_eq!(json["ok"], true);
+
+    let (output, json) = test_context.run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "gemini");
+    assert_eq!(data["source"], "fallback");
+    assert!(data["reason"].as_str().unwrap().contains("hard limit"));
+}
+
+#[test]
+fn runtime_route_preview_cli_pressure_overrides_stored() {
+    let test_context = TestContext::new();
+
+    let (_output, json) =
+        test_context.run_awo_json(&["runtime", "pressure", "set", "claude", "soft_limit"]);
+    assert_eq!(json["ok"], true);
+
+    let (output, json) = test_context.run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--pressure",
+        "claude=hard_limit",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "gemini");
+    assert_eq!(data["source"], "fallback");
+    assert!(data["reason"].as_str().unwrap().contains("hard limit"));
 }

@@ -481,6 +481,116 @@ fn team_recommend_with_pressure_prefers_fallback() {
 }
 
 #[test]
+fn team_recommend_uses_stored_pressure_by_default() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-recommend-stored-pressure");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "recommend-stored-pressure",
+        "Route safely",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "recommend-stored-pressure",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+    assert_eq!(member_result["ok"], true);
+
+    let pressure_result = env.run(&["runtime", "pressure", "set", "claude", "hard_limit"]);
+    assert_eq!(pressure_result["ok"], true);
+
+    let recommend = env.run(&[
+        "team",
+        "recommend",
+        "recommend-stored-pressure",
+        "--member",
+        "worker-a",
+    ]);
+    assert_eq!(recommend["ok"], true, "recommend failed: {recommend}");
+    let data = &recommend["data"];
+    assert_eq!(data["decision"]["selected_runtime"], "gemini");
+    assert_eq!(data["decision"]["source"], "fallback");
+    assert_eq!(data["context"]["pressure"]["claude"], "hard_limit");
+}
+
+#[test]
+fn team_recommend_cli_pressure_overrides_stored_pressure() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-recommend-pressure-override");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "recommend-pressure-override",
+        "Route safely",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "recommend-pressure-override",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+    assert_eq!(member_result["ok"], true);
+
+    let pressure_result = env.run(&["runtime", "pressure", "set", "claude", "soft_limit"]);
+    assert_eq!(pressure_result["ok"], true);
+
+    let recommend = env.run(&[
+        "team",
+        "recommend",
+        "recommend-pressure-override",
+        "--member",
+        "worker-a",
+        "--pressure",
+        "claude=hard_limit",
+    ]);
+    assert_eq!(recommend["ok"], true, "recommend failed: {recommend}");
+    let data = &recommend["data"];
+    assert_eq!(data["decision"]["selected_runtime"], "gemini");
+    assert_eq!(data["decision"]["source"], "fallback");
+    assert_eq!(data["context"]["pressure"]["claude"], "hard_limit");
+}
+
+#[test]
 fn team_init_rejects_unknown_repo_id() {
     let env = TestEnv::new();
     let result = env.run(&[

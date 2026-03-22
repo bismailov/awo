@@ -44,6 +44,18 @@ pub enum AwoError {
         #[source]
         source: toml::ser::Error,
     },
+    #[error("failed to deserialize config from {file}")]
+    ConfigDeserialization {
+        file: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("failed to serialize config to {file}")]
+    ConfigSerialization {
+        file: String,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("failed to run git {operation} in {path}")]
     GitInvocation {
         operation: &'static str,
@@ -148,6 +160,20 @@ impl AwoError {
 
     pub fn team_manifest_serialize(source: toml::ser::Error) -> Self {
         Self::TeamManifestSerialize { source }
+    }
+
+    pub fn config_deserialization(file: impl Into<String>, source: serde_json::Error) -> Self {
+        Self::ConfigDeserialization {
+            file: file.into(),
+            source,
+        }
+    }
+
+    pub fn config_serialization(file: impl Into<String>, source: serde_json::Error) -> Self {
+        Self::ConfigSerialization {
+            file: file.into(),
+            source,
+        }
     }
 
     pub fn git_invocation(

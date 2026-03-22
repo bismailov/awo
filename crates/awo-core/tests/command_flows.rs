@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use awo_core::app::AppPaths;
-use awo_core::config::AppConfig;
+use awo_core::config::{AppConfig, AppSettings};
 use awo_core::runtime::{RuntimeKind, SessionLaunchMode, detect_tmux};
 use awo_core::{AppCore, Command, SlotStrategy};
 use std::fs;
@@ -42,6 +42,7 @@ impl TestHarness {
                     clones_dir,
                     teams_dir,
                 },
+                settings: AppSettings::default(),
             },
         })
     }

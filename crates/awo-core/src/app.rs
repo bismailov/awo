@@ -50,6 +50,14 @@ impl AppCore {
         Ok(Self { config, store })
     }
 
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub fn config_mut(&mut self) -> &mut AppConfig {
+        &mut self.config
+    }
+
     pub fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         let mut runner = CommandRunner::new(&self.config, &self.store);
         runner.run(command)
