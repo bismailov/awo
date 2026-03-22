@@ -39,6 +39,7 @@ fn sample_manifest() -> TeamManifest {
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
         members: vec![TeamMember {
             member_id: "worker-a".to_string(),
@@ -55,6 +56,7 @@ fn sample_manifest() -> TeamManifest {
             notes: Some("Owns runtime changes".to_string()),
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         }],
         tasks: vec![TaskCard {
             task_id: "task-1".to_string(),
@@ -152,6 +154,7 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         notes: Some("Own the runtime layer.".to_string()),
         fallback_runtime: None,
         fallback_model: None,
+        routing_preferences: None,
     })?;
     manifest.add_task(TaskCard {
         task_id: "task-1".to_string(),
@@ -216,6 +219,7 @@ fn concurrent_manifest_mutations_preserve_all_members() -> Result<()> {
                 notes: None,
                 fallback_runtime: None,
                 fallback_model: None,
+                routing_preferences: None,
             })?;
             Ok(guard.save()?)
         }));
@@ -506,6 +510,7 @@ fn add_member_with_fallback_fields() -> Result<()> {
         notes: None,
         fallback_runtime: Some("codex".to_string()),
         fallback_model: Some("mini".to_string()),
+        routing_preferences: None,
     })?;
 
     let member = manifest.member("worker-fb").expect("member should exist");

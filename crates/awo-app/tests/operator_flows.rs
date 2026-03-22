@@ -256,6 +256,68 @@ fn team_init_with_routing_defaults_persists_in_show() {
 }
 
 #[test]
+fn team_member_add_with_routing_defaults_persists_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-member-routing-defaults");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "member-routing-team",
+        "Route per member",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "member-routing-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+        "--prefer-local",
+        "--max-cost-tier",
+        "standard",
+        "--no-fallback",
+    ]);
+    assert_eq!(
+        member_result["ok"], true,
+        "member add failed: {member_result}"
+    );
+    let member = &member_result["data"]["members"][0];
+    assert_eq!(member["routing_preferences"]["prefer_local"], true);
+    assert_eq!(member["routing_preferences"]["avoid_metered"], false);
+    assert_eq!(member["routing_preferences"]["max_cost_tier"], "standard");
+    assert_eq!(member["routing_preferences"]["allow_fallback"], false);
+
+    let show_result = env.run(&["team", "show", "member-routing-team"]);
+    assert_eq!(show_result["ok"], true);
+    let show_member = &show_result["data"]["members"][0];
+    assert_eq!(show_member["member_id"], "worker-a");
+    assert_eq!(show_member["routing_preferences"]["prefer_local"], true);
+    assert_eq!(show_member["routing_preferences"]["avoid_metered"], false);
+    assert_eq!(
+        show_member["routing_preferences"]["max_cost_tier"],
+        "standard"
+    );
+    assert_eq!(show_member["routing_preferences"]["allow_fallback"], false);
+}
+
+#[test]
 fn team_recommend_returns_task_recommendation_using_manifest_defaults() {
     let env = TestEnv::new();
     let repo_dir = env.create_repo("team-recommend-routing");

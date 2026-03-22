@@ -423,7 +423,17 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 notes,
                 fallback_runtime,
                 fallback_model,
+                prefer_local,
+                avoid_metered,
+                max_cost_tier,
+                no_fallback,
             } => {
+                let routing_preferences = parse_routing_preferences(
+                    prefer_local,
+                    avoid_metered,
+                    max_cost_tier.as_deref(),
+                    no_fallback,
+                )?;
                 let manifest = core.add_team_member(
                     &team_id,
                     TeamMember {
@@ -443,6 +453,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         notes,
                         fallback_runtime: parse_optional_runtime(fallback_runtime.as_deref())?,
                         fallback_model,
+                        routing_preferences,
                     },
                 )?;
                 if output.json {

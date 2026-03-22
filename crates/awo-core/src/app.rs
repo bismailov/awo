@@ -494,11 +494,11 @@ impl AppCore {
             } else {
                 None
             };
-            let routing_preferences = options
-                .routing_preferences
-                .clone()
-                .or_else(|| manifest.manifest().routing_preferences.clone())
-                .unwrap_or_default();
+            let routing_preferences = resolve_effective_routing_preferences(
+                options.routing_preferences.clone(),
+                &owner,
+                manifest.manifest(),
+            );
             let routing_decision = crate::routing::route_runtime(
                 primary_target,
                 fallback_target,
@@ -690,10 +690,9 @@ impl AppCore {
         }
 
         let manifest = self.load_team_manifest(team_id)?;
-        let preferences = manifest.routing_preferences.clone().unwrap_or_default();
-
         let (member, task_id, primary_target, fallback_target) =
             resolve_team_routing_targets(&manifest, member_id, task_id)?;
+        let preferences = resolve_effective_routing_preferences(None, member, &manifest);
         let decision =
             crate::routing::route_runtime(primary_target, fallback_target, &preferences, context);
         let team_id = manifest.team_id.clone();
@@ -816,6 +815,17 @@ fn resolve_team_routing_targets<'a>(
     };
 
     Ok((member, selected_task_id, primary_target, fallback_target))
+}
+
+fn resolve_effective_routing_preferences(
+    explicit: Option<crate::routing::RoutingPreferences>,
+    member: &TeamMember,
+    manifest: &TeamManifest,
+) -> crate::routing::RoutingPreferences {
+    explicit
+        .or_else(|| member.routing_preferences.clone())
+        .or_else(|| manifest.routing_preferences.clone())
+        .unwrap_or_default()
 }
 
 fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult<TeamTeardownPlan> {

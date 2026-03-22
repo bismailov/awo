@@ -129,6 +129,7 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             notes: None,
             fallback_runtime: Some("gemini".to_string()),
             fallback_model: Some("flash".to_string()),
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
@@ -160,6 +161,23 @@ fn create_routed_team_with_manifest_defaults(
     create_routed_team_task(core, team_id)?;
     let mut manifest = core.load_team_manifest(team_id)?;
     manifest.routing_preferences = Some(routing_preferences);
+    core.save_team_manifest(&manifest)?;
+    Ok(())
+}
+
+fn set_member_routing_preferences(
+    core: &mut AppCore,
+    team_id: &str,
+    member_id: &str,
+    routing_preferences: crate::routing::RoutingPreferences,
+) -> Result<()> {
+    let mut manifest = core.load_team_manifest(team_id)?;
+    let member = manifest
+        .members
+        .iter_mut()
+        .find(|member| member.member_id == member_id)
+        .context("missing team member")?;
+    member.routing_preferences = Some(routing_preferences);
     core.save_team_manifest(&manifest)?;
     Ok(())
 }
@@ -208,6 +226,7 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     let manifest = core.add_team_task(
@@ -277,6 +296,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
@@ -368,6 +388,7 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
             notes: None,
             fallback_runtime: Some("shell".to_string()),
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
@@ -486,6 +507,38 @@ fn team_task_routing_policy_persistence() -> Result<()> {
 }
 
 #[test]
+fn team_task_start_cli_preferences_override_member_preferences() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-routing-member-override")?;
+    set_member_routing_preferences(
+        &mut core,
+        "team-routing-member-override",
+        "worker-a",
+        crate::routing::RoutingPreferences {
+            allow_fallback: false,
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            ..Default::default()
+        },
+    )?;
+
+    let mut options = team_task_start_options("team-routing-member-override", "task-1");
+    options.dry_run = true;
+    options.routing_preferences = Some(crate::routing::RoutingPreferences {
+        max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+        ..Default::default()
+    });
+
+    let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
+    assert_eq!(execution.runtime, "gemini");
+    assert_eq!(execution.model.as_deref(), Some("flash"));
+    assert_eq!(
+        execution.routing_source,
+        crate::routing::RoutingSource::Fallback
+    );
+    Ok(())
+}
+
+#[test]
 fn recommend_team_routing_for_member_uses_member_runtime() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
     create_routed_team_task(&mut core, "team-recommend-member")?;
@@ -546,6 +599,51 @@ fn recommend_team_routing_for_task_respects_manifest_defaults() -> Result<()> {
     assert_eq!(
         recommendation.decision.source,
         crate::routing::RoutingSource::Fallback
+    );
+    Ok(())
+}
+
+#[test]
+fn recommend_team_routing_member_preferences_override_team_defaults() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_with_manifest_defaults(
+        &mut core,
+        "team-recommend-member-policy",
+        crate::routing::RoutingPreferences {
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            ..Default::default()
+        },
+    )?;
+    set_member_routing_preferences(
+        &mut core,
+        "team-recommend-member-policy",
+        "worker-a",
+        crate::routing::RoutingPreferences {
+            allow_fallback: false,
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            ..Default::default()
+        },
+    )?;
+
+    let recommendation = core.recommend_team_routing(
+        "team-recommend-member-policy",
+        None,
+        Some("task-1"),
+        &crate::routing::RoutingContext::default(),
+    )?;
+
+    assert_eq!(
+        recommendation.preferences.max_cost_tier,
+        Some(crate::capabilities::CostTier::Standard)
+    );
+    assert!(!recommendation.preferences.allow_fallback);
+    assert_eq!(
+        recommendation.decision.selected_runtime,
+        crate::runtime::RuntimeKind::Claude
+    );
+    assert_eq!(
+        recommendation.decision.source,
+        crate::routing::RoutingSource::Primary
     );
     Ok(())
 }
@@ -662,6 +760,7 @@ fn create_team_with_bound_slot(
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
@@ -849,6 +948,7 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
@@ -934,6 +1034,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             notes: None,
             fallback_runtime: None,
             fallback_model: None,
+            routing_preferences: None,
         },
     )?;
     core.add_team_task(
