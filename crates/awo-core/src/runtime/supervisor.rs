@@ -1,4 +1,6 @@
 mod tmux;
+#[cfg(windows)]
+mod conpty;
 
 use super::{RuntimeKind, SessionLaunchMode, SessionRecord};
 use crate::app::AppPaths;
@@ -15,6 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SessionSupervisor {
     Tmux,
+    #[cfg(windows)]
+    Conpty,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +40,8 @@ impl SessionSupervisor {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Tmux => "tmux",
+            #[cfg(windows)]
+            Self::Conpty => "conpty",
         }
     }
 
@@ -66,12 +72,19 @@ impl SessionSupervisor {
     pub(super) fn is_available(self) -> bool {
         match self {
             Self::Tmux => supports_tmux_supervision(),
+            #[cfg(windows)]
+            Self::Conpty => true,
         }
     }
 
     pub(super) fn io_layout(self, logs_dir: &Path, session_id: &str) -> SessionIoLayout {
         match self {
             Self::Tmux => SessionIoLayout {
+                stdout_path: logs_dir.join(format!("{session_id}.pty.log")),
+                stderr_path: None,
+            },
+            #[cfg(windows)]
+            Self::Conpty => SessionIoLayout {
                 stdout_path: logs_dir.join(format!("{session_id}.pty.log")),
                 stderr_path: None,
             },
@@ -88,12 +101,18 @@ impl SessionSupervisor {
         match self {
             Self::Tmux => tmux::launch(session_id, slot_path, prepared, combined_log_path)
                 .map_err(|error| AwoError::supervisor(error.to_string())),
+            #[cfg(windows)]
+            Self::Conpty => conpty::launch(session_id, slot_path, prepared, combined_log_path)
+                .map_err(|error| AwoError::supervisor(error.to_string())),
         }
     }
 
     pub(super) fn sync(self, paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
         match self {
             Self::Tmux => tmux::sync(paths, session_id)
+                .map_err(|error| AwoError::supervisor(error.to_string())),
+            #[cfg(windows)]
+            Self::Conpty => conpty::sync(paths, session_id)
                 .map_err(|error| AwoError::supervisor(error.to_string())),
         }
     }
@@ -102,6 +121,14 @@ impl SessionSupervisor {
         match self {
             Self::Tmux => {
                 let _ = tmux::kill(&session.id);
+                if session.exit_code.is_none() {
+                    session.exit_code = read_exit_code(paths, &session.id)?;
+                }
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Conpty => {
+                let _ = conpty::kill(&session.id);
                 if session.exit_code.is_none() {
                     session.exit_code = read_exit_code(paths, &session.id)?;
                 }
@@ -119,12 +146,22 @@ impl SessionSupervisor {
                         .as_deref()
                         .is_some_and(|path| path.ends_with(".pty.log"))
             }
+            #[cfg(windows)]
+            Self::Conpty => {
+                session.stderr_path.is_none()
+                    && session
+                        .stdout_path
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with(".pty.log"))
+            }
         }
     }
 
     fn from_persisted_name(value: &str) -> Option<Self> {
         match value {
             "tmux" => Some(Self::Tmux),
+            #[cfg(windows)]
+            "conpty" => Some(Self::Conpty),
             _ => None,
         }
     }
@@ -376,12 +413,30 @@ fn configured_pty_supervisor() -> Option<SessionSupervisor> {
         Some(SessionSupervisor::Tmux)
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        Some(SessionSupervisor::Conpty)
+    }
+
+    #[cfg(not(any(unix, windows)))]
     {
         None
     }
 }
 
 fn known_supervisors() -> &'static [SessionSupervisor] {
-    &[SessionSupervisor::Tmux]
+    #[cfg(unix)]
+    {
+        &[SessionSupervisor::Tmux]
+    }
+
+    #[cfg(windows)]
+    {
+        &[SessionSupervisor::Conpty]
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        &[]
+    }
 }

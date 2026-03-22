@@ -1,10 +1,10 @@
 use super::{
-    PreparedCommand, exit_code_path_for, materialize_shell_script, read_exit_code, shell_join,
-    shell_quote,
+    exit_code_path_for, materialize_shell_script, read_exit_code, shell_join, shell_quote,
+    PreparedCommand,
 };
 use crate::app::AppPaths;
 use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
