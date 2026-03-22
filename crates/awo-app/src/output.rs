@@ -328,6 +328,12 @@ pub fn print_routing_recommendation(recommendation: &awo_core::RoutingRecommenda
             .unwrap_or("-"),
         recommendation.preferences.allow_fallback
     );
+    if !recommendation.context.is_empty() {
+        println!("- runtime pressure:");
+        for (runtime, pressure) in &recommendation.context.pressure {
+            println!("  - {}={}", runtime.as_str(), pressure.as_str());
+        }
+    }
     print_routing_decision(&recommendation.decision);
 }
 

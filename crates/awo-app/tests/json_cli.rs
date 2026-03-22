@@ -386,3 +386,69 @@ fn runtime_route_preview_no_fallback_honors_flag() {
             .contains("fallback was not allowed")
     );
 }
+
+#[test]
+fn runtime_route_preview_soft_limit_pressure_keeps_primary() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--pressure",
+        "claude=soft_limit",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "claude");
+    assert_eq!(data["source"], "primary");
+    assert!(data["reason"].as_str().unwrap().contains("soft_limit"));
+}
+
+#[test]
+fn runtime_route_preview_hard_limit_pressure_prefers_fallback() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--pressure",
+        "claude=hard_limit",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "gemini");
+    assert_eq!(data["source"], "fallback");
+    assert!(data["reason"].as_str().unwrap().contains("hard limit"));
+}
+
+#[test]
+fn runtime_route_preview_rejects_malformed_pressure_value() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--pressure",
+        "claude",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], false);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("expected runtime=level")
+    );
+}

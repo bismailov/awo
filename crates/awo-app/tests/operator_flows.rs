@@ -366,6 +366,59 @@ fn team_recommend_rejects_invalid_selector_usage() {
 }
 
 #[test]
+fn team_recommend_with_pressure_prefers_fallback() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-recommend-pressure");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "recommend-pressure",
+        "Route safely",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "recommend-pressure",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+    assert_eq!(member_result["ok"], true);
+
+    let recommend = env.run(&[
+        "team",
+        "recommend",
+        "recommend-pressure",
+        "--member",
+        "worker-a",
+        "--pressure",
+        "claude=hard_limit",
+    ]);
+    assert_eq!(recommend["ok"], true);
+    let data = &recommend["data"];
+    assert_eq!(data["decision"]["selected_runtime"], "gemini");
+    assert_eq!(data["decision"]["source"], "fallback");
+    assert_eq!(data["context"]["pressure"]["claude"], "hard_limit");
+}
+
+#[test]
 fn team_init_rejects_unknown_repo_id() {
     let env = TestEnv::new();
     let result = env.run(&[

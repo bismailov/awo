@@ -490,8 +490,12 @@ fn recommend_team_routing_for_member_uses_member_runtime() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
     create_routed_team_task(&mut core, "team-recommend-member")?;
 
-    let recommendation =
-        core.recommend_team_routing("team-recommend-member", Some("worker-a"), None)?;
+    let recommendation = core.recommend_team_routing(
+        "team-recommend-member",
+        Some("worker-a"),
+        None,
+        &crate::routing::RoutingContext::default(),
+    )?;
 
     assert_eq!(recommendation.member_id, "worker-a");
     assert_eq!(recommendation.task_id, None);
@@ -522,8 +526,12 @@ fn recommend_team_routing_for_task_respects_manifest_defaults() -> Result<()> {
         },
     )?;
 
-    let recommendation =
-        core.recommend_team_routing("team-recommend-task", None, Some("task-1"))?;
+    let recommendation = core.recommend_team_routing(
+        "team-recommend-task",
+        None,
+        Some("task-1"),
+        &crate::routing::RoutingContext::default(),
+    )?;
 
     assert_eq!(recommendation.member_id, "worker-a");
     assert_eq!(recommendation.task_id.as_deref(), Some("task-1"));
@@ -547,7 +555,12 @@ fn recommend_team_routing_rejects_invalid_selector_usage() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
     create_routed_team_task(&mut core, "team-recommend-invalid")?;
 
-    let missing = core.recommend_team_routing("team-recommend-invalid", None, None);
+    let missing = core.recommend_team_routing(
+        "team-recommend-invalid",
+        None,
+        None,
+        &crate::routing::RoutingContext::default(),
+    );
     assert!(missing.is_err());
     assert!(
         missing
@@ -556,8 +569,12 @@ fn recommend_team_routing_rejects_invalid_selector_usage() -> Result<()> {
             .contains("choose one selector")
     );
 
-    let both =
-        core.recommend_team_routing("team-recommend-invalid", Some("worker-a"), Some("task-1"));
+    let both = core.recommend_team_routing(
+        "team-recommend-invalid",
+        Some("worker-a"),
+        Some("task-1"),
+        &crate::routing::RoutingContext::default(),
+    );
     assert!(both.is_err());
     assert!(
         both.unwrap_err()
@@ -565,6 +582,38 @@ fn recommend_team_routing_rejects_invalid_selector_usage() -> Result<()> {
             .contains("either `--member` or `--task`")
     );
 
+    Ok(())
+}
+
+#[test]
+fn recommend_team_routing_respects_pressure_context() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-recommend-pressure")?;
+
+    let mut context = crate::routing::RoutingContext::default();
+    context.pressure.insert(
+        crate::runtime::RuntimeKind::Claude,
+        crate::routing::RuntimePressure::HardLimit,
+    );
+
+    let recommendation =
+        core.recommend_team_routing("team-recommend-pressure", Some("worker-a"), None, &context)?;
+
+    assert_eq!(
+        recommendation.decision.selected_runtime,
+        crate::runtime::RuntimeKind::Gemini
+    );
+    assert_eq!(
+        recommendation.decision.source,
+        crate::routing::RoutingSource::Fallback
+    );
+    assert_eq!(
+        recommendation
+            .context
+            .pressure
+            .get(&crate::runtime::RuntimeKind::Claude),
+        Some(&crate::routing::RuntimePressure::HardLimit)
+    );
     Ok(())
 }
 

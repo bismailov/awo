@@ -503,6 +503,7 @@ impl AppCore {
                 primary_target,
                 fallback_target,
                 &routing_preferences,
+                &crate::routing::RoutingContext::default(),
             );
             let runtime = routing_decision.selected_runtime;
             let runtime_name = runtime.as_str().to_string();
@@ -672,6 +673,7 @@ impl AppCore {
         team_id: &str,
         member_id: Option<&str>,
         task_id: Option<&str>,
+        context: &crate::routing::RoutingContext,
     ) -> AwoResult<crate::routing::RoutingRecommendation> {
         match (member_id, task_id) {
             (Some(_), Some(_)) => {
@@ -692,7 +694,8 @@ impl AppCore {
 
         let (member, task_id, primary_target, fallback_target) =
             resolve_team_routing_targets(&manifest, member_id, task_id)?;
-        let decision = crate::routing::route_runtime(primary_target, fallback_target, &preferences);
+        let decision =
+            crate::routing::route_runtime(primary_target, fallback_target, &preferences, context);
         let team_id = manifest.team_id.clone();
         let member_id = member.member_id.clone();
         let task_id = task_id.map(|value| value.to_string());
@@ -702,6 +705,7 @@ impl AppCore {
             member_id,
             task_id,
             preferences,
+            context: context.clone(),
             decision,
         })
     }

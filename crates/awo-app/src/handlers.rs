@@ -13,10 +13,11 @@ use crate::tui::run_tui;
 use anyhow::{Result, bail};
 use awo_core::capabilities::CostTier;
 use awo_core::{
-    AppCore, Command, RoutingPreferences, RoutingTarget, RuntimeKind, SessionLaunchMode,
-    SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard, TaskCardState, TeamExecutionMode,
-    TeamManifest, TeamMember, TeamResetSummary, TeamTaskStartOptions, all_runtime_capabilities,
-    default_team_manifest_path, route_runtime, runtime_capabilities, starter_team_manifest,
+    AppCore, Command, RoutingContext, RoutingPreferences, RoutingTarget, RuntimeKind,
+    RuntimePressure, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard,
+    TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
+    TeamTaskStartOptions, all_runtime_capabilities, default_team_manifest_path, route_runtime,
+    runtime_capabilities, starter_team_manifest,
 };
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
@@ -254,6 +255,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
             avoid_metered,
             max_cost_tier,
             no_fallback,
+            pressure,
         } => {
             let primary_kind = primary.parse::<RuntimeKind>().map_err(anyhow::Error::msg)?;
             let primary_target = RoutingTarget::new(primary_kind, primary_model);
@@ -279,8 +281,9 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 avoid_metered,
                 max_cost_tier,
             };
+            let context = parse_routing_context(&pressure)?;
 
-            let decision = route_runtime(primary_target, fallback_target, &preferences);
+            let decision = route_runtime(primary_target, fallback_target, &preferences, &context);
 
             if output.json {
                 print_json_response(&decision, None);
@@ -390,9 +393,15 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             team_id,
             member,
             task,
+            pressure,
         } => {
-            let recommendation =
-                core.recommend_team_routing(&team_id, member.as_deref(), task.as_deref())?;
+            let context = parse_routing_context(&pressure)?;
+            let recommendation = core.recommend_team_routing(
+                &team_id,
+                member.as_deref(),
+                task.as_deref(),
+                &context,
+            )?;
             if output.json {
                 print_json_response(&recommendation, None);
             } else {
@@ -871,4 +880,19 @@ fn parse_routing_preferences(
         avoid_metered,
         max_cost_tier,
     }))
+}
+
+fn parse_routing_context(pressure_entries: &[String]) -> Result<RoutingContext> {
+    let mut context = RoutingContext::default();
+    for entry in pressure_entries {
+        let (runtime, pressure) = entry.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("invalid `--pressure` value `{entry}`; expected runtime=level")
+        })?;
+        let runtime = runtime.parse::<RuntimeKind>().map_err(anyhow::Error::msg)?;
+        let pressure = pressure
+            .parse::<RuntimePressure>()
+            .map_err(anyhow::Error::msg)?;
+        context.pressure.insert(runtime, pressure);
+    }
+    Ok(context)
 }

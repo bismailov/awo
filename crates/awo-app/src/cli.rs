@@ -119,6 +119,8 @@ pub enum RuntimeCommand {
         max_cost_tier: Option<String>,
         #[arg(long)]
         no_fallback: bool,
+        #[arg(long = "pressure")]
+        pressure: Vec<String>,
     },
 }
 
@@ -159,6 +161,8 @@ pub enum TeamCommand {
         member: Option<String>,
         #[arg(long)]
         task: Option<String>,
+        #[arg(long = "pressure")]
+        pressure: Vec<String>,
     },
     Member {
         #[command(subcommand)]

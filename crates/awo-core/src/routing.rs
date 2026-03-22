@@ -1,6 +1,8 @@
 use crate::capabilities::{CostTier, LimitProfile, runtime_capabilities};
 use crate::runtime::RuntimeKind;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use strum_macros::{Display, EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoutingTarget {
@@ -33,6 +35,42 @@ impl Default for RoutingPreferences {
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum RuntimePressure {
+    None,
+    SoftLimit,
+    HardLimit,
+    Unavailable,
+}
+
+impl RuntimePressure {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RoutingContext {
+    pub pressure: HashMap<RuntimeKind, RuntimePressure>,
+}
+
+impl RoutingContext {
+    pub fn pressure_for(&self, runtime: RuntimeKind) -> RuntimePressure {
+        self.pressure
+            .get(&runtime)
+            .copied()
+            .unwrap_or(RuntimePressure::None)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pressure.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingSource {
@@ -54,6 +92,7 @@ pub struct RoutingRecommendation {
     pub member_id: String,
     pub task_id: Option<String>,
     pub preferences: RoutingPreferences,
+    pub context: RoutingContext,
     pub decision: RoutingDecision,
 }
 
@@ -61,21 +100,25 @@ pub fn route_runtime(
     primary: RoutingTarget,
     fallback: Option<RoutingTarget>,
     preferences: &RoutingPreferences,
+    context: &RoutingContext,
 ) -> RoutingDecision {
-    let primary_check = evaluate_target(&primary, preferences);
+    let primary_check = evaluate_target(&primary, preferences, context);
     if primary_check.accepted {
         return RoutingDecision {
             selected_runtime: primary.runtime,
             selected_model: primary.model,
             source: RoutingSource::Primary,
-            reason: "primary target meets all routing preferences".to_string(),
+            reason: accepted_reason(
+                "primary target meets all routing preferences",
+                &primary_check,
+            ),
         };
     }
 
     if preferences.allow_fallback
         && let Some(fallback) = fallback
     {
-        let fallback_check = evaluate_target(&fallback, preferences);
+        let fallback_check = evaluate_target(&fallback, preferences, context);
         if fallback_check.accepted {
             return RoutingDecision {
                 selected_runtime: fallback.runtime,
@@ -122,8 +165,27 @@ struct TargetCheck {
     reason: String,
 }
 
-fn evaluate_target(target: &RoutingTarget, preferences: &RoutingPreferences) -> TargetCheck {
+fn evaluate_target(
+    target: &RoutingTarget,
+    preferences: &RoutingPreferences,
+    context: &RoutingContext,
+) -> TargetCheck {
     let capabilities = runtime_capabilities(target.runtime);
+    match context.pressure_for(target.runtime) {
+        RuntimePressure::Unavailable => {
+            return TargetCheck {
+                accepted: false,
+                reason: "runtime pressure marks runtime unavailable".to_string(),
+            };
+        }
+        RuntimePressure::HardLimit => {
+            return TargetCheck {
+                accepted: false,
+                reason: "runtime pressure hit a hard limit".to_string(),
+            };
+        }
+        RuntimePressure::None | RuntimePressure::SoftLimit => {}
+    }
 
     if preferences.prefer_local && capabilities.cost_tier != CostTier::Local {
         return TargetCheck {
@@ -154,7 +216,20 @@ fn evaluate_target(target: &RoutingTarget, preferences: &RoutingPreferences) -> 
 
     TargetCheck {
         accepted: true,
-        reason: "accepted".to_string(),
+        reason: match context.pressure_for(target.runtime) {
+            RuntimePressure::SoftLimit => "accepted with soft_limit runtime pressure".to_string(),
+            RuntimePressure::None | RuntimePressure::HardLimit | RuntimePressure::Unavailable => {
+                "accepted".to_string()
+            }
+        },
+    }
+}
+
+fn accepted_reason(base: &str, target_check: &TargetCheck) -> String {
+    if target_check.reason == "accepted" {
+        base.to_string()
+    } else {
+        format!("{base}; {}", target_check.reason)
     }
 }
 
@@ -189,6 +264,7 @@ mod tests {
                 Some("flash".to_string()),
             )),
             &preferences,
+            &RoutingContext::default(),
         );
         assert_eq!(decision.selected_runtime, RuntimeKind::Claude);
         assert_eq!(decision.selected_model.as_deref(), Some("sonnet"));
@@ -208,6 +284,7 @@ mod tests {
                 Some("flash".to_string()),
             )),
             &preferences,
+            &RoutingContext::default(),
         );
         assert_eq!(decision.selected_runtime, RuntimeKind::Gemini);
         assert_eq!(decision.selected_model.as_deref(), Some("flash"));
@@ -228,6 +305,7 @@ mod tests {
                 Some("flash".to_string()),
             )),
             &preferences,
+            &RoutingContext::default(),
         );
         assert_eq!(decision.selected_runtime, RuntimeKind::Claude);
         assert_eq!(decision.selected_model.as_deref(), Some("opus"));
@@ -245,6 +323,7 @@ mod tests {
             RoutingTarget::new(RuntimeKind::Claude, Some("sonnet".to_string())),
             Some(RoutingTarget::new(RuntimeKind::Shell, None)),
             &preferences,
+            &RoutingContext::default(),
         );
         assert_eq!(decision.selected_runtime, RuntimeKind::Shell);
         assert_eq!(decision.source, RoutingSource::Fallback);
@@ -260,6 +339,7 @@ mod tests {
             RoutingTarget::new(RuntimeKind::Codex, Some("gpt-5.4".to_string())),
             Some(RoutingTarget::new(RuntimeKind::Shell, None)),
             &preferences,
+            &RoutingContext::default(),
         );
         assert_eq!(decision.selected_runtime, RuntimeKind::Shell);
         assert_eq!(decision.source, RoutingSource::Fallback);
@@ -268,5 +348,64 @@ mod tests {
     #[test]
     fn unknown_cost_tier_is_rejected_by_cost_ceiling() {
         assert!(!cost_within_limit(CostTier::Unknown, CostTier::Standard));
+    }
+
+    #[test]
+    fn soft_limit_pressure_keeps_primary_but_changes_reason() {
+        let mut context = RoutingContext::default();
+        context
+            .pressure
+            .insert(RuntimeKind::Claude, RuntimePressure::SoftLimit);
+
+        let decision = route_runtime(
+            RoutingTarget::new(RuntimeKind::Claude, Some("sonnet".to_string())),
+            Some(RoutingTarget::new(
+                RuntimeKind::Gemini,
+                Some("flash".to_string()),
+            )),
+            &RoutingPreferences::default(),
+            &context,
+        );
+        assert_eq!(decision.selected_runtime, RuntimeKind::Claude);
+        assert!(decision.reason.contains("soft_limit"));
+    }
+
+    #[test]
+    fn hard_limit_pressure_causes_fallback() {
+        let mut context = RoutingContext::default();
+        context
+            .pressure
+            .insert(RuntimeKind::Claude, RuntimePressure::HardLimit);
+
+        let decision = route_runtime(
+            RoutingTarget::new(RuntimeKind::Claude, Some("sonnet".to_string())),
+            Some(RoutingTarget::new(
+                RuntimeKind::Gemini,
+                Some("flash".to_string()),
+            )),
+            &RoutingPreferences::default(),
+            &context,
+        );
+        assert_eq!(decision.selected_runtime, RuntimeKind::Gemini);
+        assert_eq!(decision.source, RoutingSource::Fallback);
+        assert!(decision.reason.contains("hard limit"));
+    }
+
+    #[test]
+    fn unavailable_pressure_without_fallback_reasons_clearly() {
+        let mut context = RoutingContext::default();
+        context
+            .pressure
+            .insert(RuntimeKind::Claude, RuntimePressure::Unavailable);
+
+        let decision = route_runtime(
+            RoutingTarget::new(RuntimeKind::Claude, Some("sonnet".to_string())),
+            None,
+            &RoutingPreferences::default(),
+            &context,
+        );
+        assert_eq!(decision.selected_runtime, RuntimeKind::Claude);
+        assert_eq!(decision.source, RoutingSource::Primary);
+        assert!(decision.reason.contains("unavailable"));
     }
 }
