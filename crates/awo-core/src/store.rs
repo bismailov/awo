@@ -8,6 +8,73 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
 
+const CURRENT_SCHEMA_VERSION: i64 = 4;
+const BASE_SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION_KEY: &str = "schema_version";
+
+const BASE_SCHEMA_SQL: &str = r#"
+    CREATE TABLE IF NOT EXISTS app_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS action_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        command_name TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        remote_url TEXT,
+        default_base_branch TEXT NOT NULL,
+        worktree_root TEXT NOT NULL,
+        shared_manifest_path TEXT,
+        shared_manifest_present INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS slots (
+        id TEXT PRIMARY KEY,
+        repo_id TEXT NOT NULL,
+        task_name TEXT NOT NULL,
+        slot_path TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        strategy TEXT NOT NULL,
+        status TEXT NOT NULL,
+        fingerprint_hash TEXT,
+        fingerprint_status TEXT NOT NULL,
+        dirty INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        repo_id TEXT NOT NULL,
+        slot_id TEXT NOT NULL,
+        runtime TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        read_only INTEGER NOT NULL DEFAULT 0,
+        dry_run INTEGER NOT NULL DEFAULT 0,
+        command_line TEXT NOT NULL,
+        stdout_path TEXT,
+        stderr_path TEXT,
+        exit_code INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+"#;
+
+const MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL: &str =
+    "ALTER TABLE sessions ADD COLUMN supervisor TEXT";
+
 #[derive(Debug)]
 pub struct Store {
     connection: Mutex<Connection>,
@@ -23,81 +90,22 @@ impl Store {
     }
 
     pub fn initialize_schema(&self) -> AwoResult<()> {
-        let sql = r#"
-            CREATE TABLE IF NOT EXISTS app_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS action_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                command_name TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS repositories (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                repo_root TEXT NOT NULL,
-                remote_url TEXT,
-                default_base_branch TEXT NOT NULL,
-                worktree_root TEXT NOT NULL,
-                shared_manifest_path TEXT,
-                shared_manifest_present INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS slots (
-                id TEXT PRIMARY KEY,
-                repo_id TEXT NOT NULL,
-                task_name TEXT NOT NULL,
-                slot_path TEXT NOT NULL,
-                branch_name TEXT NOT NULL,
-                base_branch TEXT NOT NULL,
-                strategy TEXT NOT NULL,
-                status TEXT NOT NULL,
-                fingerprint_hash TEXT,
-                fingerprint_status TEXT NOT NULL,
-                dirty INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                repo_id TEXT NOT NULL,
-                slot_id TEXT NOT NULL,
-                runtime TEXT NOT NULL,
-                supervisor TEXT,
-                prompt TEXT NOT NULL,
-                status TEXT NOT NULL,
-                read_only INTEGER NOT NULL DEFAULT 0,
-                dry_run INTEGER NOT NULL DEFAULT 0,
-                command_line TEXT NOT NULL,
-                stdout_path TEXT,
-                stderr_path TEXT,
-                exit_code INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-        "#;
-
         let connection = self
             .connection
             .lock()
             .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
-            .execute_batch(sql)
+            .execute_batch(BASE_SCHEMA_SQL)
             .context("failed to initialize SQLite schema")?;
-        ensure_session_supervisor_column(&connection)?;
+        enable_wal_mode(&connection)?;
+        let schema_version = schema_version(&connection)?.unwrap_or(BASE_SCHEMA_VERSION);
+        apply_schema_migrations(&connection, schema_version)?;
         connection
             .execute(
                 "INSERT INTO app_meta (key, value)
-                 VALUES ('schema_version', '4')
+                 VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                [],
+                params![SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION.to_string()],
             )
             .context("failed to update SQLite schema version")?;
         Ok(())
@@ -639,29 +647,175 @@ impl Store {
     }
 }
 
-fn ensure_session_supervisor_column(connection: &Connection) -> AwoResult<()> {
-    if session_supervisor_column_exists(connection)? {
-        return Ok(());
+fn enable_wal_mode(connection: &Connection) -> AwoResult<()> {
+    let journal_mode: String = connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+        .context("failed to enable SQLite WAL mode")?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        return Err(AwoError::invalid_state(format!(
+            "failed to enable SQLite WAL mode: journal_mode={journal_mode}"
+        )));
     }
-
-    connection
-        .execute("ALTER TABLE sessions ADD COLUMN supervisor TEXT", [])
-        .context("failed to add `supervisor` column to sessions table")?;
     Ok(())
 }
 
-fn session_supervisor_column_exists(connection: &Connection) -> AwoResult<bool> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(sessions)")
-        .context("failed to inspect sessions table schema")?;
-    let mut rows = statement
-        .query([])
-        .context("failed to query sessions table schema")?;
-    while let Some(row) = rows.next().context("failed to read sessions schema row")? {
-        let column_name: String = row.get(1).context("failed to read schema column name")?;
-        if column_name == "supervisor" {
-            return Ok(true);
-        }
+fn schema_version(connection: &Connection) -> AwoResult<Option<i64>> {
+    connection
+        .query_row(
+            "SELECT value FROM app_meta WHERE key = ?1",
+            [SCHEMA_VERSION_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("failed to read SQLite schema version")?
+        .map(|value| {
+            value.parse::<i64>().map_err(|error| {
+                AwoError::invalid_state(format!("invalid SQLite schema version `{value}`: {error}"))
+            })
+        })
+        .transpose()
+}
+
+fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoResult<()> {
+    if schema_version > CURRENT_SCHEMA_VERSION {
+        return Err(AwoError::invalid_state(format!(
+            "unsupported SQLite schema version {schema_version}; expected at most {CURRENT_SCHEMA_VERSION}"
+        )));
     }
-    Ok(false)
+
+    if schema_version < 4 {
+        connection
+            .execute(MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL, [])
+            .context("failed to add `supervisor` column to sessions table")?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use rusqlite::Connection as SqliteConnection;
+    use tempfile::TempDir;
+
+    fn open_store() -> Result<(TempDir, Store)> {
+        let temp_dir = tempfile::tempdir()?;
+        let db_path = temp_dir.path().join("state.sqlite3");
+        Ok((temp_dir, Store::open(&db_path)?))
+    }
+
+    fn schema_version_at(path: &Path) -> Result<i64> {
+        let connection = SqliteConnection::open(path)?;
+        let version = connection.query_row(
+            "SELECT value FROM app_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )?;
+        Ok(version.parse()?)
+    }
+
+    fn journal_mode_at(path: &Path) -> Result<String> {
+        let connection = SqliteConnection::open(path)?;
+        Ok(connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
+    }
+
+    fn session_columns_at(path: &Path) -> Result<Vec<String>> {
+        let connection = SqliteConnection::open(path)?;
+        let mut statement = connection.prepare("PRAGMA table_info(sessions)")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    #[test]
+    fn initialize_schema_enables_wal_and_records_current_version() -> Result<()> {
+        let (temp_dir, store) = open_store()?;
+        let db_path = temp_dir.path().join("state.sqlite3");
+
+        store.initialize_schema()?;
+
+        assert_eq!(journal_mode_at(&db_path)?, "wal");
+        assert_eq!(schema_version_at(&db_path)?, CURRENT_SCHEMA_VERSION);
+        assert!(session_columns_at(&db_path)?.contains(&"supervisor".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_schema_migrates_legacy_sessions_table() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let db_path = temp_dir.path().join("legacy.sqlite3");
+        let connection = SqliteConnection::open(&db_path)?;
+        connection.execute_batch(
+            r#"
+                CREATE TABLE app_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
+                CREATE TABLE action_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command_name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE repositories (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    repo_root TEXT NOT NULL,
+                    remote_url TEXT,
+                    default_base_branch TEXT NOT NULL,
+                    worktree_root TEXT NOT NULL,
+                    shared_manifest_path TEXT,
+                    shared_manifest_present INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE slots (
+                    id TEXT PRIMARY KEY,
+                    repo_id TEXT NOT NULL,
+                    task_name TEXT NOT NULL,
+                    slot_path TEXT NOT NULL,
+                    branch_name TEXT NOT NULL,
+                    base_branch TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    fingerprint_hash TEXT,
+                    fingerprint_status TEXT NOT NULL,
+                    dirty INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    repo_id TEXT NOT NULL,
+                    slot_id TEXT NOT NULL,
+                    runtime TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    read_only INTEGER NOT NULL DEFAULT 0,
+                    dry_run INTEGER NOT NULL DEFAULT 0,
+                    command_line TEXT NOT NULL,
+                    stdout_path TEXT,
+                    stderr_path TEXT,
+                    exit_code INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                INSERT INTO app_meta (key, value) VALUES ('schema_version', '3');
+            "#,
+        )?;
+        drop(connection);
+
+        let store = Store::open(&db_path)?;
+        store.initialize_schema()?;
+
+        assert_eq!(journal_mode_at(&db_path)?, "wal");
+        assert_eq!(schema_version_at(&db_path)?, CURRENT_SCHEMA_VERSION);
+        assert!(session_columns_at(&db_path)?.contains(&"supervisor".to_string()));
+        Ok(())
+    }
 }
