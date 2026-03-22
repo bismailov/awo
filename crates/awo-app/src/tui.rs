@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use awo_core::{
-    AppCore, AppSnapshot, Command, DomainEvent, RepoSummary, RuntimeCapabilityDescriptor,
-    TeamSummary,
+    AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
+    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, TeamSummary,
 };
 use crossterm::event::{self, Event as CEvent, KeyCode};
 use crossterm::execute;
@@ -444,6 +444,27 @@ fn render_repo_detail(
                 "  - {} status={} open={}/{}",
                 team.team_id, team.status, team.open_task_count, team.task_count
             )));
+            if let Some(preferences) = &team.routing_preferences {
+                lines.push(Line::from(format!(
+                    "    routing: {}",
+                    format_routing_preferences(preferences)
+                )));
+            }
+            if team.lead_fallback_runtime.is_some() || team.lead_fallback_model.is_some() {
+                lines.push(Line::from(format!(
+                    "    lead fallback: {}",
+                    format_fallback_target(
+                        team.lead_fallback_runtime.as_deref(),
+                        team.lead_fallback_model.as_deref()
+                    )
+                )));
+            }
+            for member in &team.member_routing {
+                lines.push(Line::from(format!(
+                    "    member {}",
+                    format_member_routing(member)
+                )));
+            }
         }
     }
 
@@ -465,4 +486,66 @@ fn render_repo_detail(
     }
 
     lines
+}
+
+fn format_routing_preferences(preferences: &RoutingPreferencesSummary) -> String {
+    let mut parts = vec![
+        format!(
+            "fallback={}",
+            if preferences.allow_fallback {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+        format!(
+            "local={}",
+            if preferences.prefer_local {
+                "prefer"
+            } else {
+                "neutral"
+            }
+        ),
+        format!(
+            "metered={}",
+            if preferences.avoid_metered {
+                "avoid"
+            } else {
+                "ok"
+            }
+        ),
+    ];
+    if let Some(max_cost_tier) = preferences.max_cost_tier {
+        parts.push(format!("max={}", max_cost_tier.as_str()));
+    }
+    parts.join(" ")
+}
+
+fn format_fallback_target(runtime: Option<&str>, model: Option<&str>) -> String {
+    match (runtime, model) {
+        (Some(runtime), Some(model)) => format!("{runtime}/{model}"),
+        (Some(runtime), None) => runtime.to_string(),
+        (None, Some(model)) => format!("model={model}"),
+        (None, None) => "-".to_string(),
+    }
+}
+
+fn format_member_routing(member: &MemberRoutingSummary) -> String {
+    let mut parts = vec![member.member_id.clone()];
+    if member.fallback_runtime.is_some() || member.fallback_model.is_some() {
+        parts.push(format!(
+            "fallback={}",
+            format_fallback_target(
+                member.fallback_runtime.as_deref(),
+                member.fallback_model.as_deref()
+            )
+        ));
+    }
+    if let Some(preferences) = &member.routing_preferences {
+        parts.push(format!(
+            "routing={}",
+            format_routing_preferences(preferences)
+        ));
+    }
+    parts.join(" ")
 }

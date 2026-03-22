@@ -37,8 +37,9 @@ pub use skills::{
 };
 pub use slot::SlotStrategy;
 pub use snapshot::{
-    AppSnapshot, CommandLogEntry, RepoContextPackSummary, RepoSkillRuntimeSummary, RepoSummary,
-    ReviewSummary, ReviewWarning, SessionSummary, SlotSummary, TeamSummary,
+    AppSnapshot, CommandLogEntry, MemberRoutingSummary, RepoContextPackSummary,
+    RepoSkillRuntimeSummary, RepoSummary, ReviewSummary, ReviewWarning,
+    RoutingPreferencesSummary, SessionSummary, SlotSummary, TeamSummary,
 };
 pub use team::{
     TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,

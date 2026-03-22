@@ -1,10 +1,11 @@
-use crate::capabilities::{RuntimeCapabilityDescriptor, all_runtime_capabilities};
+use crate::capabilities::{CostTier, RuntimeCapabilityDescriptor, all_runtime_capabilities};
 use crate::config::AppConfig;
 use crate::context::discover_repo_context;
 use crate::diagnostics::DiagnosticSeverity;
 use crate::error::AwoResult;
 use crate::platform::current_platform_label;
 use crate::repo::{RegisteredRepo, remote_label};
+use crate::routing::RoutingPreferences;
 use crate::runtime::SessionRecord;
 use crate::skills::{
     RuntimeSkillRoots, SkillInstallState, SkillRuntime, discover_repo_skills, doctor_repo_skills,
@@ -87,6 +88,26 @@ pub struct TeamSummary {
     pub write_member_count: usize,
     pub task_count: usize,
     pub open_task_count: usize,
+    pub routing_preferences: Option<RoutingPreferencesSummary>,
+    pub lead_fallback_runtime: Option<String>,
+    pub lead_fallback_model: Option<String>,
+    pub member_routing: Vec<MemberRoutingSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RoutingPreferencesSummary {
+    pub allow_fallback: bool,
+    pub prefer_local: bool,
+    pub avoid_metered: bool,
+    pub max_cost_tier: Option<CostTier>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberRoutingSummary {
+    pub member_id: String,
+    pub fallback_runtime: Option<String>,
+    pub fallback_model: Option<String>,
+    pub routing_preferences: Option<RoutingPreferencesSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -336,6 +357,33 @@ impl From<TeamManifest> for TeamSummary {
             .iter()
             .filter(|task| task.state.as_str() != "done")
             .count();
+        let routing_preferences = value
+            .routing_preferences
+            .as_ref()
+            .map(RoutingPreferencesSummary::from);
+        let member_routing = value
+            .members
+            .iter()
+            .filter_map(|member| {
+                let routing_preferences = member
+                    .routing_preferences
+                    .as_ref()
+                    .map(RoutingPreferencesSummary::from);
+                if member.fallback_runtime.is_none()
+                    && member.fallback_model.is_none()
+                    && routing_preferences.is_none()
+                {
+                    None
+                } else {
+                    Some(MemberRoutingSummary {
+                        member_id: member.member_id.clone(),
+                        fallback_runtime: member.fallback_runtime.clone(),
+                        fallback_model: member.fallback_model.clone(),
+                        routing_preferences,
+                    })
+                }
+            })
+            .collect();
 
         Self {
             team_id: value.team_id,
@@ -346,6 +394,21 @@ impl From<TeamManifest> for TeamSummary {
             write_member_count,
             task_count,
             open_task_count,
+            routing_preferences,
+            lead_fallback_runtime: value.lead.fallback_runtime,
+            lead_fallback_model: value.lead.fallback_model,
+            member_routing,
+        }
+    }
+}
+
+impl From<&RoutingPreferences> for RoutingPreferencesSummary {
+    fn from(value: &RoutingPreferences) -> Self {
+        Self {
+            allow_fallback: value.allow_fallback,
+            prefer_local: value.prefer_local,
+            avoid_metered: value.avoid_metered,
+            max_cost_tier: value.max_cost_tier,
         }
     }
 }
