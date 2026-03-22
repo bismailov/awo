@@ -174,7 +174,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let selected_repo = selected_repo(snapshot, state);
     let vertical = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(7),
+        Constraint::Length(11),
         Constraint::Percentage(55),
         Constraint::Percentage(45),
     ])
@@ -219,6 +219,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                 .collect::<Vec<_>>()
                 .join(" ")
         )),
+        Line::from(snapshot.runtime_pressure.clone()),
     ];
     let paths_widget =
         Paragraph::new(paths).block(Block::default().borders(Borders::ALL).title("Overview"));

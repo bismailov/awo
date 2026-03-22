@@ -37,6 +37,7 @@ pub struct AppSnapshot {
     pub registered_repos: Vec<RepoSummary>,
     pub teams: Vec<TeamSummary>,
     pub runtime_capabilities: Vec<RuntimeCapabilityDescriptor>,
+    pub runtime_pressure: String,
     pub slots: Vec<SlotSummary>,
     pub sessions: Vec<SessionSummary>,
     pub review: ReviewSummary,
@@ -163,6 +164,18 @@ impl AppSnapshot {
             registered_repos,
             teams,
             runtime_capabilities: all_runtime_capabilities(),
+            runtime_pressure: if config.settings.runtime_pressure_profile.is_empty() {
+                "pressure=none".to_string()
+            } else {
+                let mut entries: Vec<_> = config
+                    .settings
+                    .runtime_pressure_profile
+                    .iter()
+                    .map(|(k, v)| format!("{k}={}", v.as_str()))
+                    .collect();
+                entries.sort();
+                format!("pressure: {}", entries.join(", "))
+            },
             slots: slots.into_iter().map(SlotSummary::from).collect(),
             sessions: sessions.into_iter().map(SessionSummary::from).collect(),
             review,
