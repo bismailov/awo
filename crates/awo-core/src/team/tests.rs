@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Result;
 use crate::app::AppPaths;
 use std::path::Path;
 use std::sync::{Arc, Barrier};
@@ -657,6 +658,18 @@ fn update_lead_member_policy() -> Result<()> {
 }
 
 // ── Negative-path parsing tests ────────────────────────────────────
+
+#[test]
+fn load_manifest_fails_on_empty_file() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("empty.toml");
+    std::fs::write(&path, "")?;
+
+    let result = load_team_manifest(&path);
+    assert!(result.is_err());
+    assert!(format!("{:?}", result.unwrap_err()).contains("missing field `version`"));
+    Ok(())
+}
 
 #[test]
 fn load_manifest_fails_on_malformed_toml() -> Result<()> {

@@ -1,4 +1,5 @@
-use anyhow::Result;
+use crate::awo_bail;
+use crate::error::{AwoError, AwoResult};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
@@ -144,41 +145,41 @@ pub struct TeamManifest {
 }
 
 impl TeamManifest {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> AwoResult<()> {
         if self.version == 0 {
-            anyhow::bail!("team manifest version must be greater than zero");
+            awo_bail!("team manifest version must be greater than zero");
         }
         if self.team_id.trim().is_empty() {
-            anyhow::bail!("team manifest requires a non-empty team_id");
+            awo_bail!("team manifest requires a non-empty team_id");
         }
         if self.repo_id.trim().is_empty() {
-            anyhow::bail!("team manifest requires a non-empty repo_id");
+            awo_bail!("team manifest requires a non-empty repo_id");
         }
         if self.objective.trim().is_empty() {
-            anyhow::bail!("team manifest requires a non-empty objective");
+            awo_bail!("team manifest requires a non-empty objective");
         }
 
         let mut member_ids = std::collections::BTreeSet::new();
         member_ids.insert(self.lead.member_id.as_str());
         for member in &self.members {
             if member.member_id.trim().is_empty() {
-                anyhow::bail!("team members require non-empty member ids");
+                awo_bail!("team members require non-empty member ids");
             }
             if !member_ids.insert(member.member_id.as_str()) {
-                anyhow::bail!("duplicate team member id `{}`", member.member_id);
+                awo_bail!("duplicate team member id `{}`", member.member_id);
             }
         }
 
         let mut task_ids = std::collections::BTreeSet::new();
         for task in &self.tasks {
             if task.task_id.trim().is_empty() {
-                anyhow::bail!("task cards require non-empty task ids");
+                awo_bail!("task cards require non-empty task ids");
             }
             if !task_ids.insert(task.task_id.as_str()) {
-                anyhow::bail!("duplicate task id `{}`", task.task_id);
+                awo_bail!("duplicate task id `{}`", task.task_id);
             }
             if !member_ids.contains(task.owner_id.as_str()) {
-                anyhow::bail!(
+                awo_bail!(
                     "task `{}` references unknown owner `{}`",
                     task.task_id,
                     task.owner_id
@@ -189,7 +190,7 @@ impl TeamManifest {
         for task in &self.tasks {
             for dependency in &task.depends_on {
                 if !task_ids.contains(dependency.as_str()) {
-                    anyhow::bail!(
+                    awo_bail!(
                         "task `{}` depends on unknown task `{}`",
                         task.task_id,
                         dependency
@@ -237,10 +238,10 @@ impl TeamManifest {
         fallback_runtime: Option<Option<String>>,
         fallback_model: Option<Option<String>>,
         routing_preferences: Option<Option<crate::routing::RoutingPreferences>>,
-    ) -> Result<()> {
+    ) -> AwoResult<()> {
         let member = self
             .member_mut(member_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown team member `{member_id}`"))?;
+            .ok_or_else(|| AwoError::validation("unknown team member `{member_id}`"))?;
         if let Some(value) = runtime {
             member.runtime = value;
         }
@@ -259,43 +260,43 @@ impl TeamManifest {
         self.validate()
     }
 
-    pub fn add_member(&mut self, member: TeamMember) -> Result<()> {
+    pub fn add_member(&mut self, member: TeamMember) -> AwoResult<()> {
         if self.member(&member.member_id).is_some() {
-            anyhow::bail!("team member `{}` already exists", member.member_id);
+            awo_bail!("team member `{}` already exists", member.member_id);
         }
         self.members.push(member);
         self.validate()
     }
 
-    pub fn remove_member(&mut self, member_id: &str) -> Result<()> {
+    pub fn remove_member(&mut self, member_id: &str) -> AwoResult<()> {
         if self.lead.member_id == member_id {
-            anyhow::bail!("cannot remove the team lead");
+            awo_bail!("cannot remove the team lead");
         }
         if self.tasks.iter().any(|task| task.owner_id == member_id) {
-            anyhow::bail!("cannot remove member `{member_id}` while tasks are still assigned");
+            awo_bail!("cannot remove member `{member_id}` while tasks are still assigned");
         }
 
         let original_len = self.members.len();
         self.members.retain(|member| member.member_id != member_id);
         if self.members.len() == original_len {
-            anyhow::bail!("unknown team member `{member_id}`");
+            awo_bail!("unknown team member `{member_id}`");
         }
 
         self.validate()
     }
 
-    pub fn add_task(&mut self, task: TaskCard) -> Result<()> {
+    pub fn add_task(&mut self, task: TaskCard) -> AwoResult<()> {
         if self.task(&task.task_id).is_some() {
-            anyhow::bail!("task `{}` already exists", task.task_id);
+            awo_bail!("task `{}` already exists", task.task_id);
         }
         self.tasks.push(task);
         self.validate()
     }
 
-    pub fn set_task_state(&mut self, task_id: &str, state: TaskCardState) -> Result<()> {
+    pub fn set_task_state(&mut self, task_id: &str, state: TaskCardState) -> AwoResult<()> {
         let task = self
             .task_mut(task_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown task `{task_id}`"))?;
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
         task.state = state;
         self.refresh_status();
         self.validate()
@@ -306,10 +307,10 @@ impl TeamManifest {
         member_id: &str,
         slot_id: &str,
         branch_name: &str,
-    ) -> Result<()> {
+    ) -> AwoResult<()> {
         let member = self
             .member_mut(member_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown team member `{member_id}`"))?;
+            .ok_or_else(|| AwoError::validation("unknown team member `{member_id}`"))?;
         member.slot_id = Some(slot_id.to_string());
         member.branch_name = Some(branch_name.to_string());
         self.validate()
@@ -320,10 +321,10 @@ impl TeamManifest {
         task_id: &str,
         slot_id: &str,
         branch_name: &str,
-    ) -> Result<()> {
+    ) -> AwoResult<()> {
         let task = self
             .task_mut(task_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown task `{task_id}`"))?;
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
         task.slot_id = Some(slot_id.to_string());
         task.branch_name = Some(branch_name.to_string());
         self.validate()
@@ -358,13 +359,13 @@ impl TeamManifest {
         };
     }
 
-    pub fn render_task_prompt(&self, task_id: &str) -> Result<String> {
+    pub fn render_task_prompt(&self, task_id: &str) -> AwoResult<String> {
         let task = self
             .task(task_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown task `{task_id}`"))?;
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
         let owner = self
             .member(&task.owner_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown owner `{}`", task.owner_id))?;
+            .ok_or_else(|| AwoError::validation(format!("unknown owner `{}`", task.owner_id)))?;
 
         let mut lines = vec![
             format!("Team objective: {}", self.objective),
@@ -456,10 +457,10 @@ impl TeamManifest {
     }
 
     /// Transition the team to `Archived`. Fails if `can_archive()` is false.
-    pub fn archive(&mut self) -> Result<()> {
+    pub fn archive(&mut self) -> AwoResult<()> {
         let blockers = self.archive_blockers();
         if !blockers.is_empty() {
-            anyhow::bail!(
+            awo_bail!(
                 "cannot archive team `{}`: {}",
                 self.team_id,
                 blockers.join("; ")

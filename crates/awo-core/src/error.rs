@@ -81,6 +81,8 @@ pub enum AwoError {
     },
     #[error("could not resolve `{runtime}` user skill directory")]
     SkillTargetDirUnresolved { runtime: String },
+    #[error("validation error: {message}")]
+    Validation { message: String },
     #[error("store error: {message}")]
     Store {
         message: String,
@@ -93,9 +95,25 @@ pub enum AwoError {
     Internal(#[from] anyhow::Error),
 }
 
+#[macro_export]
+macro_rules! awo_bail {
+    ($msg:expr) => {
+        return Err($crate::error::AwoError::validation($msg))
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        return Err($crate::error::AwoError::validation(format!($fmt, $($arg)*)))
+    };
+}
+
 pub type AwoResult<T> = std::result::Result<T, AwoError>;
 
 impl AwoError {
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::Validation {
+            message: message.into(),
+        }
+    }
+
     pub fn unknown_repo(repo_id: impl Into<String>) -> Self {
         Self::UnknownRepoId {
             repo_id: repo_id.into(),

@@ -837,4 +837,29 @@ mod tests {
         assert!(session_columns_at(&db_path)?.contains(&"supervisor".to_string()));
         Ok(())
     }
+
+    #[test]
+    fn initialize_schema_rejects_unsupported_future_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let db_path = temp_dir.path().join("future.sqlite3");
+        let connection = SqliteConnection::open(&db_path)?;
+        connection.execute_batch(&format!(
+            r#"
+                CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO app_meta (key, value) VALUES ('schema_version', '{}');
+            "#,
+            CURRENT_SCHEMA_VERSION + 1
+        ))?;
+        drop(connection);
+
+        let store = Store::open(&db_path)?;
+        let result = store.initialize_schema();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported SQLite schema version"));
+        Ok(())
+    }
 }

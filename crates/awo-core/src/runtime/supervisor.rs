@@ -235,28 +235,18 @@ pub(super) fn prepare_command(
         RuntimeKind::Shell => {
             let display_command_line =
                 shell_join(default_shell_program(), &shell_command_args(prompt));
-            #[cfg(windows)]
-            {
-                PreparedCommand {
-                    program: default_shell_program().to_string(),
-                    args: shell_command_args(prompt),
-                    cwd: slot_path.to_path_buf(),
-                    display_command_line: Some(display_command_line),
-                    script_path: None,
-                    script_body: None,
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                let script_path = stdout_path.with_extension("sh");
-                PreparedCommand {
-                    program: default_shell_program().to_string(),
-                    args: shell_script_args(&script_path),
-                    cwd: slot_path.to_path_buf(),
-                    display_command_line: Some(display_command_line),
-                    script_path: Some(script_path),
-                    script_body: Some(prompt.to_string()),
-                }
+            let script_path = if cfg!(windows) {
+                stdout_path.with_extension("ps1")
+            } else {
+                stdout_path.with_extension("sh")
+            };
+            PreparedCommand {
+                program: default_shell_program().to_string(),
+                args: shell_script_args(&script_path),
+                cwd: slot_path.to_path_buf(),
+                display_command_line: Some(display_command_line),
+                script_path: Some(script_path),
+                script_body: Some(prompt.to_string()),
             }
         }
     }
