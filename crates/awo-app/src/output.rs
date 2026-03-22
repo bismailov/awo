@@ -383,16 +383,13 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
     println!("- objective: {}", manifest.objective);
     println!("- status: {}", manifest.status);
     if let Some(routing_preferences) = &manifest.routing_preferences {
-        println!(
-            "- routing defaults: prefer_local={} avoid_metered={} max_cost_tier={} allow_fallback={}",
-            routing_preferences.prefer_local,
-            routing_preferences.avoid_metered,
-            routing_preferences
-                .max_cost_tier
-                .map(|tier| tier.as_str())
-                .unwrap_or("-"),
-            routing_preferences.allow_fallback
-        );
+        println!("- team routing defaults:");
+        println!("  prefer_local={}", routing_preferences.prefer_local);
+        println!("  avoid_metered={}", routing_preferences.avoid_metered);
+        if let Some(tier) = &routing_preferences.max_cost_tier {
+            println!("  max_cost_tier={}", tier.as_str());
+        }
+        println!("  allow_fallback={}", routing_preferences.allow_fallback);
     }
     println!(
         "- lead: {} role={} runtime={} model={} mode={} read_only={}",
@@ -409,6 +406,15 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
             manifest.lead.fallback_runtime.as_deref().unwrap_or("-"),
             manifest.lead.fallback_model.as_deref().unwrap_or("-"),
         );
+    }
+    if let Some(routing_preferences) = &manifest.lead.routing_preferences {
+        println!("  lead routing defaults:");
+        println!("    prefer_local={}", routing_preferences.prefer_local);
+        println!("    avoid_metered={}", routing_preferences.avoid_metered);
+        if let Some(tier) = &routing_preferences.max_cost_tier {
+            println!("    max_cost_tier={}", tier.as_str());
+        }
+        println!("    allow_fallback={}", routing_preferences.allow_fallback);
     }
     if manifest.lead.context_packs.is_empty() {
         println!("- lead context packs: none");
@@ -450,14 +456,14 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
                 );
             }
             if let Some(routing_preferences) = &member.routing_preferences {
+                println!("    member routing defaults:");
+                println!("      prefer_local={}", routing_preferences.prefer_local);
+                println!("      avoid_metered={}", routing_preferences.avoid_metered);
+                if let Some(tier) = &routing_preferences.max_cost_tier {
+                    println!("      max_cost_tier={}", tier.as_str());
+                }
                 println!(
-                    "    routing defaults: prefer_local={} avoid_metered={} max_cost_tier={} allow_fallback={}",
-                    routing_preferences.prefer_local,
-                    routing_preferences.avoid_metered,
-                    routing_preferences
-                        .max_cost_tier
-                        .map(|tier| tier.as_str())
-                        .unwrap_or("-"),
+                    "      allow_fallback={}",
                     routing_preferences.allow_fallback
                 );
             }

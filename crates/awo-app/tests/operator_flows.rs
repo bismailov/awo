@@ -89,6 +89,26 @@ impl TestEnv {
             )
         })
     }
+
+    fn run_text(&self, args: &[&str]) -> String {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_awo"));
+        cmd.args(args);
+        cmd.env("HOME", &self.root);
+        cmd.env("XDG_CONFIG_HOME", self.root.join("config"));
+        cmd.env("XDG_DATA_HOME", self.root.join("data"));
+        #[cfg(windows)]
+        {
+            cmd.env("LOCALAPPDATA", self.root.join("local"));
+            cmd.env("APPDATA", self.root.join("roaming"));
+        }
+        let output = cmd.output().expect("failed to run awo binary");
+        assert!(
+            output.status.success(),
+            "command failed: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
 }
 
 impl Drop for TestEnv {
@@ -232,6 +252,14 @@ fn team_init_with_routing_defaults_persists_in_show() {
         "--max-cost-tier",
         "standard",
         "--no-fallback",
+        "--lead-runtime",
+        "claude",
+        "--lead-model",
+        "sonnet",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
     ]);
     assert_eq!(init_result["ok"], true, "team init failed: {init_result}");
     let manifest = &init_result["data"]["manifest"];
@@ -253,6 +281,13 @@ fn team_init_with_routing_defaults_persists_in_show() {
         show_manifest["routing_preferences"]["allow_fallback"],
         false
     );
+
+    let text_output = env.run_text(&["team", "show", "routing-team"]);
+    assert!(text_output.contains("team routing defaults:"));
+    assert!(text_output.contains("prefer_local=true"));
+    assert!(text_output.contains("max_cost_tier=standard"));
+    assert!(text_output.contains("allow_fallback=false"));
+    assert!(text_output.contains("fallback: runtime=gemini model=flash"));
 }
 
 #[test]
@@ -315,6 +350,11 @@ fn team_member_add_with_routing_defaults_persists_in_show() {
         "standard"
     );
     assert_eq!(show_member["routing_preferences"]["allow_fallback"], false);
+
+    let text_output = env.run_text(&["team", "show", "member-routing-team"]);
+    assert!(text_output.contains("member routing defaults:"));
+    assert!(text_output.contains("fallback: runtime=gemini model=flash"));
+    assert!(text_output.contains("max_cost_tier=standard"));
 }
 
 #[test]
