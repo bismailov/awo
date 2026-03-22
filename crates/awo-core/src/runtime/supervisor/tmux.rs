@@ -109,7 +109,7 @@ pub(super) fn kill(session_id: &str) -> Result<()> {
 fn build_wrapper(prepared: &PreparedCommand, combined_log_path: &Path, exit_path: &Path) -> String {
     let command = shell_join(&prepared.program, &prepared.args);
     let snippet = format!(
-        "set -o pipefail; {} 2>&1 | tee -a {}; exit_code=${{pipestatus[1]}}; printf '%s\\n' \"$exit_code\" > {}; exit \"$exit_code\"",
+        "set -o pipefail; {} 2>&1 | tee -a {}; exit_code=$?; printf '%s\\n' \"$exit_code\" > {}; exit \"$exit_code\"",
         command,
         shell_quote(&combined_log_path.display().to_string()),
         shell_quote(&exit_path.display().to_string()),
@@ -173,4 +173,32 @@ pub(super) fn supervisor_ref(session_id: &str) -> String {
 enum TmuxSessionState {
     Running,
     Exited(i64),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_wrapper_uses_portable_pipeline_exit_code() {
+        let prepared = PreparedCommand {
+            program: "echo".to_string(),
+            args: vec!["hello".to_string()],
+            cwd: PathBuf::from("/tmp"),
+        };
+        let wrapper = build_wrapper(
+            &prepared,
+            Path::new("/tmp/combined.log"),
+            Path::new("/tmp/exit.code"),
+        );
+
+        assert!(
+            wrapper.contains("exit_code=$?"),
+            "wrapper should use portable pipeline exit code: {wrapper}"
+        );
+        assert!(
+            !wrapper.contains("pipestatus"),
+            "wrapper should not use zsh-only pipestatus: {wrapper}"
+        );
+    }
 }

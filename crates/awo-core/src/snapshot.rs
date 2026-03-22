@@ -16,6 +16,7 @@ use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
+use tracing::warn;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandLogEntry {
@@ -167,7 +168,17 @@ impl AppSnapshot {
         let review = build_review_summary(&slots, &sessions);
         let teams = list_team_manifest_paths(&config.paths)?
             .into_iter()
-            .filter_map(|path| load_team_manifest(&path).ok())
+            .filter_map(|path| match load_team_manifest(&path) {
+                Ok(manifest) => Some(manifest),
+                Err(error) => {
+                    warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "failed to load team manifest for snapshot"
+                    );
+                    None
+                }
+            })
             .map(TeamSummary::from)
             .collect::<Vec<_>>();
         let registered_repos = repositories
@@ -243,8 +254,28 @@ impl From<SlotRecord> for SlotSummary {
 }
 
 fn build_repo_summary(value: RegisteredRepo) -> RepoSummary {
-    let context = discover_repo_context(Path::new(&value.repo_root)).ok();
-    let skills = discover_repo_skills(Path::new(&value.repo_root)).ok();
+    let context = match discover_repo_context(Path::new(&value.repo_root)) {
+        Ok(context) => Some(context),
+        Err(error) => {
+            warn!(
+                repo_root = %value.repo_root,
+                error = %error,
+                "failed to discover repo context while building snapshot"
+            );
+            None
+        }
+    };
+    let skills = match discover_repo_skills(Path::new(&value.repo_root)) {
+        Ok(skills) => Some(skills),
+        Err(error) => {
+            warn!(
+                repo_root = %value.repo_root,
+                error = %error,
+                "failed to discover repo skills while building snapshot"
+            );
+            None
+        }
+    };
     let roots = RuntimeSkillRoots::from_environment();
 
     let context_packs = context
@@ -424,138 +455,62 @@ impl SessionSummary {
 }
 
 fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> ReviewSummary {
-    let mut summary = ReviewSummary::default();
-    let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
-
-    for session in sessions {
-        if session.status == "completed" {
-            summary.completed_sessions += 1;
-        } else if session.status == "failed" {
-            summary.failed_sessions += 1;
-            summary.warnings.push(ReviewWarning {
-                kind: "failed-session".to_string(),
-                slot_id: Some(session.slot_id.clone()),
-                session_id: Some(session.id.clone()),
-                message: format!(
-                    "Session `{}` on slot `{}` failed and should be reviewed.",
-                    session.id, session.slot_id
-                ),
-            });
-        }
-
-        if !session.is_terminal() {
-            summary.pending_sessions += 1;
-            *pending_sessions_by_slot
-                .entry(session.slot_id.as_str())
-                .or_insert(0) += 1;
-        }
-    }
-
-    for slot in slots {
-        if slot.status == "active" {
-            summary.active_slots += 1;
-        }
-        if slot.dirty {
-            summary.dirty_slots += 1;
-        }
-        if slot.fingerprint_status == "stale" {
-            summary.stale_slots += 1;
-        }
-
-        let pending_sessions = pending_sessions_by_slot
-            .get(slot.id.as_str())
-            .copied()
-            .unwrap_or_default();
-        if slot.status == "active"
-            && !slot.dirty
-            && slot.fingerprint_status == "ready"
-            && pending_sessions == 0
-        {
-            summary.releasable_slots += 1;
-        }
-
-        if slot.status == "active" && slot.dirty {
-            summary.warnings.push(ReviewWarning {
-                kind: "dirty-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Slot `{}` has uncommitted changes and cannot be safely released.",
-                    slot.id
-                ),
-            });
-        }
-
-        if slot.status == "active" && slot.fingerprint_status == "stale" {
-            summary.warnings.push(ReviewWarning {
-                kind: "stale-active-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Slot `{}` is active but stale relative to the repo fingerprint.",
-                    slot.id
-                ),
-            });
-        }
-
-        if slot.strategy == "warm"
-            && slot.status == "released"
-            && slot.fingerprint_status == "stale"
-        {
-            summary.warnings.push(ReviewWarning {
-                kind: "stale-warm-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Warm slot `{}` is stale and should be refreshed before reuse.",
-                    slot.id
-                ),
-            });
-        }
-
-        if slot.status == "missing" {
-            summary.warnings.push(ReviewWarning {
-                kind: "missing-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Slot `{}` is missing from disk and needs manual cleanup or reacquisition.",
-                    slot.id
-                ),
-            });
-        }
-
-        if pending_sessions > 0 {
-            summary.warnings.push(ReviewWarning {
-                kind: "slot-busy".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Slot `{}` has {} pending session(s) and cannot be released yet.",
-                    slot.id, pending_sessions
-                ),
-            });
-        }
-
-        if pending_sessions > 1 {
-            summary.warnings.push(ReviewWarning {
-                kind: "slot-multi-session".to_string(),
-                slot_id: Some(slot.id.clone()),
-                session_id: None,
-                message: format!(
-                    "Slot `{}` has multiple pending sessions attached; review ownership before continuing.",
-                    slot.id
-                ),
-            });
-        }
-    }
-
-    summary
+    build_review_summary_impl(
+        slots.iter().map(|slot| SlotReviewView {
+            id: slot.id.as_str(),
+            status: slot.status.as_str(),
+            dirty: slot.dirty,
+            fingerprint_status: slot.fingerprint_status.as_str(),
+            strategy: slot.strategy.as_str(),
+        }),
+        sessions.iter().map(|session| SessionReviewView {
+            id: session.id.as_str(),
+            slot_id: session.slot_id.as_str(),
+            status: session.status.as_str(),
+            is_terminal: session.is_terminal(),
+        }),
+    )
 }
 
 fn build_review_summary_from_summaries(
     slots: &[&SlotSummary],
     sessions: &[&SessionSummary],
+) -> ReviewSummary {
+    build_review_summary_impl(
+        slots.iter().map(|slot| SlotReviewView {
+            id: slot.id.as_str(),
+            status: slot.status.as_str(),
+            dirty: slot.dirty,
+            fingerprint_status: slot.fingerprint_status.as_str(),
+            strategy: slot.strategy.as_str(),
+        }),
+        sessions.iter().map(|session| SessionReviewView {
+            id: session.id.as_str(),
+            slot_id: session.slot_id.as_str(),
+            status: session.status.as_str(),
+            is_terminal: session.is_terminal(),
+        }),
+    )
+}
+
+struct SlotReviewView<'a> {
+    id: &'a str,
+    status: &'a str,
+    dirty: bool,
+    fingerprint_status: &'a str,
+    strategy: &'a str,
+}
+
+struct SessionReviewView<'a> {
+    id: &'a str,
+    slot_id: &'a str,
+    status: &'a str,
+    is_terminal: bool,
+}
+
+fn build_review_summary_impl<'a>(
+    slots: impl Iterator<Item = SlotReviewView<'a>>,
+    sessions: impl Iterator<Item = SessionReviewView<'a>>,
 ) -> ReviewSummary {
     let mut summary = ReviewSummary::default();
     let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
@@ -567,8 +522,8 @@ fn build_review_summary_from_summaries(
             summary.failed_sessions += 1;
             summary.warnings.push(ReviewWarning {
                 kind: "failed-session".to_string(),
-                slot_id: Some(session.slot_id.clone()),
-                session_id: Some(session.id.clone()),
+                slot_id: Some(session.slot_id.to_string()),
+                session_id: Some(session.id.to_string()),
                 message: format!(
                     "Session `{}` on slot `{}` failed and should be reviewed.",
                     session.id, session.slot_id
@@ -576,11 +531,9 @@ fn build_review_summary_from_summaries(
             });
         }
 
-        if !session.is_terminal() {
+        if !session.is_terminal {
             summary.pending_sessions += 1;
-            *pending_sessions_by_slot
-                .entry(session.slot_id.as_str())
-                .or_insert(0) += 1;
+            *pending_sessions_by_slot.entry(session.slot_id).or_insert(0) += 1;
         }
     }
 
@@ -596,7 +549,7 @@ fn build_review_summary_from_summaries(
         }
 
         let pending_sessions = pending_sessions_by_slot
-            .get(slot.id.as_str())
+            .get(slot.id)
             .copied()
             .unwrap_or_default();
         if slot.status == "active"
@@ -610,7 +563,7 @@ fn build_review_summary_from_summaries(
         if slot.status == "active" && slot.dirty {
             summary.warnings.push(ReviewWarning {
                 kind: "dirty-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Slot `{}` has uncommitted changes and cannot be safely released.",
@@ -622,7 +575,7 @@ fn build_review_summary_from_summaries(
         if slot.status == "active" && slot.fingerprint_status == "stale" {
             summary.warnings.push(ReviewWarning {
                 kind: "stale-active-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Slot `{}` is active but stale relative to the repo fingerprint.",
@@ -637,7 +590,7 @@ fn build_review_summary_from_summaries(
         {
             summary.warnings.push(ReviewWarning {
                 kind: "stale-warm-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Warm slot `{}` is stale and should be refreshed before reuse.",
@@ -649,7 +602,7 @@ fn build_review_summary_from_summaries(
         if slot.status == "missing" {
             summary.warnings.push(ReviewWarning {
                 kind: "missing-slot".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Slot `{}` is missing from disk and needs manual cleanup or reacquisition.",
@@ -661,7 +614,7 @@ fn build_review_summary_from_summaries(
         if pending_sessions > 0 {
             summary.warnings.push(ReviewWarning {
                 kind: "slot-busy".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Slot `{}` has {} pending session(s) and cannot be released yet.",
@@ -673,7 +626,7 @@ fn build_review_summary_from_summaries(
         if pending_sessions > 1 {
             summary.warnings.push(ReviewWarning {
                 kind: "slot-multi-session".to_string(),
-                slot_id: Some(slot.id.clone()),
+                slot_id: Some(slot.id.to_string()),
                 session_id: None,
                 message: format!(
                     "Slot `{}` has multiple pending sessions attached; review ownership before continuing.",

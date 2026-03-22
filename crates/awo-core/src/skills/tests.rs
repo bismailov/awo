@@ -7,6 +7,9 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 #[test]
 fn discovers_shared_skills_and_lock_metadata() -> Result<()> {
     let repo = tempfile::tempdir()?;
@@ -129,6 +132,48 @@ fn sync_repairs_drifted_copied_skills() -> Result<()> {
 
     let doctor = doctor_repo_skills(&catalog, SkillRuntime::Codex, &roots)?;
     assert_eq!(doctor.entries[0].state, SkillInstallState::Copied);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_does_not_prune_symlink_that_escapes_shared_root_via_dotdot() -> Result<()> {
+    let repo = tempfile::tempdir()?;
+    let skill_root = repo.path().join(".agents/skills/rust-skills");
+    fs::create_dir_all(&skill_root)?;
+    fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nname: rust-skills\ndescription: Rust help\n---\n# Skill\n",
+    )?;
+
+    let outside_root = repo.path().join("outside");
+    fs::create_dir_all(&outside_root)?;
+    let escaped_target = repo.path().join(".agents/skills/../outside");
+
+    let runtime_root = tempfile::tempdir()?;
+    let target_dir = runtime_root.path().join("codex-skills");
+    fs::create_dir_all(&target_dir)?;
+    symlink(&escaped_target, target_dir.join("rogue-skill"))?;
+
+    let roots = RuntimeSkillRoots {
+        codex: Some(target_dir),
+        claude: None,
+        gemini: None,
+    };
+    let catalog = discover_repo_skills(repo.path())?;
+
+    let report = sync_repo_skills(
+        &catalog,
+        SkillRuntime::Codex,
+        &roots,
+        SkillLinkMode::Symlink,
+    )?;
+    assert!(
+        report.pruned.is_empty(),
+        "escaped symlink target should not be pruned"
+    );
+    assert!(outside_root.exists());
 
     Ok(())
 }

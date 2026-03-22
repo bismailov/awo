@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use strum_macros::{Display, EnumString, IntoStaticStr};
+use tracing::warn;
 
 mod catalog;
 mod install;
@@ -414,6 +415,18 @@ fn reconcile_repo_skills(
                         linked_to
                     } else {
                         path.parent().unwrap_or(target_dir).join(linked_to)
+                    };
+                    let resolved = match fs::canonicalize(&resolved) {
+                        Ok(resolved) => resolved,
+                        Err(source) => {
+                            warn!(
+                                path = %path.display(),
+                                target = %resolved.display(),
+                                error = %source,
+                                "failed to canonicalize runtime skill symlink target; skipping prune"
+                            );
+                            continue;
+                        }
                     };
                     if resolved.starts_with(&shared_root) {
                         remove_target(&path)?;
