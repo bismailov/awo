@@ -4,12 +4,12 @@ use crate::context::{
     ContextDoctorReport, RepoContext, discover_repo_context, doctor_repo_context,
 };
 use crate::error::{AwoError, AwoResult};
-use crate::runtime::{RuntimeKind, SessionLaunchMode};
+use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus};
 use crate::skills::{
     RepoSkillCatalog, RuntimeSkillRoots, SkillDoctorReport, SkillLinkMode, SkillLinkReport,
     SkillRuntime, discover_repo_skills, doctor_repo_skills,
 };
-use crate::slot::SlotStrategy;
+use crate::slot::{SlotStatus, SlotStrategy};
 use crate::snapshot::AppSnapshot;
 use crate::store::Store;
 use crate::team::{
@@ -19,6 +19,7 @@ use crate::team::{
 };
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -309,7 +310,7 @@ impl AppCore {
         let bound_slot_ids = collect_bound_slot_ids(guard.manifest());
         for slot_id in bound_slot_ids {
             if let Some(slot) = self.store.get_slot(&slot_id)?
-                && slot.status != "released"
+                && slot.status != SlotStatus::Released
             {
                 blockers.push(format!(
                     "slot `{slot_id}` is still active with status `{}`",
@@ -387,7 +388,7 @@ impl AppCore {
         let mut released_slots = Vec::new();
         for slot_id in collect_bound_slot_ids(&manifest) {
             if let Some(slot) = self.store.get_slot(&slot_id)?
-                && slot.status != "released"
+                && slot.status != SlotStatus::Released
             {
                 self.dispatch(Command::SlotRelease {
                     slot_id: slot_id.clone(),
@@ -664,15 +665,18 @@ impl AppCore {
             .find_map(|event| match event {
                 crate::events::DomainEvent::SessionStarted {
                     session_id, status, ..
-                } => Some((Some(session_id.clone()), status.clone())),
+                } => {
+                    let status = SessionStatus::from_str(status).unwrap_or(SessionStatus::Prepared);
+                    Some((Some(session_id.clone()), status))
+                }
                 _ => None,
             })
-            .unwrap_or_else(|| (None, "unknown".to_string()));
+            .unwrap_or_else(|| (None, SessionStatus::Prepared));
 
-        let next_state = match session_status.as_str() {
-            "completed" => TaskCardState::Review,
-            "failed" => TaskCardState::Blocked,
-            "running" => TaskCardState::InProgress,
+        let next_state = match session_status {
+            SessionStatus::Completed => TaskCardState::Review,
+            SessionStatus::Failed => TaskCardState::Blocked,
+            SessionStatus::Running => TaskCardState::InProgress,
             _ => task.state,
         };
         let manifest = self.set_team_task_state(&options.team_id, &task.task_id, next_state)?;
@@ -684,7 +688,7 @@ impl AppCore {
                 task.task_id,
                 slot_id,
                 runtime_name,
-                session_status,
+                session_status.as_str(),
                 acquired_slot
             ),
         )?;
@@ -877,7 +881,7 @@ fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult
 
     for slot_id in &bound_slots {
         if let Some(slot) = store.get_slot(slot_id)? {
-            if slot.status != "released" {
+            if slot.status != SlotStatus::Released {
                 active_slots.insert(slot_id.clone());
             }
             if slot.dirty {
@@ -890,7 +894,7 @@ fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult
                 continue;
             }
 
-            if session.status == "running" && !session.is_supervised() {
+            if session.status == SessionStatus::Running && !session.is_supervised() {
                 blocking_sessions.insert(format!(
                     "session `{}` on slot `{}` is a running one-shot launch and cannot be interrupted yet",
                     session.id, slot_id

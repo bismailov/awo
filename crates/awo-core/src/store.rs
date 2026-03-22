@@ -1,10 +1,11 @@
 use crate::error::{AwoError, AwoResult};
 use crate::repo::RegisteredRepo;
-use crate::runtime::SessionRecord;
-use crate::slot::SlotRecord;
+use crate::runtime::{SessionRecord, SessionStatus};
+use crate::slot::{FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy};
 use crate::snapshot::CommandLogEntry;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Mutex;
 
 const CURRENT_SCHEMA_VERSION: i64 = 4;
@@ -304,16 +305,16 @@ impl Store {
                     slot.slot_path,
                     slot.branch_name,
                     slot.base_branch,
-                    slot.strategy,
-                    slot.status,
+                    slot.strategy.as_str(),
+                    slot.status.as_str(),
                     slot.fingerprint_hash,
-                    slot.fingerprint_status,
-                    slot.dirty as i64
+                    slot.fingerprint_status.as_str(),
+                    slot.dirty
                 ],
-            )
-            .map_err(|e| AwoError::store(format!("failed to upsert slot `{}`", slot.id), e))?;
-        Ok(())
-    }
+                )
+                .map_err(|e| AwoError::store("failed to upsert slot", e))?;
+                Ok(())
+                }
 
     pub fn get_slot(&self, slot_id: &str) -> AwoResult<Option<SlotRecord>> {
         let connection = self
@@ -332,23 +333,7 @@ impl Store {
             .map_err(|e| AwoError::store("failed to prepare slot lookup query", e))?;
 
         let slot = statement
-            .query_row([slot_id], |row| {
-                Ok(SlotRecord {
-                    id: row.get(0)?,
-                    repo_id: row.get(1)?,
-                    task_name: row.get(2)?,
-                    slot_path: row.get(3)?,
-                    branch_name: row.get(4)?,
-                    base_branch: row.get(5)?,
-                    strategy: row.get(6)?,
-                    status: row.get(7)?,
-                    fingerprint_hash: row.get(8)?,
-                    fingerprint_status: row.get(9)?,
-                    dirty: row.get::<_, i64>(10)? != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
-                })
-            })
+            .query_row([slot_id], row_to_slot)
             .optional()
             .map_err(|e| AwoError::store("failed to lookup slot", e))?;
         Ok(slot)
@@ -379,31 +364,13 @@ impl Store {
             .prepare(query)
             .map_err(|e| AwoError::store("failed to prepare slot list query", e))?;
 
-        let map_row = |row: &rusqlite::Row<'_>| {
-            Ok(SlotRecord {
-                id: row.get(0)?,
-                repo_id: row.get(1)?,
-                task_name: row.get(2)?,
-                slot_path: row.get(3)?,
-                branch_name: row.get(4)?,
-                base_branch: row.get(5)?,
-                strategy: row.get(6)?,
-                status: row.get(7)?,
-                fingerprint_hash: row.get(8)?,
-                fingerprint_status: row.get(9)?,
-                dirty: row.get::<_, i64>(10)? != 0,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
-            })
-        };
-
         let rows = if let Some(repo_id) = repo_id {
             statement
-                .query_map([repo_id], map_row)
+                .query_map([repo_id], row_to_slot)
                 .map_err(|e| AwoError::store("failed to query slots", e))?
         } else {
             statement
-                .query_map([], map_row)
+                .query_map([], row_to_slot)
                 .map_err(|e| AwoError::store("failed to query slots", e))?
         };
 
@@ -435,23 +402,7 @@ impl Store {
             .map_err(|e| AwoError::store("failed to prepare reusable warm slot query", e))?;
 
         let slot = statement
-            .query_row([repo_id], |row| {
-                Ok(SlotRecord {
-                    id: row.get(0)?,
-                    repo_id: row.get(1)?,
-                    task_name: row.get(2)?,
-                    slot_path: row.get(3)?,
-                    branch_name: row.get(4)?,
-                    base_branch: row.get(5)?,
-                    strategy: row.get(6)?,
-                    status: row.get(7)?,
-                    fingerprint_hash: row.get(8)?,
-                    fingerprint_status: row.get(9)?,
-                    dirty: row.get::<_, i64>(10)? != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
-                })
-            })
+            .query_row([repo_id], row_to_slot)
             .optional()
             .map_err(|e| AwoError::store("failed to find reusable warm slot", e))?;
         Ok(slot)
@@ -489,7 +440,7 @@ impl Store {
                     session.runtime,
                     session.supervisor,
                     session.prompt,
-                    session.status,
+                    session.status.as_str(),
                     session.read_only as i64,
                     session.dry_run as i64,
                     session.command_line,
@@ -511,9 +462,7 @@ impl Store {
             .map_err(|_| AwoError::invalid_state("failed to lock store connection"))?;
         connection
             .execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .map_err(|e| {
-                AwoError::store(format!("failed to delete session `{session_id}`"), e)
-            })?;
+            .map_err(|e| AwoError::store(format!("failed to delete session `{session_id}`"), e))?;
         Ok(())
     }
 
@@ -540,33 +489,13 @@ impl Store {
             .prepare(query)
             .map_err(|e| AwoError::store("failed to prepare session list query", e))?;
 
-        let map_row = |row: &rusqlite::Row<'_>| {
-            Ok(SessionRecord {
-                id: row.get(0)?,
-                repo_id: row.get(1)?,
-                slot_id: row.get(2)?,
-                runtime: row.get(3)?,
-                supervisor: row.get(4)?,
-                prompt: row.get(5)?,
-                status: row.get(6)?,
-                read_only: row.get::<_, i64>(7)? != 0,
-                dry_run: row.get::<_, i64>(8)? != 0,
-                command_line: row.get(9)?,
-                stdout_path: row.get(10)?,
-                stderr_path: row.get(11)?,
-                exit_code: row.get(12)?,
-                created_at: row.get(13)?,
-                updated_at: row.get(14)?,
-            })
-        };
-
         let rows = if let Some(repo_id) = repo_id {
             statement
-                .query_map([repo_id], map_row)
+                .query_map([repo_id], row_to_session)
                 .map_err(|e| AwoError::store("failed to query sessions", e))?
         } else {
             statement
-                .query_map([], map_row)
+                .query_map([], row_to_session)
                 .map_err(|e| AwoError::store("failed to query sessions", e))?
         };
 
@@ -592,25 +521,7 @@ impl Store {
             .map_err(|e| AwoError::store("failed to prepare session lookup query", e))?;
 
         let session = statement
-            .query_row([session_id], |row| {
-                Ok(SessionRecord {
-                    id: row.get(0)?,
-                    repo_id: row.get(1)?,
-                    slot_id: row.get(2)?,
-                    runtime: row.get(3)?,
-                    supervisor: row.get(4)?,
-                    prompt: row.get(5)?,
-                    status: row.get(6)?,
-                    read_only: row.get::<_, i64>(7)? != 0,
-                    dry_run: row.get::<_, i64>(8)? != 0,
-                    command_line: row.get(9)?,
-                    stdout_path: row.get(10)?,
-                    stderr_path: row.get(11)?,
-                    exit_code: row.get(12)?,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
-                })
-            })
+            .query_row([session_id], row_to_session)
             .optional()
             .map_err(|e| AwoError::store("failed to lookup session", e))?;
         Ok(session)
@@ -633,25 +544,7 @@ impl Store {
             .map_err(|e| AwoError::store("failed to prepare slot session list query", e))?;
 
         let rows = statement
-            .query_map([slot_id], |row| {
-                Ok(SessionRecord {
-                    id: row.get(0)?,
-                    repo_id: row.get(1)?,
-                    slot_id: row.get(2)?,
-                    runtime: row.get(3)?,
-                    supervisor: row.get(4)?,
-                    prompt: row.get(5)?,
-                    status: row.get(6)?,
-                    read_only: row.get::<_, i64>(7)? != 0,
-                    dry_run: row.get::<_, i64>(8)? != 0,
-                    command_line: row.get(9)?,
-                    stdout_path: row.get(10)?,
-                    stderr_path: row.get(11)?,
-                    exit_code: row.get(12)?,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
-                })
-            })
+            .query_map([slot_id], row_to_session)
             .map_err(|e| AwoError::store("failed to query slot sessions", e))?;
 
         let sessions = rows
@@ -659,6 +552,77 @@ impl Store {
             .map_err(|e| AwoError::store("failed to collect slot session rows", e))?;
         Ok(sessions)
     }
+}
+
+fn row_to_slot(row: &rusqlite::Row) -> rusqlite::Result<SlotRecord> {
+    let strategy_str: String = row.get(6)?;
+    let status_str: String = row.get(7)?;
+    let fingerprint_status_str: String = row.get(9)?;
+
+    Ok(SlotRecord {
+        id: row.get(0)?,
+        repo_id: row.get(1)?,
+        task_name: row.get(2)?,
+        slot_path: row.get(3)?,
+        branch_name: row.get(4)?,
+        base_branch: row.get(5)?,
+        strategy: SlotStrategy::from_str(&strategy_str).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                6,
+                rusqlite::types::Type::Text,
+                Box::new(AwoError::unsupported("slot strategy", strategy_str)),
+            )
+        })?,
+        status: SlotStatus::from_str(&status_str).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Text,
+                Box::new(AwoError::unsupported("slot status", status_str)),
+            )
+        })?,
+        fingerprint_hash: row.get(8)?,
+        fingerprint_status: FingerprintStatus::from_str(&fingerprint_status_str).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                9,
+                rusqlite::types::Type::Text,
+                Box::new(AwoError::unsupported(
+                    "fingerprint status",
+                    fingerprint_status_str,
+                )),
+            )
+        })?,
+        dirty: row.get::<_, i64>(10)? != 0,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
+}
+
+fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
+    let status_str: String = row.get(6)?;
+
+    Ok(SessionRecord {
+        id: row.get(0)?,
+        repo_id: row.get(1)?,
+        slot_id: row.get(2)?,
+        runtime: row.get(3)?,
+        supervisor: row.get(4)?,
+        prompt: row.get(5)?,
+        status: SessionStatus::from_str(&status_str).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                6,
+                rusqlite::types::Type::Text,
+                Box::new(AwoError::unsupported("session status", status_str)),
+            )
+        })?,
+        read_only: row.get::<_, i64>(7)? != 0,
+        dry_run: row.get::<_, i64>(8)? != 0,
+        command_line: row.get(9)?,
+        stdout_path: row.get(10)?,
+        stderr_path: row.get(11)?,
+        exit_code: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
 }
 
 fn enable_wal_mode(connection: &Connection) -> AwoResult<()> {
@@ -701,10 +665,7 @@ fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoR
         connection
             .execute(MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL, [])
             .map_err(|e| {
-                AwoError::store(
-                    "failed to add `supervisor` column to sessions table",
-                    e,
-                )
+                AwoError::store("failed to add `supervisor` column to sessions table", e)
             })?;
     }
 
@@ -856,10 +817,53 @@ mod tests {
         let result = store.initialize_schema();
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported SQLite schema version"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported SQLite schema version")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_schema_rejects_malformed_version_string() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let db_path = temp_dir.path().join("malformed.sqlite3");
+        let connection = SqliteConnection::open(&db_path)?;
+        connection.execute_batch(
+            r#"
+                CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO app_meta (key, value) VALUES ('schema_version', 'not-a-number');
+            "#,
+        )?;
+        drop(connection);
+
+        let store = Store::open(&db_path)?;
+        let result = store.initialize_schema();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid SQLite schema version")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_fails_on_directory_path() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        // Try to open a database where a directory already exists
+        let result = Store::open(temp_dir.path());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("failed to open SQLite database")
+        );
         Ok(())
     }
 }

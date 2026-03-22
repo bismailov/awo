@@ -3,14 +3,15 @@ use crate::config::AppConfig;
 use crate::context::discover_repo_context;
 use crate::diagnostics::DiagnosticSeverity;
 use crate::error::AwoResult;
+use crate::git;
 use crate::platform::current_platform_label;
 use crate::repo::{RegisteredRepo, remote_label};
 use crate::routing::RoutingPreferences;
-use crate::runtime::SessionRecord;
+use crate::runtime::{SessionRecord, SessionStatus};
 use crate::skills::{
     RuntimeSkillRoots, SkillInstallState, SkillRuntime, discover_repo_skills, doctor_repo_skills,
 };
-use crate::slot::{SlotRecord, SlotStrategy};
+use crate::slot::{FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy};
 use crate::store::Store;
 use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
 use serde::Serialize;
@@ -120,10 +121,10 @@ pub struct SlotSummary {
     pub task_name: String,
     pub slot_path: String,
     pub branch_name: String,
-    pub strategy: String,
-    pub status: String,
+    pub strategy: SlotStrategy,
+    pub status: SlotStatus,
     pub dirty: bool,
-    pub fingerprint_status: String,
+    pub fingerprint_status: FingerprintStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,7 +134,7 @@ pub struct SessionSummary {
     pub slot_id: String,
     pub runtime: String,
     pub supervisor: Option<String>,
-    pub status: String,
+    pub status: SessionStatus,
     pub read_only: bool,
     pub dry_run: bool,
     pub log_path: Option<String>,
@@ -450,45 +451,41 @@ impl From<&RoutingPreferences> for RoutingPreferencesSummary {
 
 impl SessionSummary {
     fn is_completed(&self) -> bool {
-        self.status == "completed"
+        self.status == SessionStatus::Completed
     }
 
     fn is_failed(&self) -> bool {
-        self.status == "failed"
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.status == "cancelled"
+        self.status == SessionStatus::Failed
     }
 
     fn is_terminal(&self) -> bool {
-        self.is_completed() || self.is_failed() || self.is_cancelled()
+        self.status.is_terminal()
     }
 }
 
 impl SlotSummary {
     fn is_active(&self) -> bool {
-        self.status == "active"
+        self.status == SlotStatus::Active
     }
 
     fn is_released(&self) -> bool {
-        self.status == "released"
+        self.status == SlotStatus::Released
     }
 
     fn is_missing(&self) -> bool {
-        self.status == "missing"
+        self.status == SlotStatus::Missing
     }
 
     fn uses_warm_strategy(&self) -> bool {
-        self.strategy == SlotStrategy::Warm.as_str()
+        self.strategy == SlotStrategy::Warm
     }
 
     fn fingerprint_is_ready(&self) -> bool {
-        self.fingerprint_status == "ready"
+        self.fingerprint_status == FingerprintStatus::Ready
     }
 
     fn fingerprint_is_stale(&self) -> bool {
-        self.fingerprint_status == "stale"
+        self.fingerprint_status == FingerprintStatus::Stale
     }
 }
 
@@ -500,6 +497,11 @@ fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> Rev
             is_released: slot.is_released(),
             is_missing: slot.is_missing(),
             dirty: slot.dirty,
+            dirty_files: if slot.dirty {
+                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|_| vec![])
+            } else {
+                vec![]
+            },
             uses_warm_strategy: slot.uses_warm_strategy(),
             fingerprint_is_ready: slot.fingerprint_is_ready(),
             fingerprint_is_stale: slot.fingerprint_is_stale(),
@@ -525,6 +527,11 @@ fn build_review_summary_from_summaries(
             is_released: slot.is_released(),
             is_missing: slot.is_missing(),
             dirty: slot.dirty,
+            dirty_files: if slot.dirty {
+                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|_| vec![])
+            } else {
+                vec![]
+            },
             uses_warm_strategy: slot.uses_warm_strategy(),
             fingerprint_is_ready: slot.fingerprint_is_ready(),
             fingerprint_is_stale: slot.fingerprint_is_stale(),
@@ -539,12 +546,13 @@ fn build_review_summary_from_summaries(
     )
 }
 
-struct SlotReviewView<'a> {
+pub(crate) struct SlotReviewView<'a> {
     id: &'a str,
     is_active: bool,
     is_released: bool,
     is_missing: bool,
     dirty: bool,
+    dirty_files: Vec<String>,
     uses_warm_strategy: bool,
     fingerprint_is_ready: bool,
     fingerprint_is_stale: bool,
@@ -562,10 +570,12 @@ fn build_review_summary_impl<'a>(
     slots: impl Iterator<Item = SlotReviewView<'a>>,
     sessions: impl Iterator<Item = SessionReviewView<'a>>,
 ) -> ReviewSummary {
+    let slots: Vec<SlotReviewView<'a>> = slots.collect();
+    let sessions: Vec<SessionReviewView<'a>> = sessions.collect();
     let mut summary = ReviewSummary::default();
     let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
 
-    for session in sessions {
+    for session in &sessions {
         if session.is_completed {
             summary.completed_sessions += 1;
         } else if session.is_failed {
@@ -587,7 +597,42 @@ fn build_review_summary_impl<'a>(
         }
     }
 
-    for slot in slots {
+    let mut dirty_slot_map: HashMap<&str, Vec<String>> = HashMap::new();
+    for slot in &slots {
+        if slot.dirty {
+            dirty_slot_map.insert(slot.id, slot.dirty_files.clone());
+        }
+    }
+    let dirty_ids: Vec<&str> = dirty_slot_map.keys().copied().collect();
+    for i in 0..dirty_ids.len() {
+        for j in i + 1..dirty_ids.len() {
+            let id_a = dirty_ids[i];
+            let id_b = dirty_ids[j];
+            let files_a = &dirty_slot_map[id_a];
+            let files_b = &dirty_slot_map[id_b];
+            let common: Vec<_> = files_a
+                .iter()
+                .filter(|f| files_b.contains(f))
+                .cloned()
+                .collect();
+            if !common.is_empty() {
+                let mut common_sorted = common;
+                common_sorted.sort();
+                let file_list = common_sorted.join(", ");
+                summary.warnings.push(ReviewWarning {
+                    kind: "risky-overlap".to_string(),
+                    slot_id: None,
+                    session_id: None,
+                    message: format!(
+                        "Slots '{}' and '{}' both modified: {}",
+                        id_a, id_b, file_list
+                    ),
+                });
+            }
+        }
+    }
+
+    for slot in &slots {
         if slot.is_active {
             summary.active_slots += 1;
         }
@@ -680,4 +725,37 @@ fn build_review_summary_impl<'a>(
     }
 
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_risky_overlap_between_dirty_slots() {
+        let slot1 = SlotReviewView {
+            id: "slot1",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: true,
+            dirty_files: vec!["src/lib.rs".to_string(), "src/error.rs".to_string()],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let slot2 = SlotReviewView {
+            id: "slot2",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: true,
+            dirty_files: vec!["src/main.rs".to_string(), "src/error.rs".to_string()],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
+        assert!(summary.warnings.iter().any(|w| w.kind == "risky-overlap"));
+    }
 }

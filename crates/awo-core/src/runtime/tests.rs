@@ -35,7 +35,7 @@ fn running_oneshot_session(session_id: &str) -> SessionRecord {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "echo hi".to_string(),
-        status: "running".to_string(),
+        status: SessionStatus::Running,
         read_only: true,
         dry_run: false,
         command_line: "sh -lc 'echo hi'".to_string(),
@@ -55,7 +55,7 @@ fn running_supervised_session(session_id: &str) -> SessionRecord {
         runtime: "shell".to_string(),
         supervisor: Some("tmux".to_string()),
         prompt: "echo hi".to_string(),
-        status: "running".to_string(),
+        status: SessionStatus::Running,
         read_only: true,
         dry_run: false,
         command_line: "sh -lc 'echo hi'".to_string(),
@@ -102,7 +102,7 @@ fn sync_oneshot_keeps_pending_sidecar_running() -> Result<()> {
 
     let mut session = running_oneshot_session("sess-1");
     assert!(!sync_session(&paths, &mut session)?);
-    assert_eq!(session.status, "running");
+    assert_eq!(session.status, SessionStatus::Running);
     Ok(())
 }
 
@@ -114,7 +114,7 @@ fn sync_oneshot_marks_missing_process_as_failed() -> Result<()> {
 
     let mut session = running_oneshot_session("sess-2");
     assert!(sync_session(&paths, &mut session)?);
-    assert_eq!(session.status, "failed");
+    assert_eq!(session.status, SessionStatus::Failed);
     Ok(())
 }
 
@@ -129,7 +129,7 @@ fn sync_oneshot_uses_exit_sidecar_when_process_is_gone() -> Result<()> {
 
     let mut session = running_oneshot_session("sess-3");
     assert!(sync_session(&paths, &mut session)?);
-    assert_eq!(session.status, "completed");
+    assert_eq!(session.status, SessionStatus::Completed);
     assert_eq!(session.exit_code, Some(0));
     assert!(!pid_path(&sessions_dir, "sess-3").exists());
     Ok(())
@@ -588,50 +588,55 @@ fn prepare_session_oneshot_log_path_naming() -> Result<()> {
 
 #[test]
 fn session_record_terminal_states() {
-    for status in ["completed", "failed", "cancelled"] {
+    for status in [
+        SessionStatus::Completed,
+        SessionStatus::Failed,
+        SessionStatus::Cancelled,
+    ] {
         let mut session = running_oneshot_session("s1");
-        session.status = status.to_string();
-        assert!(session.is_terminal(), "{status} should be terminal");
+        session.status = status;
+        assert!(session.is_terminal(), "{:?} should be terminal", status);
         assert!(
             !session.blocks_release(),
-            "{status} should not block release"
+            "{:?} should not block release",
+            status
         );
     }
 }
 
 #[test]
 fn session_record_non_terminal_states() {
-    for status in ["running", "prepared", "pending"] {
+    for status in [SessionStatus::Running, SessionStatus::Prepared] {
         let mut session = running_oneshot_session("s1");
-        session.status = status.to_string();
-        assert!(!session.is_terminal(), "{status} should not be terminal");
-        assert!(session.blocks_release(), "{status} should block release");
+        session.status = status;
+        assert!(!session.is_terminal(), "{:?} should not be terminal", status);
+        assert!(session.blocks_release(), "{:?} should block release", status);
     }
 }
 
 #[test]
 fn session_record_status_helpers_classify_known_states() {
     let mut session = running_oneshot_session("s1");
-    session.status = "running".to_string();
+    session.status = SessionStatus::Running;
     assert!(session.is_running());
     assert!(!session.is_supervised());
     assert!(!session.is_prepared());
     assert!(!session.is_terminal());
 
-    session.status = "prepared".to_string();
+    session.status = SessionStatus::Prepared;
     assert!(session.is_prepared());
     assert!(!session.is_running());
     assert!(!session.is_terminal());
 
-    session.status = "completed".to_string();
+    session.status = SessionStatus::Completed;
     assert!(session.is_completed());
     assert!(session.is_terminal());
 
-    session.status = "failed".to_string();
+    session.status = SessionStatus::Failed;
     assert!(session.is_failed());
     assert!(session.is_terminal());
 
-    session.status = "cancelled".to_string();
+    session.status = SessionStatus::Cancelled;
     assert!(session.is_cancelled());
     assert!(session.is_terminal());
 }
@@ -654,7 +659,7 @@ fn session_record_is_supervised_requires_running_and_no_stderr() {
     session.stderr_path = None;
     assert!(session.is_supervised());
 
-    session.status = "completed".to_string();
+    session.status = SessionStatus::Completed;
     assert!(!session.is_supervised());
 }
 
@@ -770,7 +775,7 @@ fn prepare_session_dry_run_does_not_create_pid_sidecar() -> Result<()> {
         launch_mode: SessionLaunchMode::Oneshot,
     })?;
 
-    assert_eq!(prepared.session.status, "prepared");
+    assert_eq!(prepared.session.status, SessionStatus::Prepared);
     let pid = pid_path(&paths.logs_dir.join("sessions"), &prepared.session.id);
     assert!(!pid.exists(), "dry-run should not create pid sidecar");
     Ok(())

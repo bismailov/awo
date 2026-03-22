@@ -3,9 +3,10 @@ use crate::context::{discover_repo_context, plan_session_context, render_session
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::runtime::{
-    SessionLaunchMode, SessionRunRequest, cancel_session, detect_runtime, detect_tmux,
+    SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session, detect_runtime, detect_tmux,
     execute_prepared_session, prepare_session,
 };
+use crate::slot::{FingerprintStatus, SlotStatus};
 use std::path::Path;
 
 impl<'a> CommandRunner<'a> {
@@ -40,7 +41,7 @@ impl<'a> CommandRunner<'a> {
             .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
         self.refresh_slot_state(&mut slot)?;
         self.store.upsert_slot(&slot)?;
-        if slot.status != "active" {
+        if slot.status != SlotStatus::Active {
             return Err(AwoError::invalid_state(format!(
                 "slot `{slot_id}` is not active"
             )));
@@ -50,7 +51,7 @@ impl<'a> CommandRunner<'a> {
                 "slot `{slot_id}` is dirty; refusing to start another write-capable session"
             )));
         }
-        if !read_only && slot.fingerprint_status == "stale" {
+        if !read_only && slot.fingerprint_status == FingerprintStatus::Stale {
             return Err(AwoError::invalid_state(format!(
                 "slot `{slot_id}` is stale; refresh or reacquire it before launching a write-capable session"
             )));
@@ -109,7 +110,7 @@ impl<'a> CommandRunner<'a> {
                     .store
                     .get_session(&session_id)?
                     .ok_or_else(|| AwoError::unknown_session(&session_id))?;
-                failed.status = "failed".to_string();
+                failed.status = SessionStatus::Failed;
                 self.store.upsert_session(&failed)?;
                 return Err(AwoError::runtime_launch(format!(
                     "session `{session_id}` for slot `{slot_id_for_error}` failed to launch: {error}"
@@ -148,7 +149,7 @@ impl<'a> CommandRunner<'a> {
             slot_id: session.slot_id.clone(),
             runtime: session.runtime.clone(),
             supervisor: session.supervisor.clone(),
-            status: session.status.clone(),
+            status: session.status.as_str().to_string(),
         });
 
         Ok(CommandOutcome {
@@ -193,7 +194,7 @@ impl<'a> CommandRunner<'a> {
                 "session `{session_id}` is already terminal"
             )));
         }
-        if session.status == "running" && !session.is_supervised() {
+        if session.status == SessionStatus::Running && !session.is_supervised() {
             return Err(AwoError::invalid_state(format!(
                 "session `{session_id}` is a running one-shot launch; interruption is not supported yet"
             )));

@@ -31,11 +31,11 @@ pub use routing::{
     RoutingContext, RoutingDecision, RoutingPreferences, RoutingRecommendation, RoutingSource,
     RoutingTarget, RuntimePressure, route_runtime,
 };
-pub use runtime::{RuntimeKind, SessionLaunchMode};
+pub use runtime::{RuntimeKind, SessionLaunchMode, SessionStatus};
 pub use skills::{
     RepoSkillCatalog, SkillDoctorReport, SkillLinkMode, SkillLinkReport, SkillRuntime,
 };
-pub use slot::SlotStrategy;
+pub use slot::{FingerprintStatus, SlotStatus, SlotStrategy};
 pub use snapshot::{
     AppSnapshot, CommandLogEntry, MemberRoutingSummary, RepoContextPackSummary,
     RepoSkillRuntimeSummary, RepoSummary, ReviewSummary, ReviewWarning, RoutingPreferencesSummary,

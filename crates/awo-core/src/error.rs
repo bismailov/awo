@@ -169,11 +169,7 @@ impl AwoError {
         }
     }
 
-    pub fn file_lock(
-        mode: &'static str,
-        path: impl Into<PathBuf>,
-        source: std::io::Error,
-    ) -> Self {
+    pub fn file_lock(mode: &'static str, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         Self::FileLock {
             mode,
             path: path.into(),

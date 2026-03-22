@@ -1,6 +1,7 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::error::AwoResult;
 use crate::events::DomainEvent;
+use crate::slot::{FingerprintStatus, SlotStatus};
 
 impl<'a> CommandRunner<'a> {
     pub(super) fn run_review_status(
@@ -13,14 +14,14 @@ impl<'a> CommandRunner<'a> {
         let mut stale = 0usize;
 
         for slot in &mut slots {
-            if slot.status == "active" || slot.status == "released" {
+            if slot.status == SlotStatus::Active || slot.status == SlotStatus::Released {
                 self.refresh_slot_state(slot)?;
                 self.store.upsert_slot(slot)?;
             }
             if slot.dirty {
                 dirty += 1;
             }
-            if slot.fingerprint_status == "stale" {
+            if slot.fingerprint_status == FingerprintStatus::Stale {
                 stale += 1;
             }
         }

@@ -1,5 +1,6 @@
 use crate::awo_bail;
 use crate::error::{AwoError, AwoResult};
+use crate::runtime::SessionStatus;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
@@ -125,7 +126,7 @@ pub struct TeamTaskExecution {
     pub slot_id: String,
     pub branch_name: String,
     pub session_id: Option<String>,
-    pub session_status: String,
+    pub session_status: SessionStatus,
     pub acquired_slot: bool,
     pub prompt: String,
 }

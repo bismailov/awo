@@ -3,7 +3,10 @@ use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::fingerprint::fingerprint_for_dir;
 use crate::git;
-use crate::slot::{SlotRecord, SlotStrategy, build_branch_name, build_slot_id, build_slot_path};
+use crate::slot::{
+    FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy, build_branch_name, build_slot_id,
+    build_slot_path,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,10 +33,10 @@ impl<'a> CommandRunner<'a> {
                     existing.task_name = task_name.clone();
                     existing.branch_name = branch_name;
                     existing.base_branch = repo.default_base_branch.clone();
-                    existing.status = "active".to_string();
+                    existing.status = SlotStatus::Active;
                     existing.dirty = false;
                     existing.fingerprint_hash = repo_fingerprint.hash.clone();
-                    existing.fingerprint_status = "ready".to_string();
+                    existing.fingerprint_status = FingerprintStatus::Ready;
                     existing
                 } else {
                     self.create_fresh_slot(FreshSlotOptions {
@@ -87,7 +90,7 @@ impl<'a> CommandRunner<'a> {
                 repo_id: slot.repo_id.clone(),
                 branch_name: slot.branch_name.clone(),
                 slot_path: slot.slot_path.clone(),
-                strategy: slot.strategy.clone(),
+                strategy: slot.strategy.as_str().to_string(),
             },
         ];
 
@@ -122,10 +125,10 @@ impl<'a> CommandRunner<'a> {
             slot_path: slot_path.display().to_string(),
             branch_name,
             base_branch: options.base_branch.to_string(),
-            strategy: options.strategy.as_str().to_string(),
-            status: "active".to_string(),
+            strategy: options.strategy,
+            status: SlotStatus::Active,
             fingerprint_hash: options.fingerprint_hash,
-            fingerprint_status: "ready".to_string(),
+            fingerprint_status: FingerprintStatus::Ready,
             dirty: false,
             created_at: String::new(),
             updated_at: String::new(),
@@ -182,13 +185,13 @@ impl<'a> CommandRunner<'a> {
             )));
         }
 
-        if slot.strategy == SlotStrategy::Warm.as_str() {
+        if slot.strategy == SlotStrategy::Warm {
             git::detach_worktree(&slot_path, &slot.base_branch)?;
-            slot.status = "released".to_string();
+            slot.status = SlotStatus::Released;
         } else {
             git::remove_worktree(Path::new(&repo.repo_root), &slot_path)?;
-            slot.status = "released".to_string();
-            slot.fingerprint_status = "released".to_string();
+            slot.status = SlotStatus::Released;
+            slot.fingerprint_status = FingerprintStatus::Missing;
             slot.fingerprint_hash = None;
         }
         slot.dirty = false;
@@ -204,7 +207,7 @@ impl<'a> CommandRunner<'a> {
             },
             DomainEvent::SlotReleased {
                 slot_id: slot.id.clone(),
-                strategy: slot.strategy.clone(),
+                strategy: slot.strategy.as_str().to_string(),
             },
         ];
 
@@ -226,8 +229,8 @@ impl<'a> CommandRunner<'a> {
         let slot_path = PathBuf::from(&slot.slot_path);
         let mut resynced = false;
 
-        if slot.strategy == SlotStrategy::Warm.as_str()
-            && slot.status == "released"
+        if slot.strategy == SlotStrategy::Warm
+            && slot.status == SlotStatus::Released
             && slot_path.exists()
         {
             if !git::is_clean(Path::new(&repo.repo_root))? {
@@ -262,12 +265,12 @@ impl<'a> CommandRunner<'a> {
             DomainEvent::SlotRefreshed {
                 slot_id: slot.id.clone(),
                 dirty: slot.dirty,
-                fingerprint_status: slot.fingerprint_status.clone(),
+                fingerprint_status: slot.fingerprint_status.as_str().to_string(),
             },
         ];
 
         Ok(CommandOutcome {
-            summary: if resynced && slot.fingerprint_status == "stale" {
+            summary: if resynced && slot.fingerprint_status == FingerprintStatus::Stale {
                 format!(
                     "Refreshed slot `{}` but it remains stale relative to the repo fingerprint.",
                     slot.id
@@ -289,11 +292,11 @@ impl<'a> CommandRunner<'a> {
 
         let slot_path = Path::new(&slot.slot_path);
         if !slot_path.exists() {
-            if slot.status == "released" && slot.strategy == SlotStrategy::Fresh.as_str() {
-                slot.fingerprint_status = "released".to_string();
+            if slot.status == SlotStatus::Released && slot.strategy == SlotStrategy::Fresh {
+                slot.fingerprint_status = FingerprintStatus::Missing;
             } else {
-                slot.status = "missing".to_string();
-                slot.fingerprint_status = "missing".to_string();
+                slot.status = SlotStatus::Missing;
+                slot.fingerprint_status = FingerprintStatus::Missing;
             }
             slot.dirty = false;
             slot.fingerprint_hash = None;
@@ -305,9 +308,9 @@ impl<'a> CommandRunner<'a> {
         slot.dirty = !git::is_clean(slot_path)?;
         slot.fingerprint_hash = slot_fingerprint.hash.clone();
         slot.fingerprint_status = if slot_fingerprint.hash == repo_fingerprint.hash {
-            "ready".to_string()
+            FingerprintStatus::Ready
         } else {
-            "stale".to_string()
+            FingerprintStatus::Stale
         };
 
         Ok(())

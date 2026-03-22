@@ -183,6 +183,32 @@ pub fn is_clean(path: &Path) -> AwoResult<bool> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
+pub fn dirty_files(path: &Path) -> AwoResult<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|source| AwoError::git_invocation("status", path, source))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AwoError::git_command_failed("status", path, stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = vec![];
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            if let Some(p) = trimmed.get(3..) {
+                files.push(p.trim().to_string());
+            }
+        }
+    }
+    Ok(files)
+}
+
 fn detect_default_base_branch(git_root: &Path) -> AwoResult<String> {
     if let Some(remote_head) = run_git_allow_failure(
         git_root,
@@ -288,5 +314,29 @@ fn run_git_allow_failure(
         }
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn discover_repo_fails_on_non_git_dir() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let result = discover_repo(temp.path());
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("discover repo root"));
+        Ok(())
+    }
+
+    #[test]
+    fn is_clean_fails_on_non_existent_path() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let non_existent = temp.path().join("missing");
+        let result = is_clean(&non_existent);
+        assert!(result.is_err());
+        Ok(())
     }
 }

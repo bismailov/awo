@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strum_macros::{Display, EnumString, IntoStaticStr};
@@ -11,10 +11,10 @@ pub struct SlotRecord {
     pub slot_path: String,
     pub branch_name: String,
     pub base_branch: String,
-    pub strategy: String,
-    pub status: String,
+    pub strategy: SlotStrategy,
+    pub status: SlotStatus,
     pub fingerprint_hash: Option<String>,
-    pub fingerprint_status: String,
+    pub fingerprint_status: FingerprintStatus,
     pub dirty: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -22,31 +22,68 @@ pub struct SlotRecord {
 
 impl SlotRecord {
     pub fn is_active(&self) -> bool {
-        self.status == "active"
+        self.status == SlotStatus::Active
     }
 
     pub fn is_released(&self) -> bool {
-        self.status == "released"
+        self.status == SlotStatus::Released
     }
 
     pub fn is_missing(&self) -> bool {
-        self.status == "missing"
+        self.status == SlotStatus::Missing
     }
 
     pub fn uses_warm_strategy(&self) -> bool {
-        self.strategy == SlotStrategy::Warm.as_str()
+        self.strategy == SlotStrategy::Warm
     }
 
     pub fn fingerprint_is_ready(&self) -> bool {
-        self.fingerprint_status == "ready"
+        self.fingerprint_status == FingerprintStatus::Ready
     }
 
     pub fn fingerprint_is_stale(&self) -> bool {
-        self.fingerprint_status == "stale"
+        self.fingerprint_status == FingerprintStatus::Stale
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SlotStatus {
+    Active,
+    Released,
+    Missing,
+}
+
+impl SlotStatus {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum FingerprintStatus {
+    Unknown,
+    Ready,
+    Stale,
+    Missing,
+}
+
+impl FingerprintStatus {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SlotStrategy {
@@ -105,7 +142,11 @@ fn slugify(input: &str) -> String {
 mod tests {
     use super::*;
 
-    fn sample_slot(status: &str, strategy: &str, fingerprint_status: &str) -> SlotRecord {
+    fn sample_slot(
+        status: SlotStatus,
+        strategy: SlotStrategy,
+        fingerprint_status: FingerprintStatus,
+    ) -> SlotRecord {
         SlotRecord {
             id: "slot-1".to_string(),
             repo_id: "repo-1".to_string(),
@@ -113,10 +154,10 @@ mod tests {
             slot_path: "/tmp/slot".to_string(),
             branch_name: "awo/task/slot-1".to_string(),
             base_branch: "main".to_string(),
-            strategy: strategy.to_string(),
-            status: status.to_string(),
+            strategy,
+            status,
             fingerprint_hash: None,
-            fingerprint_status: fingerprint_status.to_string(),
+            fingerprint_status,
             dirty: false,
             created_at: String::new(),
             updated_at: String::new(),
@@ -125,7 +166,7 @@ mod tests {
 
     #[test]
     fn slot_record_status_helpers_classify_known_states() {
-        let active = sample_slot("active", "warm", "ready");
+        let active = sample_slot(SlotStatus::Active, SlotStrategy::Warm, FingerprintStatus::Ready);
         assert!(active.is_active());
         assert!(active.uses_warm_strategy());
         assert!(active.fingerprint_is_ready());
@@ -133,7 +174,8 @@ mod tests {
         assert!(!active.is_missing());
         assert!(!active.fingerprint_is_stale());
 
-        let released = sample_slot("released", "fresh", "stale");
+        let released =
+            sample_slot(SlotStatus::Released, SlotStrategy::Fresh, FingerprintStatus::Stale);
         assert!(released.is_released());
         assert!(released.fingerprint_is_stale());
         assert!(!released.is_active());

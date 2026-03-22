@@ -26,7 +26,7 @@ pub struct SessionRecord {
     pub runtime: String,
     pub supervisor: Option<String>,
     pub prompt: String,
-    pub status: String,
+    pub status: SessionStatus,
     pub read_only: bool,
     pub dry_run: bool,
     pub command_line: String,
@@ -39,27 +39,27 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     pub fn is_running(&self) -> bool {
-        self.status == "running"
+        self.status == SessionStatus::Running
     }
 
     pub fn is_prepared(&self) -> bool {
-        self.status == "prepared"
+        self.status == SessionStatus::Prepared
     }
 
     pub fn is_completed(&self) -> bool {
-        self.status == "completed"
+        self.status == SessionStatus::Completed
     }
 
     pub fn is_failed(&self) -> bool {
-        self.status == "failed"
+        self.status == SessionStatus::Failed
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.status == "cancelled"
+        self.status == SessionStatus::Cancelled
     }
 
     pub fn is_terminal(&self) -> bool {
-        self.is_completed() || self.is_failed() || self.is_cancelled()
+        self.status.is_terminal()
     }
 
     pub fn blocks_release(&self) -> bool {
@@ -72,6 +72,39 @@ impl SessionRecord {
 
     pub fn is_supervised(&self) -> bool {
         self.is_running() && SessionSupervisor::from_session(self).is_some()
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionStatus {
+    Prepared,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl SessionStatus {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -180,9 +213,9 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSess
     );
     let command_line = format_command_line(&prepared);
     let status = if request.dry_run {
-        "prepared"
+        SessionStatus::Prepared
     } else {
-        "running"
+        SessionStatus::Running
     };
 
     Ok(PreparedSession {
@@ -193,7 +226,7 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSess
             runtime: request.runtime.as_str().to_string(),
             supervisor: supervisor.map(|supervisor| supervisor.as_str().to_string()),
             prompt: request.prompt.to_string(),
-            status: status.to_string(),
+            status: status,
             read_only: request.read_only,
             dry_run: request.dry_run,
             command_line,
@@ -280,11 +313,11 @@ pub fn execute_prepared_session(
     }
 
     prepared_session.session.status = if output.status.success() {
-        "completed"
+        SessionStatus::Completed
     } else {
-        "failed"
-    }
-    .to_string();
+        SessionStatus::Failed
+    };
+    
     prepared_session.session.exit_code = output.status.code().map(i64::from);
     let exit_code = prepared_session.session.exit_code.unwrap_or(-1);
     fs::write(&exit_path, exit_code.to_string())
@@ -300,7 +333,7 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
     if session.is_terminal() {
         return Ok(false);
     }
-    if session.status != "running" {
+    if session.status != SessionStatus::Running {
         return Ok(false);
     }
 
@@ -315,9 +348,9 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
         Some(exit_code) => {
             session.exit_code = Some(exit_code);
             session.status = if exit_code == 0 {
-                "completed".to_string()
+                SessionStatus::Completed
             } else {
-                "failed".to_string()
+                SessionStatus::Failed
             };
             Ok(true)
         }
@@ -337,7 +370,7 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResul
         supervisor.cancel(paths, session)?;
     }
 
-    session.status = "cancelled".to_string();
+    session.status = SessionStatus::Cancelled;
     Ok(true)
 }
 
@@ -352,12 +385,12 @@ fn sync_oneshot_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoRes
     if let Some(exit_code) = read_exit_code(paths, &session.id)? {
         session.exit_code = Some(exit_code);
         session.status = if exit_code == 0 {
-            "completed".to_string()
+            SessionStatus::Completed
         } else {
-            "failed".to_string()
+            SessionStatus::Failed
         };
     } else {
-        session.status = "failed".to_string();
+        session.status = SessionStatus::Failed;
     }
 
     clear_sidecar_if_exists(&pid_path_for(&paths.logs_dir.join("sessions"), &session.id))?;

@@ -334,7 +334,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         "expected primary-style reason, got: {}",
         execution.routing_reason
     );
-    assert_eq!(execution.session_status, "completed");
+    assert_eq!(execution.session_status, SessionStatus::Completed);
     assert!(session_outcome.summary.contains("Session"));
     assert_eq!(
         manifest.task("task-1").map(|task| task.state),
@@ -448,7 +448,7 @@ fn start_team_task_prefers_fallback_under_cost_ceiling() -> Result<()> {
         "expected fallback reason, got: {}",
         execution.routing_reason
     );
-    assert_eq!(execution.session_status, "prepared");
+    assert_eq!(execution.session_status, SessionStatus::Prepared);
     Ok(())
 }
 
@@ -480,7 +480,7 @@ fn start_team_task_no_fallback_preserves_primary_selection() -> Result<()> {
         "expected no-fallback reason, got: {}",
         execution.routing_reason
     );
-    assert_eq!(execution.session_status, "prepared");
+    assert_eq!(execution.session_status, SessionStatus::Prepared);
     Ok(())
 }
 
@@ -831,7 +831,7 @@ fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "echo done".to_string(),
-        status: "completed".to_string(),
+        status: SessionStatus::Completed,
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'echo done'".to_string(),
@@ -862,7 +862,7 @@ fn load_team_manifest_reconciles_failed_session_to_blocked() -> Result<()> {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "false".to_string(),
-        status: "failed".to_string(),
+        status: SessionStatus::Failed,
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'false'".to_string(),
@@ -892,7 +892,7 @@ fn load_team_manifest_clears_released_slot_bindings() -> Result<()> {
         .store
         .get_slot(&slot_id)?
         .context("missing acquired slot")?;
-    slot.status = "released".to_string();
+    slot.status = SlotStatus::Released;
     core.store.upsert_slot(&slot)?;
     core.store.upsert_session(&SessionRecord {
         id: "sess-reconcile-release".to_string(),
@@ -901,7 +901,7 @@ fn load_team_manifest_clears_released_slot_bindings() -> Result<()> {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "echo done".to_string(),
-        status: "completed".to_string(),
+        status: SessionStatus::Completed,
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'echo done'".to_string(),
@@ -1085,7 +1085,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
         .into_iter()
         .next()
         .context("missing acquired slot")?;
-    slot.status = "released".to_string();
+    slot.status = SlotStatus::Released;
     core.store.upsert_slot(&slot)?;
     core.assign_team_member_slot("team-archive-session", "worker-a", &slot.id)?;
     core.bind_team_task_slot("team-archive-session", "task-1", &slot.id)?;
@@ -1103,7 +1103,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "sleep 30".to_string(),
-        status: "running".to_string(),
+        status: SessionStatus::Running,
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'sleep 30'".to_string(),
@@ -1139,7 +1139,7 @@ fn teardown_team_cancels_prepared_sessions_releases_slots_and_resets() -> Result
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "echo hi".to_string(),
-        status: "prepared".to_string(),
+        status: SessionStatus::Prepared,
         read_only: false,
         dry_run: true,
         command_line: "sh -lc 'echo hi'".to_string(),
@@ -1165,12 +1165,12 @@ fn teardown_team_cancels_prepared_sessions_releases_slots_and_resets() -> Result
         .store
         .get_slot(&slot_id)?
         .context("missing slot after teardown")?;
-    assert_eq!(slot.status, "released");
+    assert_eq!(slot.status, SlotStatus::Released);
     let session = core
         .store
         .get_session("sess-team-teardown")?
         .context("missing session after teardown")?;
-    assert_eq!(session.status, "cancelled");
+    assert_eq!(session.status, SessionStatus::Cancelled);
     Ok(())
 }
 
@@ -1197,7 +1197,7 @@ fn teardown_team_blocks_running_oneshot_sessions() -> Result<()> {
         runtime: "shell".to_string(),
         supervisor: None,
         prompt: "sleep 30".to_string(),
-        status: "running".to_string(),
+        status: SessionStatus::Running,
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'sleep 30'".to_string(),

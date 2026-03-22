@@ -3,8 +3,8 @@
 use anyhow::{Context, Result, bail};
 use awo_core::app::AppPaths;
 use awo_core::config::{AppConfig, AppSettings};
-use awo_core::runtime::{RuntimeKind, SessionLaunchMode, detect_tmux};
-use awo_core::{AppCore, Command, SlotStrategy};
+use awo_core::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus, detect_tmux};
+use awo_core::{AppCore, Command, SlotStatus, SlotStrategy};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -167,7 +167,7 @@ fn warm_slot_reuse_preserves_slot_identity() -> Result<()> {
     assert_eq!(reused.id, first_slot.id);
     assert_eq!(reused.slot_path, first_slot.slot_path);
     assert_eq!(reused.task_name, "second task");
-    assert_eq!(reused.status, "active");
+    assert_eq!(reused.status, SlotStatus::Active);
 
     Ok(())
 }
@@ -285,7 +285,7 @@ fn cancelling_pending_session_unblocks_release() -> Result<()> {
         .into_iter()
         .find(|session| session.slot_id == slot.id)
         .context("missing cancelled session")?;
-    assert_eq!(session.status, "cancelled");
+    assert_eq!(session.status, SessionStatus::Cancelled);
 
     Ok(())
 }
@@ -404,7 +404,7 @@ fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
         .into_iter()
         .find(|session| session.slot_id == slot.id)
         .context("missing PTY session")?;
-    assert_eq!(session.status, "running");
+    assert_eq!(session.status, SessionStatus::Running);
 
     sleep(Duration::from_secs(2));
     let session_id = session.id.clone();
@@ -415,7 +415,7 @@ fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
         .into_iter()
         .find(|session| session.id == session_id)
         .context("missing synced PTY session")?;
-    assert_eq!(session.status, "completed");
+    assert_eq!(session.status, SessionStatus::Completed);
     assert_eq!(session.exit_code, Some(0));
     let log_path = session.log_path.context("missing PTY log path")?;
     let log = fs::read_to_string(&log_path)?;
@@ -538,7 +538,7 @@ fn failed_session_is_reflected_in_review_summary() -> Result<()> {
         .into_iter()
         .find(|session| session.slot_id == slot.id)
         .context("missing failed session")?;
-    assert_eq!(session.status, "failed");
+    assert_eq!(session.status, SessionStatus::Failed);
     assert_eq!(session.exit_code, Some(7));
 
     let review = core.snapshot()?.review_for_repo(Some(repo_id.as_str()));
@@ -589,7 +589,7 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
 
     let sessions = wait_for_repo_sessions(&core, &repo_id, Duration::from_secs(2))?;
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].status, "running");
+    assert_eq!(sessions[0].status, SessionStatus::Running);
     assert!(sessions[0].log_path.is_some());
 
     worker
@@ -602,7 +602,7 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
         .into_iter()
         .find(|session| session.repo_id == repo_id)
         .context("missing finished oneshot session")?;
-    assert_eq!(session.status, "completed");
+    assert_eq!(session.status, SessionStatus::Completed);
     assert_eq!(session.exit_code, Some(0));
 
     Ok(())
@@ -644,7 +644,7 @@ fn cancelling_running_oneshot_session_is_rejected() -> Result<()> {
 
     let session_id = wait_for_repo_sessions(&core, &repo_id, Duration::from_secs(2))?
         .into_iter()
-        .find(|session| session.status == "running")
+        .find(|session| session.status == SessionStatus::Running)
         .map(|session| session.id)
         .context("missing running oneshot session")?;
 
