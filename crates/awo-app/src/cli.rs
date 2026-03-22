@@ -99,7 +99,27 @@ pub enum SkillsCommand {
 #[derive(Debug, Subcommand)]
 pub enum RuntimeCommand {
     List,
-    Show { runtime: String },
+    Show {
+        runtime: String,
+    },
+    RoutePreview {
+        #[arg(long)]
+        primary: String,
+        #[arg(long)]
+        primary_model: Option<String>,
+        #[arg(long)]
+        fallback_runtime: Option<String>,
+        #[arg(long)]
+        fallback_model: Option<String>,
+        #[arg(long)]
+        prefer_local: bool,
+        #[arg(long)]
+        avoid_metered: bool,
+        #[arg(long)]
+        max_cost_tier: Option<String>,
+        #[arg(long)]
+        no_fallback: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -4,18 +4,19 @@ use crate::cli::{
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
-    print_outcome, print_registered_repos, print_review, print_runtime_capabilities,
-    print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
-    print_team_manifests, print_team_task_execution, print_team_teardown_plan,
-    print_team_teardown_result,
+    print_outcome, print_registered_repos, print_review, print_routing_decision,
+    print_runtime_capabilities, print_sessions, print_skill_doctor, print_skills_catalog,
+    print_slots, print_team_manifest, print_team_manifests, print_team_task_execution,
+    print_team_teardown_plan, print_team_teardown_result,
 };
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
+use awo_core::capabilities::CostTier;
 use awo_core::{
-    AppCore, Command, RuntimeKind, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy,
-    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
-    TeamTaskStartOptions, all_runtime_capabilities, default_team_manifest_path,
-    runtime_capabilities, starter_team_manifest,
+    AppCore, Command, RoutingPreferences, RoutingTarget, RuntimeKind, SessionLaunchMode,
+    SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard, TaskCardState, TeamExecutionMode,
+    TeamManifest, TeamMember, TeamResetSummary, TeamTaskStartOptions, all_runtime_capabilities,
+    default_team_manifest_path, route_runtime, runtime_capabilities, starter_team_manifest,
 };
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
@@ -242,6 +243,49 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 print_json_response(&vec![capability], None);
             } else {
                 print_runtime_capabilities(&[capability]);
+            }
+        }
+        RuntimeCommand::RoutePreview {
+            primary,
+            primary_model,
+            fallback_runtime,
+            fallback_model,
+            prefer_local,
+            avoid_metered,
+            max_cost_tier,
+            no_fallback,
+        } => {
+            let primary_kind = primary.parse::<RuntimeKind>().map_err(anyhow::Error::msg)?;
+            let primary_target = RoutingTarget::new(primary_kind, primary_model);
+
+            let fallback_target = if let Some(fallback_runtime) = fallback_runtime {
+                let fallback_kind = fallback_runtime
+                    .parse::<RuntimeKind>()
+                    .map_err(anyhow::Error::msg)?;
+                Some(RoutingTarget::new(fallback_kind, fallback_model))
+            } else {
+                None
+            };
+
+            let max_cost_tier = if let Some(tier) = max_cost_tier {
+                Some(tier.parse::<CostTier>().map_err(anyhow::Error::msg)?)
+            } else {
+                None
+            };
+
+            let preferences = RoutingPreferences {
+                allow_fallback: !no_fallback,
+                prefer_local,
+                avoid_metered,
+                max_cost_tier,
+            };
+
+            let decision = route_runtime(primary_target, fallback_target, &preferences);
+
+            if output.json {
+                print_json_response(&decision, None);
+            } else {
+                print_routing_decision(&decision);
             }
         }
     }

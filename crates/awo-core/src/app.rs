@@ -432,7 +432,17 @@ impl AppCore {
             }
         };
 
-        let (repo_id, task, owner, runtime_name, runtime, prompt, read_only) = {
+        let (
+            repo_id,
+            task,
+            owner,
+            runtime_name,
+            runtime,
+            selected_model,
+            routing_source,
+            prompt,
+            read_only,
+        ) = {
             let mut manifest = TeamManifestGuard::load(&self.config.paths, &options.team_id)?;
             let task = manifest
                 .manifest()
@@ -457,7 +467,7 @@ impl AppCore {
                 )));
             }
 
-            let runtime_name = task
+            let primary_runtime_name = task
                 .runtime
                 .as_deref()
                 .or(owner.runtime.as_deref())
@@ -467,10 +477,30 @@ impl AppCore {
                         task.task_id, owner.member_id
                     ))
                 })?;
-            let runtime_name = runtime_name.to_string();
-            let runtime: RuntimeKind = runtime_name
+            let primary_runtime: RuntimeKind = primary_runtime_name
                 .parse()
-                .map_err(|_| AwoError::unsupported("runtime", &runtime_name))?;
+                .map_err(|_| AwoError::unsupported("runtime", primary_runtime_name))?;
+            let primary_target =
+                crate::routing::RoutingTarget::new(primary_runtime, owner.model.clone());
+            let fallback_target = if let Some(fallback_runtime_name) = &owner.fallback_runtime {
+                let fallback_runtime: RuntimeKind =
+                    fallback_runtime_name.parse().map_err(|_| {
+                        AwoError::unsupported("fallback runtime", fallback_runtime_name)
+                    })?;
+                Some(crate::routing::RoutingTarget::new(
+                    fallback_runtime,
+                    owner.fallback_model.clone(),
+                ))
+            } else {
+                None
+            };
+            let routing_decision = crate::routing::route_runtime(
+                primary_target,
+                fallback_target,
+                &crate::routing::RoutingPreferences::default(),
+            );
+            let runtime = routing_decision.selected_runtime;
+            let runtime_name = runtime.as_str().to_string();
             let prompt = if runtime.as_str() == "shell" {
                 task.summary.clone()
             } else {
@@ -488,6 +518,8 @@ impl AppCore {
                 owner,
                 runtime_name,
                 runtime,
+                routing_decision.selected_model,
+                routing_decision.source,
                 prompt,
                 read_only,
             )
@@ -617,6 +649,8 @@ impl AppCore {
             task_id: task.task_id.clone(),
             owner_id: task.owner_id.clone(),
             runtime: runtime_name.to_string(),
+            model: selected_model,
+            routing_source,
             slot_id,
             branch_name,
             session_id,

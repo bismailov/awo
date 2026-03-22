@@ -292,6 +292,23 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
     }
 }
 
+pub fn print_routing_decision(decision: &awo_core::routing::RoutingDecision) {
+    println!("Routing decision:");
+    println!("- selected runtime: {}", decision.selected_runtime.as_str());
+    println!(
+        "- selected model: {}",
+        decision.selected_model.as_deref().unwrap_or("-")
+    );
+    println!(
+        "- source: {}",
+        match decision.source {
+            awo_core::RoutingSource::Primary => "primary",
+            awo_core::RoutingSource::Fallback => "fallback",
+        }
+    );
+    println!("- reason: {}", decision.reason);
+}
+
 pub fn print_team_manifests(manifests: &[TeamManifest]) {
     if manifests.is_empty() {
         println!("No team manifests.");
@@ -471,6 +488,16 @@ pub fn print_team_task_execution(execution: &TeamTaskExecution) {
     println!("- task id: {}", execution.task_id);
     println!("- owner id: {}", execution.owner_id);
     println!("- runtime: {}", execution.runtime);
+    if let Some(model) = &execution.model {
+        println!("- model: {}", model);
+    }
+    println!(
+        "- routing source: {}",
+        match execution.routing_source {
+            awo_core::RoutingSource::Primary => "primary",
+            awo_core::RoutingSource::Fallback => "fallback",
+        }
+    );
     println!("- slot id: {}", execution.slot_id);
     println!("- branch: {}", execution.branch_name);
     println!("- acquired slot: {}", execution.acquired_slot);

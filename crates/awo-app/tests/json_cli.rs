@@ -291,3 +291,98 @@ fn runtime_show_claude_has_native_team_capabilities() {
     assert_eq!(entry["multi_session_teams"], "native");
     assert_eq!(entry["skill_preload"], "native");
 }
+
+#[test]
+fn runtime_route_preview_primary_selected_by_default() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "claude");
+    assert_eq!(data["source"], "primary");
+    assert!(
+        data["reason"]
+            .as_str()
+            .unwrap()
+            .contains("meets all routing preferences")
+    );
+}
+
+#[test]
+fn runtime_route_preview_fallback_selected_when_primary_exceeds_cost() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--max-cost-tier",
+        "standard",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "gemini");
+    assert_eq!(data["source"], "fallback");
+    assert!(
+        data["reason"]
+            .as_str()
+            .unwrap()
+            .contains("primary rejected")
+    );
+}
+
+#[test]
+fn runtime_route_preview_invalid_runtime_returns_json_error() {
+    let (output, json) = run_awo_json(&["runtime", "route-preview", "--primary", "bogus"]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], false);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Matching variant not found")
+    );
+}
+
+#[test]
+fn runtime_route_preview_no_fallback_honors_flag() {
+    let (output, json) = run_awo_json(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--max-cost-tier",
+        "standard",
+        "--no-fallback",
+    ]);
+
+    assert!(output.status.success());
+    assert_unified_keys(&json);
+    assert_eq!(json["ok"], true);
+    let data = &json["data"];
+    assert_eq!(data["selected_runtime"], "claude");
+    assert_eq!(data["source"], "primary");
+    assert!(
+        data["reason"]
+            .as_str()
+            .unwrap()
+            .contains("fallback was not allowed")
+    );
+}

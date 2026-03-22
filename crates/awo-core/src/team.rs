@@ -115,6 +115,8 @@ pub struct TeamTaskExecution {
     pub task_id: String,
     pub owner_id: String,
     pub runtime: String,
+    pub model: Option<String>,
+    pub routing_source: crate::routing::RoutingSource,
     pub slot_id: String,
     pub branch_name: String,
     pub session_id: Option<String>,

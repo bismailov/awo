@@ -222,6 +222,11 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
 
     assert!(slot_outcome.is_some());
     assert_eq!(execution.runtime, "shell");
+    assert_eq!(execution.model, None);
+    assert_eq!(
+        execution.routing_source,
+        crate::routing::RoutingSource::Primary
+    );
     assert_eq!(execution.session_status, "completed");
     assert!(session_outcome.summary.contains("Session"));
     assert_eq!(
@@ -236,6 +241,84 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         .map(|slot| slot.slot_path)
         .context("missing slot summary")?;
     assert!(Path::new(&slot_path).join("TEAM_TASK.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn start_team_task_missing_runtime_fails() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-start-missing")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-beta",
+        "Run task without runtime",
+        None,
+        None,
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-beta",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: None,
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["TEAM_TASK.txt".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: Some("shell".to_string()),
+            fallback_model: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-beta",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Create task file".to_string(),
+            summary: "printf ok > TEAM_TASK.txt".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["TEAM_TASK.txt".to_string()],
+            deliverable: "A file".to_string(),
+            verification: vec!["test -f TEAM_TASK.txt".to_string()],
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    let result = core.start_team_task(TeamTaskStartOptions {
+        team_id: "team-beta".to_string(),
+        task_id: "task-1".to_string(),
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+        attach_context: false,
+    });
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("has no runtime"));
     Ok(())
 }
 
