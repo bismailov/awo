@@ -2,7 +2,8 @@ use anyhow::Error;
 use awo_core::{
     AppSnapshot, CommandOutcome, ContextDoctorReport, Diagnostic, DomainEvent, RepoContext,
     RepoSkillCatalog, ReviewSummary, RuntimeCapabilityDescriptor, RuntimeKind, RuntimePressure,
-    SkillDoctorReport, TeamManifest, TeamTaskExecution, TeamTeardownPlan, TeamTeardownResult,
+    SkillDoctorReport, TeamManifest, TeamMember, TeamTaskExecution, TeamTeardownPlan,
+    TeamTeardownResult,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -360,6 +361,52 @@ pub fn print_team_manifests(manifests: &[TeamManifest]) {
     }
 }
 
+pub fn print_team_member(member: &TeamMember) {
+    println!("Team member: {}", member.member_id);
+    println!("- role: {}", member.role);
+    println!("- runtime: {}", member.runtime.as_deref().unwrap_or("-"));
+    println!("- model: {}", member.model.as_deref().unwrap_or("-"));
+    println!("- mode: {}", member.execution_mode);
+    println!("- read_only: {}", member.read_only);
+    println!(
+        "- scope: {}",
+        if member.write_scope.is_empty() {
+            "-".to_string()
+        } else {
+            member.write_scope.join(", ")
+        }
+    );
+    if member.context_packs.is_empty() {
+        println!("- context packs: none");
+    } else {
+        println!("- context packs: {}", member.context_packs.join(", "));
+    }
+    if member.skills.is_empty() {
+        println!("- skills: none");
+    } else {
+        println!("- skills: {}", member.skills.join(", "));
+    }
+    if let Some(notes) = &member.notes {
+        println!("- notes: {}", notes);
+    }
+    if member.fallback_runtime.is_some() || member.fallback_model.is_some() {
+        println!(
+            "- fallback: runtime={} model={}",
+            member.fallback_runtime.as_deref().unwrap_or("-"),
+            member.fallback_model.as_deref().unwrap_or("-"),
+        );
+    }
+    if let Some(routing_preferences) = &member.routing_preferences {
+        println!("- member routing defaults:");
+        println!("  prefer_local={}", routing_preferences.prefer_local);
+        println!("  avoid_metered={}", routing_preferences.avoid_metered);
+        if let Some(tier) = &routing_preferences.max_cost_tier {
+            println!("  max_cost_tier={}", tier.as_str());
+        }
+        println!("  allow_fallback={}", routing_preferences.allow_fallback);
+    }
+}
+
 pub fn print_team_manifest(manifest: &TeamManifest) {
     println!("Team manifest:");
     println!("- team id: {}", manifest.team_id);
@@ -559,6 +606,7 @@ pub fn print_team_task_execution(execution: &TeamTaskExecution) {
             awo_core::RoutingSource::Fallback => "fallback",
         }
     );
+    println!("- routing reason: {}", execution.routing_reason);
     println!("- slot id: {}", execution.slot_id);
     println!("- branch: {}", execution.branch_name);
     println!("- acquired slot: {}", execution.acquired_slot);

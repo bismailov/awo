@@ -36,6 +36,7 @@ struct TuiState {
     status: String,
     messages: Vec<String>,
     selected_repo_index: usize,
+    selected_team_index: usize,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -56,6 +57,7 @@ pub fn run_tui() -> Result<()> {
             .map(|event| event.to_message())
             .collect(),
         selected_repo_index: 0,
+        selected_team_index: 0,
     };
 
     info!("TUI started");
@@ -80,6 +82,17 @@ pub fn run_tui() -> Result<()> {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
                         state.selected_repo_index += 1;
+                    }
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    if state.selected_team_index > 0 {
+                        state.selected_team_index -= 1;
+                    }
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    let visible_teams = visible_teams(&snapshot, &state);
+                    if state.selected_team_index + 1 < visible_teams.len() {
+                        state.selected_team_index += 1;
                     }
                 }
                 KeyCode::Char('a') => {
@@ -146,6 +159,22 @@ fn selected_repo<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a 
     )
 }
 
+fn visible_teams<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a TeamSummary> {
+    let selected_repo = selected_repo(snapshot, state);
+    snapshot
+        .teams
+        .iter()
+        .filter(|team| selected_repo.is_none_or(|repo| team.repo_id == repo.id))
+        .collect()
+}
+
+fn selected_team<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a TeamSummary> {
+    let teams = visible_teams(snapshot, state);
+    teams
+        .get(state.selected_team_index.min(teams.len().saturating_sub(1)))
+        .copied()
+}
+
 fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
     match core.dispatch(command) {
         Ok(outcome) => {
@@ -172,6 +201,8 @@ fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
 
 fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let selected_repo = selected_repo(snapshot, state);
+    let visible_teams = visible_teams(snapshot, state);
+    let selected_team = selected_team(snapshot, state);
     let vertical = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(11),
@@ -181,7 +212,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "awo V1 slice | q quit | j/k select repo | a add cwd repo | c context doctor | d skills doctor | n no-op | r review refresh | teams/runtimes visible below | {}",
+        "awo V1 slice | q quit | j/k repo | h/l team | a add repo | c/d doctors | n noop | r refresh | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title("Status"));
@@ -226,9 +257,10 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     frame.render_widget(paths_widget, vertical[1]);
 
     let top = Layout::horizontal([
+        Constraint::Percentage(20),
         Constraint::Percentage(30),
-        Constraint::Percentage(35),
-        Constraint::Percentage(35),
+        Constraint::Percentage(25),
+        Constraint::Percentage(25),
     ])
     .split(vertical[2]);
     let bottom = Layout::horizontal([
@@ -273,6 +305,13 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     );
     frame.render_widget(repo_detail_widget, top[1]);
 
+    let team_detail_widget = Paragraph::new(render_team_detail(selected_team)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Selected Team"),
+    );
+    frame.render_widget(team_detail_widget, top[2]);
+
     let slot_items = snapshot
         .slots
         .iter()
@@ -290,7 +329,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         })
         .collect::<Vec<_>>();
     let slots = List::new(slot_items).block(Block::default().borders(Borders::ALL).title("Slots"));
-    frame.render_widget(slots, top[2]);
+    frame.render_widget(slots, top[3]);
 
     let session_items = snapshot
         .sessions
@@ -324,13 +363,16 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         List::new(session_items).block(Block::default().borders(Borders::ALL).title("Sessions"));
     frame.render_widget(sessions, bottom[0]);
 
-    let team_items = snapshot
-        .teams
+    let team_items = visible_teams
         .iter()
-        .filter(|team| selected_repo.is_none_or(|repo| team.repo_id == repo.id))
         .map(|team| {
             ListItem::new(format!(
-                "{} [{}] {} members={} open={}/{} write={}",
+                "{} {} [{}] {} members={} open={}/{} write={}",
+                if selected_team.is_some_and(|selected| selected.team_id == team.team_id) {
+                    ">"
+                } else {
+                    " "
+                },
                 team.team_id,
                 team.repo_id,
                 team.status,
@@ -444,28 +486,8 @@ fn render_repo_detail(
                 "  - {} status={} open={}/{}",
                 team.team_id, team.status, team.open_task_count, team.task_count
             )));
-            if let Some(preferences) = &team.routing_preferences {
-                lines.push(Line::from(format!(
-                    "    routing: {}",
-                    format_routing_preferences(preferences)
-                )));
-            }
-            if team.lead_fallback_runtime.is_some() || team.lead_fallback_model.is_some() {
-                lines.push(Line::from(format!(
-                    "    lead fallback: {}",
-                    format_fallback_target(
-                        team.lead_fallback_runtime.as_deref(),
-                        team.lead_fallback_model.as_deref()
-                    )
-                )));
-            }
-            for member in &team.member_routing {
-                lines.push(Line::from(format!(
-                    "    member {}",
-                    format_member_routing(member)
-                )));
-            }
         }
+        lines.push(Line::from("Select a team with h/l for details."));
     }
 
     lines.push(Line::from("Runtime capabilities:"));
@@ -482,6 +504,56 @@ fn render_repo_detail(
         )));
         if let Some(note) = capability.notes.first() {
             lines.push(Line::from(format!("    {note}")));
+        }
+    }
+
+    lines
+}
+
+fn render_team_detail(team: Option<&TeamSummary>) -> Vec<Line<'static>> {
+    let Some(team) = team else {
+        return vec![Line::from("No team selected.")];
+    };
+
+    let mut lines = vec![
+        Line::from(format!("ID: {}", team.team_id)),
+        Line::from(format!("Objective: {}", team.objective)),
+        Line::from(format!("Status: {}", team.status)),
+        Line::from(format!(
+            "Open tasks: {} of {}",
+            team.open_task_count, team.task_count
+        )),
+    ];
+
+    if let Some(preferences) = &team.routing_preferences {
+        lines.push(Line::from(format!(
+            "Team routing: {}",
+            format_routing_preferences(preferences)
+        )));
+    }
+
+    let has_lead = team.lead_runtime.is_some()
+        || team.lead_model.is_some()
+        || team.lead_fallback_runtime.is_some()
+        || team.lead_fallback_model.is_some();
+    if has_lead {
+        lines.push(Line::from(format!(
+            "Lead: runtime={} model={} fallback={}",
+            team.lead_runtime.as_deref().unwrap_or("-"),
+            team.lead_model.as_deref().unwrap_or("-"),
+            format_fallback_target(
+                team.lead_fallback_runtime.as_deref(),
+                team.lead_fallback_model.as_deref()
+            )
+        )));
+    }
+
+    if team.member_routing.is_empty() {
+        lines.push(Line::from("Members: none"));
+    } else {
+        lines.push(Line::from("Members:"));
+        for member in &team.member_routing {
+            lines.push(Line::from(format!("  {}", format_member_routing(member))));
         }
     }
 

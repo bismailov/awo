@@ -329,6 +329,11 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         execution.routing_source,
         crate::routing::RoutingSource::Primary
     );
+    assert!(
+        execution.routing_reason.contains("primary"),
+        "expected primary-style reason, got: {}",
+        execution.routing_reason
+    );
     assert_eq!(execution.session_status, "completed");
     assert!(session_outcome.summary.contains("Session"));
     assert_eq!(
@@ -438,6 +443,11 @@ fn start_team_task_prefers_fallback_under_cost_ceiling() -> Result<()> {
         execution.routing_source,
         crate::routing::RoutingSource::Fallback
     );
+    assert!(
+        execution.routing_reason.contains("fallback accepted"),
+        "expected fallback reason, got: {}",
+        execution.routing_reason
+    );
     assert_eq!(execution.session_status, "prepared");
     Ok(())
 }
@@ -462,6 +472,13 @@ fn start_team_task_no_fallback_preserves_primary_selection() -> Result<()> {
     assert_eq!(
         execution.routing_source,
         crate::routing::RoutingSource::Primary
+    );
+    assert!(
+        execution
+            .routing_reason
+            .contains("fallback was not allowed"),
+        "expected no-fallback reason, got: {}",
+        execution.routing_reason
     );
     assert_eq!(execution.session_status, "prepared");
     Ok(())

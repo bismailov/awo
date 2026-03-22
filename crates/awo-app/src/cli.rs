@@ -215,6 +215,10 @@ pub enum TeamCommand {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum TeamMemberCommand {
+    Show {
+        team_id: String,
+        member_id: String,
+    },
     Add {
         team_id: String,
         member_id: String,

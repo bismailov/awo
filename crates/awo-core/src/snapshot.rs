@@ -91,6 +91,8 @@ pub struct TeamSummary {
     pub routing_preferences: Option<RoutingPreferencesSummary>,
     pub lead_fallback_runtime: Option<String>,
     pub lead_fallback_model: Option<String>,
+    pub lead_runtime: Option<String>,
+    pub lead_model: Option<String>,
     pub member_routing: Vec<MemberRoutingSummary>,
 }
 
@@ -397,6 +399,8 @@ impl From<TeamManifest> for TeamSummary {
             routing_preferences,
             lead_fallback_runtime: value.lead.fallback_runtime,
             lead_fallback_model: value.lead.fallback_model,
+            lead_runtime: value.lead.runtime.clone(),
+            lead_model: value.lead.model.clone(),
             member_routing,
         }
     }

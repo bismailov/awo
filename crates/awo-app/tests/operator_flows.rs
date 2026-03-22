@@ -1373,3 +1373,81 @@ fn team_member_update_clear_routing_defaults_removes_prefs() {
         "routing_preferences should be cleared"
     );
 }
+
+#[test]
+fn team_member_show_returns_member() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-show-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("id is string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "team-show-test",
+        "Test show command",
+    ]);
+    assert!(
+        init_result["ok"].as_bool().unwrap_or(false),
+        "init failed: {}",
+        init_result
+    );
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "team-show-test",
+        "test-member",
+        "reviewer",
+        "--fallback-runtime",
+        "codex",
+        "--fallback-model",
+        "dummy-fallback",
+        "--prefer-local",
+        "--context-pack",
+        "foo",
+        "--skill",
+        "bar",
+        "--notes",
+        "test notes",
+    ]);
+    assert!(
+        member_result["ok"].as_bool().unwrap_or(false),
+        "add member failed: {}",
+        member_result
+    );
+
+    let show_result = env.run(&["team", "member", "show", "team-show-test", "test-member"]);
+    assert!(
+        show_result["ok"].as_bool().unwrap_or(false),
+        "show member failed: {}",
+        show_result
+    );
+    let member_data = &show_result["data"];
+    assert_eq!(member_data["member_id"], "test-member");
+    assert_eq!(member_data["role"], "reviewer");
+    assert_eq!(member_data["fallback_runtime"], "codex");
+    assert_eq!(member_data["fallback_model"], "dummy-fallback");
+    assert_eq!(member_data["routing_preferences"]["prefer_local"], true);
+    assert_eq!(member_data["context_packs"][0], "foo");
+    assert_eq!(member_data["skills"][0], "bar");
+    assert_eq!(member_data["notes"], "test notes");
+
+    let missing_result = env.run(&["team", "member", "show", "team-show-test", "nonexistent"]);
+    assert_eq!(missing_result["ok"], false);
+    assert!(
+        missing_result["error"]
+            .as_str()
+            .unwrap()
+            .contains("member not found: nonexistent")
+    );
+
+    let missing_team_result =
+        env.run(&["team", "member", "show", "nonexistent-team", "test-member"]);
+    assert_eq!(missing_team_result["ok"], false);
+}

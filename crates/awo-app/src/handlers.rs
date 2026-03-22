@@ -8,7 +8,7 @@ use crate::output::{
     print_outcome, print_registered_repos, print_review, print_routing_preview,
     print_routing_recommendation, print_runtime_capabilities, print_runtime_pressure_profile,
     print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
-    print_team_manifests, print_team_task_execution, print_team_teardown_plan,
+    print_team_manifests, print_team_member, print_team_task_execution, print_team_teardown_plan,
     print_team_teardown_result,
 };
 use crate::tui::run_tui;
@@ -468,6 +468,23 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             }
         }
         TeamCommand::Member { command } => match command {
+            TeamMemberCommand::Show { team_id, member_id } => {
+                let manifest = core.load_team_manifest(&team_id)?;
+                let member = if manifest.lead.member_id == member_id {
+                    manifest.lead.clone()
+                } else {
+                    manifest
+                        .members
+                        .into_iter()
+                        .find(|candidate| candidate.member_id == member_id)
+                        .ok_or_else(|| anyhow::anyhow!("member not found: {}", member_id))?
+                };
+                if output.json {
+                    print_json_response(&member, None);
+                } else {
+                    print_team_member(&member);
+                }
+            }
             TeamMemberCommand::Add {
                 team_id,
                 member_id,

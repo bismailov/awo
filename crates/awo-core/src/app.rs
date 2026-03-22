@@ -477,6 +477,7 @@ impl AppCore {
             runtime,
             selected_model,
             routing_source,
+            routing_reason,
             prompt,
             read_only,
         ) = {
@@ -563,6 +564,7 @@ impl AppCore {
                 runtime,
                 routing_decision.selected_model,
                 routing_decision.source,
+                routing_decision.reason,
                 prompt,
                 read_only,
             )
@@ -694,6 +696,7 @@ impl AppCore {
             runtime: runtime_name.to_string(),
             model: selected_model,
             routing_source,
+            routing_reason,
             slot_id,
             branch_name,
             session_id,

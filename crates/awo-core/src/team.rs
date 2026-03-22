@@ -120,6 +120,7 @@ pub struct TeamTaskExecution {
     pub runtime: String,
     pub model: Option<String>,
     pub routing_source: crate::routing::RoutingSource,
+    pub routing_reason: String,
     pub slot_id: String,
     pub branch_name: String,
     pub session_id: Option<String>,
