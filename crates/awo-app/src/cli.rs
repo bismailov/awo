@@ -248,6 +248,30 @@ pub enum TeamMemberCommand {
         #[arg(long)]
         no_fallback: bool,
     },
+    Update {
+        team_id: String,
+        member_id: String,
+        #[arg(long)]
+        runtime: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        fallback_runtime: Option<String>,
+        #[arg(long)]
+        fallback_model: Option<String>,
+        #[arg(long)]
+        prefer_local: bool,
+        #[arg(long)]
+        avoid_metered: bool,
+        #[arg(long)]
+        max_cost_tier: Option<String>,
+        #[arg(long)]
+        no_fallback: bool,
+        #[arg(long)]
+        clear_fallback: bool,
+        #[arg(long)]
+        clear_routing_defaults: bool,
+    },
     Remove {
         team_id: String,
         member_id: String,

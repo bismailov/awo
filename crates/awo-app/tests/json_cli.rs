@@ -106,6 +106,16 @@ fn run_awo_json(args: &[&str]) -> (Output, Value) {
     (output, parsed)
 }
 
+fn run_awo_text(args: &[&str]) -> String {
+    let output = run_awo(args, false);
+    assert!(
+        output.status.success(),
+        "text command failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 fn assert_unified_keys(json: &Value) {
     let object = json.as_object().expect("JSON envelope should be an object");
     let keys = object.keys().cloned().collect::<Vec<_>>();
@@ -362,6 +372,31 @@ fn runtime_route_preview_primary_selected_by_default() {
             .unwrap()
             .contains("meets all routing preferences")
     );
+}
+
+#[test]
+fn runtime_route_preview_text_shows_preferences_and_pressure() {
+    let text = run_awo_text(&[
+        "runtime",
+        "route-preview",
+        "--primary",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--max-cost-tier",
+        "standard",
+        "--pressure",
+        "claude=hard_limit",
+    ]);
+
+    assert!(text.contains("Routing preview:"));
+    assert!(text.contains("resolved preferences:"));
+    assert!(text.contains("max_cost_tier=standard"));
+    assert!(text.contains("runtime pressure:"));
+    assert!(text.contains("claude=hard_limit"));
+    assert!(text.contains("Routing decision:"));
+    assert!(text.contains("selected runtime: gemini"));
+    assert!(text.contains("source: fallback"));
 }
 
 #[test]

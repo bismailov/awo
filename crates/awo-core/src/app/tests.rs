@@ -1233,3 +1233,73 @@ fn delete_team_removes_manifest_once_bindings_are_gone() -> Result<()> {
     assert!(!manifest_path.exists());
     Ok(())
 }
+
+#[test]
+fn update_team_member_policy_persists_through_load() -> Result<()> {
+    let (_temp_dir, core) = temp_core()?;
+    let manifest = starter_team_manifest(
+        "repo-1",
+        "team-update",
+        "Test member update",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-update",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("claude".to_string()),
+            model: Some("sonnet".to_string()),
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+
+    let manifest = core.update_team_member_policy(
+        "team-update",
+        "worker-a",
+        None,
+        None,
+        Some(Some("gemini".to_string())),
+        Some(Some("flash".to_string())),
+        Some(Some(crate::routing::RoutingPreferences {
+            prefer_local: true,
+            avoid_metered: false,
+            max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+            allow_fallback: true,
+        })),
+    )?;
+
+    let member = manifest.member("worker-a").expect("member should exist");
+    assert_eq!(member.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(member.fallback_model.as_deref(), Some("flash"));
+    assert!(member.routing_preferences.as_ref().unwrap().prefer_local);
+
+    let loaded = core.load_team_manifest("team-update")?;
+    let member = loaded.member("worker-a").expect("member should exist");
+    assert_eq!(member.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(member.fallback_model.as_deref(), Some("flash"));
+    assert!(member.routing_preferences.as_ref().unwrap().prefer_local);
+    assert_eq!(
+        member.routing_preferences.as_ref().unwrap().max_cost_tier,
+        Some(crate::capabilities::CostTier::Standard)
+    );
+    assert_eq!(member.runtime.as_deref(), Some("claude"));
+    assert_eq!(member.model.as_deref(), Some("sonnet"));
+    assert_eq!(member.role, "implementer");
+    Ok(())
+}

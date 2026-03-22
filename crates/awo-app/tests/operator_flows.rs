@@ -419,6 +419,14 @@ fn team_recommend_returns_task_recommendation_using_manifest_defaults() {
     assert_eq!(data["preferences"]["max_cost_tier"], "standard");
     assert_eq!(data["decision"]["selected_runtime"], "gemini");
     assert_eq!(data["decision"]["source"], "fallback");
+
+    let text = env.run_text(&["team", "recommend", "recommend-team", "--task", "task-1"]);
+    assert!(text.contains("Routing recommendation:"));
+    assert!(text.contains("resolved preferences:"));
+    assert!(text.contains("max_cost_tier=standard"));
+    assert!(text.contains("Routing decision:"));
+    assert!(text.contains("selected runtime: gemini"));
+    assert!(text.contains("source: fallback"));
 }
 
 #[test]
@@ -1193,5 +1201,175 @@ fn team_init_fallback_runtime_is_validated() {
             || error.contains("nonexistent-runtime")
             || error.contains("Matching variant not found"),
         "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn team_member_update_persists_fallback_and_routing_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-update-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "update-team",
+        "Test member update",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "update-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+    ]);
+
+    let update_result = env.run(&[
+        "team",
+        "member",
+        "update",
+        "update-team",
+        "worker-a",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+        "--prefer-local",
+        "--max-cost-tier",
+        "standard",
+    ]);
+    assert_eq!(
+        update_result["ok"], true,
+        "member update failed: {update_result}"
+    );
+    let member = &update_result["data"]["members"][0];
+    assert_eq!(member["fallback_runtime"], "gemini");
+    assert_eq!(member["fallback_model"], "flash");
+    assert_eq!(member["routing_preferences"]["prefer_local"], true);
+    assert_eq!(member["routing_preferences"]["max_cost_tier"], "standard");
+
+    let show = env.run(&["team", "show", "update-team"]);
+    let show_member = &show["data"]["members"][0];
+    assert_eq!(show_member["fallback_runtime"], "gemini");
+    assert_eq!(show_member["fallback_model"], "flash");
+    assert_eq!(show_member["routing_preferences"]["prefer_local"], true);
+    assert_eq!(show_member["runtime"], "claude");
+    assert_eq!(show_member["model"], "sonnet");
+}
+
+#[test]
+fn team_member_update_clear_fallback_removes_fields() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-clear-fb-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "clear-fb-team",
+        "Test clear fallback",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "clear-fb-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--fallback-runtime",
+        "gemini",
+        "--fallback-model",
+        "flash",
+    ]);
+
+    let clear_result = env.run(&[
+        "team",
+        "member",
+        "update",
+        "clear-fb-team",
+        "worker-a",
+        "--clear-fallback",
+    ]);
+    assert_eq!(
+        clear_result["ok"], true,
+        "clear fallback failed: {clear_result}"
+    );
+    let member = &clear_result["data"]["members"][0];
+    assert!(member["fallback_runtime"].is_null());
+    assert!(member["fallback_model"].is_null());
+    assert_eq!(member["runtime"], "claude");
+}
+
+#[test]
+fn team_member_update_clear_routing_defaults_removes_prefs() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-clear-rp-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "clear-rp-team",
+        "Test clear routing",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "clear-rp-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--prefer-local",
+        "--max-cost-tier",
+        "standard",
+    ]);
+
+    let show = env.run(&["team", "show", "clear-rp-team"]);
+    assert_eq!(
+        show["data"]["members"][0]["routing_preferences"]["prefer_local"],
+        true
+    );
+
+    let clear_result = env.run(&[
+        "team",
+        "member",
+        "update",
+        "clear-rp-team",
+        "worker-a",
+        "--clear-routing-defaults",
+    ]);
+    assert_eq!(
+        clear_result["ok"], true,
+        "clear routing defaults failed: {clear_result}"
+    );
+
+    let show = env.run(&["team", "show", "clear-rp-team"]);
+    assert!(
+        show["data"]["members"][0]["routing_preferences"].is_null(),
+        "routing_preferences should be cleared"
     );
 }

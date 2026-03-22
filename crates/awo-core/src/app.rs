@@ -157,6 +157,35 @@ impl AppCore {
         Ok(manifest)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_team_member_policy(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        runtime: Option<Option<String>>,
+        model: Option<Option<String>>,
+        fallback_runtime: Option<Option<String>>,
+        fallback_model: Option<Option<String>>,
+        routing_preferences: Option<Option<crate::routing::RoutingPreferences>>,
+    ) -> AwoResult<TeamManifest> {
+        let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        manifest.manifest_mut().update_member_policy(
+            member_id,
+            runtime,
+            model,
+            fallback_runtime,
+            fallback_model,
+            routing_preferences,
+        )?;
+        manifest.save()?;
+        let manifest = manifest.into_manifest();
+        self.store.insert_action(
+            "team_member_update",
+            &format!("team_id={} member_id={member_id}", manifest.team_id),
+        )?;
+        Ok(manifest)
+    }
+
     pub fn remove_team_member(&self, team_id: &str, member_id: &str) -> AwoResult<TeamManifest> {
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
         manifest.manifest_mut().remove_member(member_id)?;

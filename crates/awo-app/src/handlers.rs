@@ -5,7 +5,7 @@ use crate::cli::{
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
-    print_outcome, print_registered_repos, print_review, print_routing_decision,
+    print_outcome, print_registered_repos, print_review, print_routing_preview,
     print_routing_recommendation, print_runtime_capabilities, print_runtime_pressure_profile,
     print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
     print_team_manifests, print_team_task_execution, print_team_teardown_plan,
@@ -291,7 +291,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
             if output.json {
                 print_json_response(&decision, None);
             } else {
-                print_routing_decision(&decision);
+                print_routing_preview(&decision, &preferences, &context);
             }
         }
         RuntimeCommand::Pressure { command } => {
@@ -514,6 +514,64 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         fallback_model,
                         routing_preferences,
                     },
+                )?;
+                if output.json {
+                    print_json_response(&manifest, None);
+                } else {
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamMemberCommand::Update {
+                team_id,
+                member_id,
+                runtime,
+                model,
+                fallback_runtime,
+                fallback_model,
+                prefer_local,
+                avoid_metered,
+                max_cost_tier,
+                no_fallback,
+                clear_fallback,
+                clear_routing_defaults,
+            } => {
+                let runtime_update = match runtime {
+                    Some(value) => Some(parse_optional_runtime(Some(&value))?),
+                    None => None,
+                };
+                let model_update = model.map(Some);
+                let fallback_runtime_update = if clear_fallback {
+                    Some(None)
+                } else {
+                    match fallback_runtime {
+                        Some(value) => Some(parse_optional_runtime(Some(&value))?),
+                        None => None,
+                    }
+                };
+                let fallback_model_update = if clear_fallback {
+                    Some(None)
+                } else {
+                    fallback_model.map(Some)
+                };
+                let routing_preferences_update = if clear_routing_defaults {
+                    Some(None)
+                } else {
+                    parse_routing_preferences(
+                        prefer_local,
+                        avoid_metered,
+                        max_cost_tier.as_deref(),
+                        no_fallback,
+                    )?
+                    .map(Some)
+                };
+                let manifest = core.update_team_member_policy(
+                    &team_id,
+                    &member_id,
+                    runtime_update,
+                    model_update,
+                    fallback_runtime_update,
+                    fallback_model_update,
+                    routing_preferences_update,
                 )?;
                 if output.json {
                     print_json_response(&manifest, None);

@@ -518,3 +518,140 @@ fn add_member_with_fallback_fields() -> Result<()> {
     assert_eq!(member.fallback_model.as_deref(), Some("mini"));
     Ok(())
 }
+
+#[test]
+fn update_member_fallback_fields() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.update_member_policy(
+        "worker-a",
+        None,
+        None,
+        Some(Some("gemini".to_string())),
+        Some(Some("flash".to_string())),
+        None,
+    )?;
+    let member = manifest.member("worker-a").expect("member exists");
+    assert_eq!(member.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(member.fallback_model.as_deref(), Some("flash"));
+    assert_eq!(member.runtime.as_deref(), Some("codex"));
+    assert_eq!(member.role, "implementer");
+    Ok(())
+}
+
+#[test]
+fn update_member_routing_defaults() -> Result<()> {
+    let mut manifest = sample_manifest();
+    let prefs = crate::routing::RoutingPreferences {
+        prefer_local: true,
+        avoid_metered: true,
+        max_cost_tier: Some(crate::capabilities::CostTier::Standard),
+        allow_fallback: false,
+    };
+    manifest.update_member_policy(
+        "worker-a",
+        None,
+        None,
+        None,
+        None,
+        Some(Some(prefs.clone())),
+    )?;
+    let member = manifest.member("worker-a").expect("member exists");
+    assert_eq!(member.routing_preferences, Some(prefs));
+    assert_eq!(member.runtime.as_deref(), Some("codex"));
+    Ok(())
+}
+
+#[test]
+fn clear_member_fallback_fields() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.update_member_policy(
+        "worker-a",
+        None,
+        None,
+        Some(Some("gemini".to_string())),
+        Some(Some("flash".to_string())),
+        None,
+    )?;
+    manifest.update_member_policy("worker-a", None, None, Some(None), Some(None), None)?;
+    let member = manifest.member("worker-a").expect("member exists");
+    assert!(member.fallback_runtime.is_none());
+    assert!(member.fallback_model.is_none());
+    Ok(())
+}
+
+#[test]
+fn clear_member_routing_defaults() -> Result<()> {
+    let mut manifest = sample_manifest();
+    let prefs = crate::routing::RoutingPreferences {
+        prefer_local: true,
+        ..Default::default()
+    };
+    manifest.update_member_policy("worker-a", None, None, None, None, Some(Some(prefs)))?;
+    manifest.update_member_policy("worker-a", None, None, None, None, Some(None))?;
+    let member = manifest.member("worker-a").expect("member exists");
+    assert!(member.routing_preferences.is_none());
+    Ok(())
+}
+
+#[test]
+fn update_member_omitted_flags_preserve_existing() -> Result<()> {
+    let mut manifest = sample_manifest();
+    let prefs = crate::routing::RoutingPreferences {
+        prefer_local: true,
+        ..Default::default()
+    };
+    manifest.update_member_policy(
+        "worker-a",
+        None,
+        None,
+        Some(Some("gemini".to_string())),
+        Some(Some("flash".to_string())),
+        Some(Some(prefs.clone())),
+    )?;
+
+    manifest.update_member_policy(
+        "worker-a",
+        None,
+        Some(Some("opus".to_string())),
+        None,
+        None,
+        None,
+    )?;
+    let member = manifest.member("worker-a").expect("member exists");
+    assert_eq!(member.model.as_deref(), Some("opus"));
+    assert_eq!(member.runtime.as_deref(), Some("codex"));
+    assert_eq!(member.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(member.fallback_model.as_deref(), Some("flash"));
+    assert_eq!(member.routing_preferences, Some(prefs));
+    Ok(())
+}
+
+#[test]
+fn update_member_policy_unknown_member_fails() {
+    let mut manifest = sample_manifest();
+    let result = manifest.update_member_policy("nonexistent", None, None, None, None, None);
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown team member")
+    );
+}
+
+#[test]
+fn update_lead_member_policy() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.update_member_policy(
+        "lead",
+        Some(Some("gemini".to_string())),
+        Some(Some("flash".to_string())),
+        None,
+        None,
+        None,
+    )?;
+    let lead = manifest.member("lead").expect("lead exists");
+    assert_eq!(lead.runtime.as_deref(), Some("gemini"));
+    assert_eq!(lead.model.as_deref(), Some("flash"));
+    Ok(())
+}

@@ -313,19 +313,18 @@ pub fn print_runtime_pressure_profile(profile: &HashMap<RuntimeKind, RuntimePres
 
 pub fn print_routing_decision(decision: &awo_core::routing::RoutingDecision) {
     println!("Routing decision:");
-    println!("- selected runtime: {}", decision.selected_runtime.as_str());
-    println!(
-        "- selected model: {}",
-        decision.selected_model.as_deref().unwrap_or("-")
-    );
-    println!(
-        "- source: {}",
-        match decision.source {
-            awo_core::RoutingSource::Primary => "primary",
-            awo_core::RoutingSource::Fallback => "fallback",
-        }
-    );
-    println!("- reason: {}", decision.reason);
+    print_routing_decision_fields(decision);
+}
+
+pub fn print_routing_preview(
+    decision: &awo_core::routing::RoutingDecision,
+    preferences: &awo_core::RoutingPreferences,
+    context: &awo_core::RoutingContext,
+) {
+    println!("Routing preview:");
+    print_routing_preferences(preferences);
+    print_routing_pressure(context);
+    print_routing_decision(decision);
 }
 
 pub fn print_routing_recommendation(recommendation: &awo_core::RoutingRecommendation) {
@@ -336,23 +335,8 @@ pub fn print_routing_recommendation(recommendation: &awo_core::RoutingRecommenda
         "- task id: {}",
         recommendation.task_id.as_deref().unwrap_or("-")
     );
-    println!(
-        "- preferences: prefer_local={} avoid_metered={} max_cost_tier={} allow_fallback={}",
-        recommendation.preferences.prefer_local,
-        recommendation.preferences.avoid_metered,
-        recommendation
-            .preferences
-            .max_cost_tier
-            .map(|tier| tier.as_str())
-            .unwrap_or("-"),
-        recommendation.preferences.allow_fallback
-    );
-    if !recommendation.context.is_empty() {
-        println!("- runtime pressure:");
-        for (runtime, pressure) in &recommendation.context.pressure {
-            println!("  - {}={}", runtime.as_str(), pressure.as_str());
-        }
-    }
+    print_routing_preferences(&recommendation.preferences);
+    print_routing_pressure(&recommendation.context);
     print_routing_decision(&recommendation.decision);
 }
 
@@ -597,6 +581,50 @@ fn print_diagnostics(diagnostics: &[Diagnostic]) {
             diagnostic.severity, diagnostic.code, diagnostic.message
         );
     }
+}
+
+fn print_routing_preferences(preferences: &awo_core::RoutingPreferences) {
+    println!("- resolved preferences:");
+    println!("  prefer_local={}", preferences.prefer_local);
+    println!("  avoid_metered={}", preferences.avoid_metered);
+    if let Some(tier) = preferences.max_cost_tier {
+        println!("  max_cost_tier={}", tier.as_str());
+    }
+    println!("  allow_fallback={}", preferences.allow_fallback);
+}
+
+fn print_routing_pressure(context: &awo_core::RoutingContext) {
+    if context.is_empty() {
+        return;
+    }
+
+    let mut entries = context
+        .pressure
+        .iter()
+        .map(|(runtime, pressure)| (runtime.as_str(), pressure.as_str()))
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+
+    println!("- runtime pressure:");
+    for (runtime, pressure) in entries {
+        println!("  - {}={}", runtime, pressure);
+    }
+}
+
+fn print_routing_decision_fields(decision: &awo_core::routing::RoutingDecision) {
+    println!("- selected runtime: {}", decision.selected_runtime.as_str());
+    println!(
+        "- selected model: {}",
+        decision.selected_model.as_deref().unwrap_or("-")
+    );
+    println!(
+        "- source: {}",
+        match decision.source {
+            awo_core::RoutingSource::Primary => "primary",
+            awo_core::RoutingSource::Fallback => "fallback",
+        }
+    );
+    println!("- reason: {}", decision.reason);
 }
 
 fn format_context_files(files: &[awo_core::context::ContextFile]) -> String {

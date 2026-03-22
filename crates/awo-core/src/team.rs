@@ -228,6 +228,36 @@ impl TeamManifest {
         self.tasks.iter_mut().find(|task| task.task_id == task_id)
     }
 
+    pub fn update_member_policy(
+        &mut self,
+        member_id: &str,
+        runtime: Option<Option<String>>,
+        model: Option<Option<String>>,
+        fallback_runtime: Option<Option<String>>,
+        fallback_model: Option<Option<String>>,
+        routing_preferences: Option<Option<crate::routing::RoutingPreferences>>,
+    ) -> Result<()> {
+        let member = self
+            .member_mut(member_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown team member `{member_id}`"))?;
+        if let Some(value) = runtime {
+            member.runtime = value;
+        }
+        if let Some(value) = model {
+            member.model = value;
+        }
+        if let Some(value) = fallback_runtime {
+            member.fallback_runtime = value;
+        }
+        if let Some(value) = fallback_model {
+            member.fallback_model = value;
+        }
+        if let Some(value) = routing_preferences {
+            member.routing_preferences = value;
+        }
+        self.validate()
+    }
+
     pub fn add_member(&mut self, member: TeamMember) -> Result<()> {
         if self.member(&member.member_id).is_some() {
             anyhow::bail!("team member `{}` already exists", member.member_id);
