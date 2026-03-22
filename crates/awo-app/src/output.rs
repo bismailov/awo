@@ -363,11 +363,14 @@ pub fn print_team_manifests(manifests: &[TeamManifest]) {
 
 pub fn print_team_member(member: &TeamMember) {
     println!("Team member: {}", member.member_id);
-    println!("- role: {}", member.role);
-    println!("- runtime: {}", member.runtime.as_deref().unwrap_or("-"));
-    println!("- model: {}", member.model.as_deref().unwrap_or("-"));
-    println!("- mode: {}", member.execution_mode);
-    println!("- read_only: {}", member.read_only);
+    println!(
+        "- role={} runtime={} model={} mode={} read_only={}",
+        member.role,
+        member.runtime.as_deref().unwrap_or("-"),
+        member.model.as_deref().unwrap_or("-"),
+        member.execution_mode,
+        member.read_only
+    );
     println!(
         "- scope: {}",
         if member.write_scope.is_empty() {
@@ -591,30 +594,30 @@ pub fn print_team_teardown_result(team_id: &str, result: &TeamTeardownResult) {
 }
 
 pub fn print_team_task_execution(execution: &TeamTaskExecution) {
-    println!("Team task execution:");
-    println!("- team id: {}", execution.team_id);
-    println!("- task id: {}", execution.task_id);
-    println!("- owner id: {}", execution.owner_id);
-    println!("- runtime: {}", execution.runtime);
-    if let Some(model) = &execution.model {
-        println!("- model: {}", model);
-    }
     println!(
-        "- routing source: {}",
+        "Team task execution: {} / {}",
+        execution.team_id, execution.task_id
+    );
+    println!("- owner: {}", execution.owner_id);
+    println!(
+        "- routed to: {} model={} (source: {})",
+        execution.runtime,
+        execution.model.as_deref().unwrap_or("-"),
         match execution.routing_source {
             awo_core::RoutingSource::Primary => "primary",
             awo_core::RoutingSource::Fallback => "fallback",
         }
     );
-    println!("- routing reason: {}", execution.routing_reason);
-    println!("- slot id: {}", execution.slot_id);
-    println!("- branch: {}", execution.branch_name);
-    println!("- acquired slot: {}", execution.acquired_slot);
+    println!("  reason: {}", execution.routing_reason);
     println!(
-        "- session id: {}",
-        execution.session_id.as_deref().unwrap_or("-")
+        "- slot: {} (branch: {}) acquired={}",
+        execution.slot_id, execution.branch_name, execution.acquired_slot
     );
-    println!("- session status: {}", execution.session_status);
+    println!(
+        "- session: {} ({})",
+        execution.session_id.as_deref().unwrap_or("-"),
+        execution.session_status
+    );
 }
 
 fn print_diagnostics(diagnostics: &[Diagnostic]) {

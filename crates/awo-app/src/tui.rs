@@ -67,6 +67,7 @@ pub fn run_tui() -> Result<()> {
 
     loop {
         let snapshot = core.snapshot()?;
+        clamp_selection(&mut state, &snapshot);
         terminal.draw(|frame| render(frame, &snapshot, &state))?;
 
         if event::poll(Duration::from_millis(200))?
@@ -77,11 +78,13 @@ pub fn run_tui() -> Result<()> {
                 KeyCode::Up | KeyCode::Char('k') => {
                     if state.selected_repo_index > 0 {
                         state.selected_repo_index -= 1;
+                        state.selected_team_index = 0;
                     }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
                         state.selected_repo_index += 1;
+                        state.selected_team_index = 0;
                     }
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
@@ -170,9 +173,23 @@ fn visible_teams<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a Tea
 
 fn selected_team<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a TeamSummary> {
     let teams = visible_teams(snapshot, state);
-    teams
-        .get(state.selected_team_index.min(teams.len().saturating_sub(1)))
-        .copied()
+    teams.get(state.selected_team_index).copied()
+}
+
+fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
+    let repo_count = snapshot.registered_repos.len();
+    if repo_count > 0 {
+        state.selected_repo_index = state.selected_repo_index.min(repo_count - 1);
+    } else {
+        state.selected_repo_index = 0;
+    }
+
+    let team_count = visible_teams(snapshot, state).len();
+    if team_count > 0 {
+        state.selected_team_index = state.selected_team_index.min(team_count - 1);
+    } else {
+        state.selected_team_index = 0;
+    }
 }
 
 fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
@@ -271,28 +288,24 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     ])
     .split(vertical[3]);
 
-    let repo_items = snapshot
-        .registered_repos
-        .iter()
-        .enumerate()
-        .map(|(index, repo)| {
-            render_repo_item(
-                repo,
-                Some(index)
-                    == selected_repo.map(|selected| {
-                        snapshot
-                            .registered_repos
-                            .iter()
-                            .position(|candidate| candidate.id == selected.id)
-                            .unwrap_or_default()
-                    }),
-            )
-        })
-        .collect::<Vec<_>>();
+    let repo_items = if snapshot.registered_repos.is_empty() {
+        vec![ListItem::new("(no repos - press 'a' to add)")]
+    } else {
+        snapshot
+            .registered_repos
+            .iter()
+            .enumerate()
+            .map(|(index, repo)| render_repo_item(repo, index == state.selected_repo_index))
+            .collect::<Vec<_>>()
+    };
     let repos =
         List::new(repo_items).block(Block::default().borders(Borders::ALL).title("Repositories"));
     frame.render_widget(repos, top[0]);
 
+    let repo_detail_title = match selected_repo {
+        Some(repo) => format!("Repo: {}", repo.name),
+        None => "Repo (none)".to_string(),
+    };
     let repo_details = render_repo_detail(
         selected_repo,
         snapshot.teams.as_slice(),
@@ -301,18 +314,22 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let repo_detail_widget = Paragraph::new(repo_details).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Selected Repo"),
+            .title(repo_detail_title),
     );
     frame.render_widget(repo_detail_widget, top[1]);
 
+    let team_detail_title = match selected_team {
+        Some(team) => format!("Team: {}", team.team_id),
+        None => "Team (none)".to_string(),
+    };
     let team_detail_widget = Paragraph::new(render_team_detail(selected_team)).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Selected Team"),
+            .title(team_detail_title),
     );
     frame.render_widget(team_detail_widget, top[2]);
 
-    let slot_items = snapshot
+    let slot_items: Vec<ListItem> = snapshot
         .slots
         .iter()
         .filter(|slot| selected_repo.is_none_or(|repo| repo.id == slot.repo_id))
@@ -327,11 +344,16 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                 slot.fingerprint_status
             ))
         })
-        .collect::<Vec<_>>();
+        .collect();
+    let slot_items = if slot_items.is_empty() {
+        vec![ListItem::new("(no slots)")]
+    } else {
+        slot_items
+    };
     let slots = List::new(slot_items).block(Block::default().borders(Borders::ALL).title("Slots"));
     frame.render_widget(slots, top[3]);
 
-    let session_items = snapshot
+    let session_items: Vec<ListItem> = snapshot
         .sessions
         .iter()
         .filter(|session| {
@@ -358,77 +380,82 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                     .unwrap_or_else(|| "-".to_string())
             ))
         })
-        .collect::<Vec<_>>();
+        .collect();
+    let session_items = if session_items.is_empty() {
+        vec![ListItem::new("(no sessions)")]
+    } else {
+        session_items
+    };
     let sessions =
         List::new(session_items).block(Block::default().borders(Borders::ALL).title("Sessions"));
     frame.render_widget(sessions, bottom[0]);
 
-    let team_items = visible_teams
-        .iter()
-        .map(|team| {
-            ListItem::new(format!(
-                "{} {} [{}] {} members={} open={}/{} write={}",
-                if selected_team.is_some_and(|selected| selected.team_id == team.team_id) {
-                    ">"
-                } else {
-                    " "
-                },
-                team.team_id,
-                team.repo_id,
-                team.status,
-                team.member_count,
-                team.open_task_count,
-                team.task_count,
-                team.write_member_count
-            ))
-        })
-        .collect::<Vec<_>>();
+    let team_items: Vec<ListItem> = if visible_teams.is_empty() {
+        vec![ListItem::new("(no teams)")]
+    } else {
+        visible_teams
+            .iter()
+            .map(|team| {
+                let marker =
+                    if selected_team.is_some_and(|selected| selected.team_id == team.team_id) {
+                        ">"
+                    } else {
+                        " "
+                    };
+                ListItem::new(format!(
+                    "{} {} {} {}/{} w={}",
+                    marker,
+                    team.team_id,
+                    team.status,
+                    team.open_task_count,
+                    team.task_count,
+                    team.write_member_count
+                ))
+            })
+            .collect()
+    };
     let teams = List::new(team_items).block(Block::default().borders(Borders::ALL).title("Teams"));
     frame.render_widget(teams, bottom[1]);
 
-    let warning_items = snapshot
+    let warning_items: Vec<ListItem> = snapshot
         .review
         .warnings
         .iter()
         .rev()
         .take(10)
         .map(|warning| ListItem::new(warning.message.clone()))
-        .collect::<Vec<_>>();
+        .collect();
+    let warning_items = if warning_items.is_empty() {
+        vec![ListItem::new("(no warnings)")]
+    } else {
+        warning_items
+    };
     let warnings =
         List::new(warning_items).block(Block::default().borders(Borders::ALL).title("Warnings"));
     frame.render_widget(warnings, bottom[2]);
 
-    let message_items = state
-        .messages
-        .iter()
-        .rev()
-        .take(12)
-        .map(|message| ListItem::new(message.clone()))
-        .collect::<Vec<_>>();
+    let message_items: Vec<ListItem> = if state.messages.is_empty() {
+        vec![ListItem::new("(no events yet)")]
+    } else {
+        state
+            .messages
+            .iter()
+            .rev()
+            .take(12)
+            .map(|message| ListItem::new(message.clone()))
+            .collect()
+    };
     let messages =
         List::new(message_items).block(Block::default().borders(Borders::ALL).title("Event Log"));
     frame.render_widget(messages, bottom[3]);
 }
 
 fn render_repo_item(repo: &RepoSummary, selected: bool) -> ListItem<'static> {
-    let manifest = if repo.shared_manifest_present {
-        "shared"
-    } else {
-        "derived"
-    };
-    let mcp = if repo.mcp_config_present { "yes" } else { "no" };
+    let marker = if selected { ">" } else { " " };
+    let mcp = if repo.mcp_config_present { "+" } else { "" };
     ListItem::new(format!(
-        "{} {} [{}] base={} remote={} manifest={} ctx={} packs={} skills={} mcp={}",
-        if selected { ">" } else { " " },
-        repo.name,
-        repo.id,
-        repo.default_base_branch,
-        repo.remote_label,
-        manifest,
-        repo.entrypoint_count,
-        repo.context_pack_count,
-        repo.shared_skill_count,
-        mcp
+        "{} {} {} {}{}",
+        marker, repo.name, repo.remote_label, repo.default_base_branch, mcp,
     ))
 }
 
@@ -438,7 +465,7 @@ fn render_repo_detail(
     runtime_capabilities: &[RuntimeCapabilityDescriptor],
 ) -> Vec<Line<'static>> {
     let Some(repo) = repo else {
-        return vec![Line::from("No repo selected.")];
+        return vec![Line::from("Press 'a' to add the current directory.")];
     };
 
     let mut lines = vec![
@@ -512,7 +539,7 @@ fn render_repo_detail(
 
 fn render_team_detail(team: Option<&TeamSummary>) -> Vec<Line<'static>> {
     let Some(team) = team else {
-        return vec![Line::from("No team selected.")];
+        return vec![Line::from("Use h/l to select a team.")];
     };
 
     let mut lines = vec![

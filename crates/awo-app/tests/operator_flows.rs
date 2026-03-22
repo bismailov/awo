@@ -1451,3 +1451,84 @@ fn team_member_show_returns_member() {
         env.run(&["team", "member", "show", "nonexistent-team", "test-member"]);
     assert_eq!(missing_team_result["ok"], false);
 }
+
+#[test]
+fn team_member_show_text_mode_is_compact() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-show-text-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string");
+
+    env.run(&["team", "init", repo_id, "tm-text-team", "Objective"]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "tm-text-team",
+        "worker-text",
+        "implementer",
+        "--runtime",
+        "claude",
+        "--model",
+        "sonnet",
+        "--write-scope",
+        "src/",
+    ]);
+
+    let text_output = env.run_text(&["team", "member", "show", "tm-text-team", "worker-text"]);
+    assert!(text_output.contains("Team member: worker-text"));
+    assert!(text_output.contains(
+        "- role=implementer runtime=claude model=sonnet mode=external_slots read_only=false"
+    ));
+    assert!(text_output.contains("- scope: src/"));
+}
+
+#[test]
+fn team_task_start_text_mode_is_compact() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("task-start-text-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string");
+
+    env.run(&[
+        "team",
+        "init",
+        repo_id,
+        "start-text-team",
+        "Objective",
+        "--lead-runtime",
+        "shell",
+    ]);
+    env.run(&[
+        "team",
+        "task",
+        "add",
+        "start-text-team",
+        "task-1",
+        "lead",
+        "Title",
+        "Summary",
+        "--deliverable",
+        "Output",
+    ]);
+
+    let text_output = env.run_text(&[
+        "team",
+        "task",
+        "start",
+        "start-text-team",
+        "task-1",
+        "--dry-run",
+    ]);
+
+    assert!(text_output.contains("Team task execution: start-text-team / task-1"));
+    assert!(text_output.contains("- owner: lead"));
+    assert!(text_output.contains("- routed to: shell model=- (source: primary)"));
+    assert!(text_output.contains("reason:"));
+    assert!(text_output.contains("acquired=true"));
+    assert!(text_output.contains("(prepared)"));
+}
