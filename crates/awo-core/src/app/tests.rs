@@ -76,6 +76,82 @@ fn create_repo(root: &Path, name: &str) -> Result<PathBuf> {
     Ok(repo_dir)
 }
 
+fn team_task_start_options(team_id: &str, task_id: &str) -> TeamTaskStartOptions {
+    TeamTaskStartOptions {
+        team_id: team_id.to_string(),
+        task_id: task_id.to_string(),
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+        attach_context: false,
+        routing_preferences: crate::routing::RoutingPreferences::default(),
+    }
+}
+
+fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
+    let repo_dir = create_repo(&core.paths().data_dir, &format!("{team_id}-repo"))?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .find(|repo| repo.name == format!("{team_id}-repo"))
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        team_id,
+        "Exercise routing preferences",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        team_id,
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("claude".to_string()),
+            model: Some("sonnet".to_string()),
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: true,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: Some("gemini".to_string()),
+            fallback_model: Some("flash".to_string()),
+        },
+    )?;
+    core.add_team_task(
+        team_id,
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Review task".to_string(),
+            summary: "Review the routing behavior.".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: true,
+            write_scope: Vec::new(),
+            deliverable: "A routing decision".to_string(),
+            verification: vec!["true".to_string()],
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+        },
+    )?;
+    Ok(())
+}
+
 #[test]
 fn team_member_and_task_mutations_persist() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
@@ -211,14 +287,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
     )?;
 
     let (manifest, slot_outcome, session_outcome, execution) =
-        core.start_team_task(TeamTaskStartOptions {
-            team_id: "team-beta".to_string(),
-            task_id: "task-1".to_string(),
-            strategy: "fresh".to_string(),
-            dry_run: false,
-            launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
-            attach_context: false,
-        })?;
+        core.start_team_task(team_task_start_options("team-beta", "task-1"))?;
 
     assert!(slot_outcome.is_some());
     assert_eq!(execution.runtime, "shell");
@@ -308,17 +377,53 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
         },
     )?;
 
-    let result = core.start_team_task(TeamTaskStartOptions {
-        team_id: "team-beta".to_string(),
-        task_id: "task-1".to_string(),
-        strategy: "fresh".to_string(),
-        dry_run: false,
-        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
-        attach_context: false,
-    });
+    let result = core.start_team_task(team_task_start_options("team-beta", "task-1"));
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("has no runtime"));
+    Ok(())
+}
+
+#[test]
+fn start_team_task_prefers_fallback_under_cost_ceiling() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-routing-fallback")?;
+
+    let mut options = team_task_start_options("team-routing-fallback", "task-1");
+    options.dry_run = true;
+    options.routing_preferences.max_cost_tier = Some(crate::capabilities::CostTier::Standard);
+
+    let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
+
+    assert_eq!(execution.runtime, "gemini");
+    assert_eq!(execution.model.as_deref(), Some("flash"));
+    assert_eq!(
+        execution.routing_source,
+        crate::routing::RoutingSource::Fallback
+    );
+    assert_eq!(execution.session_status, "prepared");
+    Ok(())
+}
+
+#[test]
+fn start_team_task_no_fallback_preserves_primary_selection() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-routing-primary")?;
+
+    let mut options = team_task_start_options("team-routing-primary", "task-1");
+    options.dry_run = true;
+    options.routing_preferences.max_cost_tier = Some(crate::capabilities::CostTier::Standard);
+    options.routing_preferences.allow_fallback = false;
+
+    let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
+
+    assert_eq!(execution.runtime, "claude");
+    assert_eq!(execution.model.as_deref(), Some("sonnet"));
+    assert_eq!(
+        execution.routing_source,
+        crate::routing::RoutingSource::Primary
+    );
+    assert_eq!(execution.session_status, "prepared");
     Ok(())
 }
 

@@ -107,6 +107,7 @@ pub struct TeamTaskStartOptions {
     pub dry_run: bool,
     pub launch_mode: String,
     pub attach_context: bool,
+    pub routing_preferences: crate::routing::RoutingPreferences,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

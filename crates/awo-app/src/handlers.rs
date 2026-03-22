@@ -512,7 +512,17 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 dry_run,
                 launch_mode,
                 no_auto_context,
+                prefer_local,
+                avoid_metered,
+                max_cost_tier,
+                no_fallback,
             } => {
+                let routing_preferences = RoutingPreferences {
+                    allow_fallback: !no_fallback,
+                    prefer_local,
+                    avoid_metered,
+                    max_cost_tier: parse_optional_cost_tier(max_cost_tier.as_deref())?,
+                };
                 let (manifest, slot_outcome, session_outcome, execution) =
                     core.start_team_task(TeamTaskStartOptions {
                         team_id,
@@ -525,6 +535,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                                 .to_string()
                         }),
                         attach_context: !no_auto_context,
+                        routing_preferences,
                     })?;
                 if output.json {
                     #[derive(Serialize)]
@@ -809,5 +820,11 @@ fn parse_optional_runtime(runtime: Option<&str>) -> Result<Option<String>> {
                 .map(|runtime| runtime.as_str().to_string())
                 .map_err(anyhow::Error::msg)
         })
+        .transpose()
+}
+
+fn parse_optional_cost_tier(cost_tier: Option<&str>) -> Result<Option<CostTier>> {
+    cost_tier
+        .map(|value| value.parse::<CostTier>().map_err(anyhow::Error::msg))
         .transpose()
 }

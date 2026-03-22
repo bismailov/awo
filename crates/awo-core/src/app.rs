@@ -497,7 +497,7 @@ impl AppCore {
             let routing_decision = crate::routing::route_runtime(
                 primary_target,
                 fallback_target,
-                &crate::routing::RoutingPreferences::default(),
+                &options.routing_preferences,
             );
             let runtime = routing_decision.selected_runtime;
             let runtime_name = runtime.as_str().to_string();

@@ -258,6 +258,14 @@ pub enum TeamTaskCommand {
         launch_mode: Option<String>,
         #[arg(long)]
         no_auto_context: bool,
+        #[arg(long)]
+        prefer_local: bool,
+        #[arg(long)]
+        avoid_metered: bool,
+        #[arg(long)]
+        max_cost_tier: Option<String>,
+        #[arg(long)]
+        no_fallback: bool,
     },
 }
 
