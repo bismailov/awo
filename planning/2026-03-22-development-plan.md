@@ -30,10 +30,10 @@ Its wedge is not "chat with one model" and not "manually create worktrees." Its 
 Longer term, `awo` should evolve from a local operator console into a middleware layer that can present itself as one virtual coding agent while internally orchestrating slots, runtimes, team policies, and review flows.
 
 See also:
-- [PRODUCT_SPEC.md](PRODUCT_SPEC.md)
-- [CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
-- [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)
-- [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
+- [docs/product-spec.md](../docs/product-spec.md)
+- [docs/core-architecture.md](../docs/core-architecture.md)
+- [docs/middleware-mode.md](../docs/middleware-mode.md)
+- [docs/subagent-orchestration.md](../docs/subagent-orchestration.md)
 
 ## What We Wanted
 
@@ -57,8 +57,8 @@ The initial roadmap was:
 6. hardening
 
 See:
-- [V1_ROADMAP.md](V1_ROADMAP.md)
-- [V1_CONTROL_SURFACE.md](V1_CONTROL_SURFACE.md)
+- [docs/v1-roadmap.md](../docs/v1-roadmap.md)
+- [docs/v1-control-surface.md](../docs/v1-control-surface.md)
 
 ## What We Achieved
 
@@ -344,12 +344,12 @@ Good targets:
 
 A fresh implementation agent should start with these files:
 
-1. [README.md](README.md)
-2. [PRODUCT_SPEC.md](PRODUCT_SPEC.md)
-3. [CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
-4. [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)
-5. [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
-6. [TOKIO_DECISION.md](TOKIO_DECISION.md)
+1. [README.md](../README.md)
+2. [docs/product-spec.md](../docs/product-spec.md)
+3. [docs/core-architecture.md](../docs/core-architecture.md)
+4. [docs/middleware-mode.md](../docs/middleware-mode.md)
+5. [docs/team-manifest-spec.md](../docs/team-manifest-spec.md)
+6. [docs/tokio-decision.md](../docs/tokio-decision.md)
 7. this file
 
 Then inspect the latest commits on `main` to understand the most recent hardening wave.

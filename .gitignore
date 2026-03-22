@@ -1,9 +1,13 @@
 /target
 /.awo
 /.DS_Store
-/task_plan.md
-/findings.md
-/progress.md
-/CONVENTIONS.md
-/SALES_ERP_RESEARCH.md
-/BAT_TRIAL_FINDINGS.md
+
+# Planning scratch files (not version-controlled)
+/planning/2026-03-21-task-plan.md
+/planning/2026-03-21-progress.md
+/planning/2026-03-21-conventions.md
+
+# Research scratch files (not version-controlled)
+/analysis/2026-03-21-findings.md
+/analysis/2026-03-21-bat-trial-findings.md
+/analysis/2026-03-21-sales-erp-research.md

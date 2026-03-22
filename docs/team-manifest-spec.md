@@ -40,7 +40,7 @@ But that should layer on top of the controller model rather than replace it.
 
 ## Team Manifest Shape
 
-The first implementation lives in [team.rs](crates/awo-core/src/team.rs).
+The first implementation lives in [team.rs](../crates/awo-core/src/team.rs).
 
 The manifest stores:
 - team identity

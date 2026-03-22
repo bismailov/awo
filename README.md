@@ -29,7 +29,7 @@ It currently manages:
 
 ## Architecture Direction: "JSON inside, MCP outside"
 
-To support building `awo` out into a true middleware layer (see [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)), we are standardizing on a **"JSON inside, MCP outside"** pattern:
+To support building `awo` out into a true middleware layer (see [docs/middleware-mode.md](docs/middleware-mode.md)), we are standardizing on a **"JSON inside, MCP outside"** pattern:
 - **JSON Inside:** The core CLI outputs predictable, structured JSON envelopes for all state changes, errors, and events. This makes it a robust, token-efficient controller for local automation, testbeds, and direct invocation by nearby scripts.
 - **MCP Outside:** The Model Context Protocol (MCP) acts as our facade. External virtual agents or orchestrated systems connect to `awo` through MCP to safely acquire slots, discover context, and execute sessions without needing to know the low-level CLI structure.
 
@@ -69,12 +69,12 @@ What is not done yet:
 - richer multi-turn runtime adapters beyond one-shot task execution
 
 See also:
-- [MIDDLEWARE_MODE.md](MIDDLEWARE_MODE.md)
-- [INTERFACE_STRATEGY.md](INTERFACE_STRATEGY.md)
-- [SUBAGENT_ORCHESTRATION.md](SUBAGENT_ORCHESTRATION.md)
-- [TEAM_MANIFEST_SPEC.md](TEAM_MANIFEST_SPEC.md)
-- [TOKIO_DECISION.md](TOKIO_DECISION.md)
-- [PUBLIC_TRIAL_FINDINGS.md](PUBLIC_TRIAL_FINDINGS.md)
+- [docs/middleware-mode.md](docs/middleware-mode.md)
+- [docs/interface-strategy.md](docs/interface-strategy.md)
+- [docs/subagent-orchestration.md](docs/subagent-orchestration.md)
+- [docs/team-manifest-spec.md](docs/team-manifest-spec.md)
+- [docs/tokio-decision.md](docs/tokio-decision.md)
+- [analysis/2026-03-21-public-trial-findings.md](analysis/2026-03-21-public-trial-findings.md)
 
 ## Quick Start
 
