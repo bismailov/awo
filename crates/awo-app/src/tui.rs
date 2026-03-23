@@ -10,7 +10,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use std::io;
 use std::time::Duration;
 use tracing::info;
@@ -49,6 +49,10 @@ struct TuiState {
     selected_team_index: usize,
     selected_slot_index: usize,
     selected_session_index: usize,
+    log_content: Option<String>,
+    log_session_id: Option<String>,
+    log_path: Option<String>,
+    show_log_panel: bool,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -73,6 +77,10 @@ pub fn run_tui() -> Result<()> {
         selected_team_index: 0,
         selected_slot_index: 0,
         selected_session_index: 0,
+        log_content: None,
+        log_session_id: None,
+        log_path: None,
+        show_log_panel: false,
     };
 
     info!("TUI started");
@@ -166,7 +174,37 @@ pub fn run_tui() -> Result<()> {
                     }
                 }
                 KeyCode::Enter => {
-                    if let Some(slot) = selected_slot(&snapshot, &state) {
+                    if state.focus == TuiFocus::Sessions {
+                        if let Some(session) = selected_session(&snapshot, &state) {
+                            let outcome = core.dispatch(Command::SessionLog {
+                                session_id: session.id.clone(),
+                                lines: Some(100),
+                                stream: None,
+                            });
+                            match outcome {
+                                Ok(outcome) => {
+                                    for event in &outcome.events {
+                                        if let DomainEvent::SessionLogLoaded {
+                                            content,
+                                            log_path,
+                                            session_id,
+                                            ..
+                                        } = event
+                                        {
+                                            state.log_content = Some(content.clone());
+                                            state.log_session_id = Some(session_id.clone());
+                                            state.log_path = Some(log_path.clone());
+                                            state.show_log_panel = true;
+                                        }
+                                    }
+                                    append_events(&mut state, outcome.events);
+                                }
+                                Err(error) => {
+                                    state.status = format!("Error: {error:#}");
+                                }
+                            }
+                        }
+                    } else if let Some(slot) = selected_slot(&snapshot, &state) {
                         apply_command(
                             &mut core,
                             &mut state,
@@ -180,6 +218,11 @@ pub fn run_tui() -> Result<()> {
                                 attach_context: true,
                             },
                         );
+                    }
+                }
+                KeyCode::Esc => {
+                    if state.show_log_panel {
+                        state.show_log_panel = false;
                     }
                 }
                 KeyCode::Char('x') => {
@@ -223,11 +266,43 @@ pub fn run_tui() -> Result<()> {
                     );
                 }
                 KeyCode::Char('r') => {
-                    apply_command(
-                        &mut core,
-                        &mut state,
-                        Command::ReviewStatus { repo_id: None },
-                    );
+                    if state.show_log_panel {
+                        if let Some(session_id) = &state.log_session_id {
+                            let outcome = core.dispatch(Command::SessionLog {
+                                session_id: session_id.clone(),
+                                lines: Some(100),
+                                stream: None,
+                            });
+                            match outcome {
+                                Ok(outcome) => {
+                                    for event in &outcome.events {
+                                        if let DomainEvent::SessionLogLoaded {
+                                            content,
+                                            log_path,
+                                            session_id,
+                                            ..
+                                        } = event
+                                        {
+                                            state.log_content = Some(content.clone());
+                                            state.log_session_id = Some(session_id.clone());
+                                            state.log_path = Some(log_path.clone());
+                                            state.show_log_panel = true;
+                                        }
+                                    }
+                                    append_events(&mut state, outcome.events);
+                                }
+                                Err(error) => {
+                                    state.status = format!("Error: {error:#}");
+                                }
+                            }
+                        }
+                    } else {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::ReviewStatus { repo_id: None },
+                        );
+                    }
                 }
                 KeyCode::Char('c') => {
                     if let Some(repo) = selected_repo(&snapshot, &state) {
@@ -389,7 +464,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "awo V1 | q quit | Tab focus | s acquire | Enter start | x cancel | X release | r refresh | {}",
+        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title("Status"));
@@ -647,6 +722,18 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let messages =
         List::new(message_items).block(Block::default().borders(Borders::ALL).title("Event Log"));
     frame.render_widget(messages, bottom[3]);
+
+    if state.show_log_panel {
+        let title = format!(
+            "Log: {} (Esc to close, r to refresh)",
+            state.log_session_id.as_deref().unwrap_or("?")
+        );
+        let content = state.log_content.as_deref().unwrap_or("(empty)");
+        let log_widget = Paragraph::new(content)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(log_widget, vertical[3]);
+    }
 }
 
 fn render_repo_item(repo: &RepoSummary, selected: bool) -> ListItem<'static> {
