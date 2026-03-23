@@ -20,7 +20,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let repo_root = PathBuf::from(&repo.repo_root);
         let repo_fingerprint = fingerprint_for_dir(&repo_root)?;
 
@@ -158,11 +158,11 @@ impl<'a> CommandRunner<'a> {
         let mut slot = self
             .store
             .get_slot(&slot_id)?
-            .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&slot.repo_id))?;
         let slot_path = PathBuf::from(&slot.slot_path);
         self.sync_runtime_state(Some(&slot.repo_id))?;
         self.refresh_slot_state(&mut slot)?;
@@ -170,7 +170,7 @@ impl<'a> CommandRunner<'a> {
         let sessions = self.store.list_sessions_for_slot(&slot.id)?;
         if sessions.iter().any(|session| session.blocks_release()) {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` still has pending session(s); refusing to release"
+                "slot `{slot_id}` still has pending session(s); cancel them with `awo session cancel <session_id>` before releasing"
             )));
         }
 
@@ -181,7 +181,7 @@ impl<'a> CommandRunner<'a> {
         };
         if !clean {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` is dirty; refusing to release"
+                "slot `{slot_id}` has uncommitted changes; commit or stash them, then run `awo slot refresh {slot_id}` before releasing"
             )));
         }
 
@@ -221,11 +221,11 @@ impl<'a> CommandRunner<'a> {
         let mut slot = self
             .store
             .get_slot(&slot_id)?
-            .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&slot.repo_id))?;
         let slot_path = PathBuf::from(&slot.slot_path);
         let mut resynced = false;
 
@@ -235,13 +235,14 @@ impl<'a> CommandRunner<'a> {
         {
             if !git::is_clean(Path::new(&repo.repo_root))? {
                 return Err(AwoError::invalid_state(format!(
-                    "repo `{}` has uncommitted changes; commit or stash them before refreshing released warm slots",
-                    repo.id
+                    "repo `{}` has uncommitted changes; run `git -C {} stash` or commit them before refreshing released warm slots",
+                    repo.id, repo.repo_root
                 )));
             }
             if !git::is_clean(&slot_path)? {
                 return Err(AwoError::invalid_state(format!(
-                    "slot `{slot_id}` is dirty; refusing to refresh"
+                    "slot `{slot_id}` has uncommitted changes; commit or stash them in `{}` before refreshing",
+                    slot.slot_path
                 )));
             }
             git::detach_worktree(&slot_path, &slot.base_branch)?;
@@ -288,7 +289,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&slot.repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&slot.repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&slot.repo_id))?;
 
         let slot_path = Path::new(&slot.slot_path);
         if !slot_path.exists() {

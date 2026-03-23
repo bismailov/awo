@@ -1,6 +1,6 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::diagnostics::DiagnosticSeverity;
-use crate::error::{AwoError, AwoResult};
+use crate::error::AwoResult;
 use crate::events::DomainEvent;
 use crate::skills::{
     RuntimeSkillRoots, SkillLinkMode, SkillRuntime, discover_repo_skills, doctor_repo_skills,
@@ -13,7 +13,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         self.store.insert_action(
             "skills_list",
@@ -44,7 +44,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let runtimes = runtime
@@ -100,7 +100,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let report = link_repo_skills(&catalog, runtime, &roots, mode)?;
@@ -145,7 +145,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let report = sync_repo_skills(&catalog, runtime, &roots, mode)?;

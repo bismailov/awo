@@ -1,5 +1,5 @@
 use super::{CommandOutcome, CommandRunner};
-use crate::error::{AwoError, AwoResult};
+use crate::error::AwoResult;
 use crate::events::DomainEvent;
 use crate::git;
 use crate::repo::{default_clone_destination, register_repo};
@@ -90,7 +90,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         git::fetch_repo(Path::new(&repo.repo_root))?;
         let git = git::discover_repo(Path::new(&repo.repo_root))?;
         let result = register_repo(&self.config.paths, PathBuf::from(&repo.repo_root), git)?;

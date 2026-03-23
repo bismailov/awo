@@ -239,6 +239,20 @@ pub fn print_sessions(snapshot: &AppSnapshot, repo_filter: Option<&str>) {
     }
 }
 
+pub fn print_session_log(outcome: &CommandOutcome) {
+    for event in &outcome.events {
+        if let DomainEvent::SessionLogLoaded {
+            content, log_path, ..
+        } = event
+        {
+            println!("--- log: {log_path} ---");
+            println!("{content}");
+            println!("--- end ---");
+            return;
+        }
+    }
+}
+
 pub fn print_review(review: &ReviewSummary) {
     println!();
     println!("Review summary:");

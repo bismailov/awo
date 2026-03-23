@@ -389,6 +389,31 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                 },
             }),
         },
+        ToolDefinition {
+            name: "get_session_log".to_string(),
+            description: "Read the last N lines from a session's output log.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "The session identifier."
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines to return from the end of the log.",
+                        "default": 50
+                    },
+                    "stream": {
+                        "type": "string",
+                        "enum": ["stdout", "stderr"],
+                        "description": "Which output stream to read.",
+                        "default": "stdout"
+                    }
+                },
+                "required": ["session_id"],
+            }),
+        },
     ]
 }
 
@@ -497,6 +522,19 @@ fn map_tool_to_command(
             let repo_id = optional_string(args, "repo_id");
             Ok(awo_core::Command::ReviewStatus { repo_id })
         }
+        "get_session_log" => {
+            let session_id = require_string(args, "session_id")?;
+            let lines = args
+                .get("lines")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            let stream = optional_string(args, "stream");
+            Ok(awo_core::Command::SessionLog {
+                session_id,
+                lines,
+                stream,
+            })
+        }
         _ => Err(format!("unknown tool: {tool_name}")),
     }
 }
@@ -603,8 +641,8 @@ mod tests {
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert!(
-            tools.len() >= 8,
-            "expected at least 8 tools, got {}",
+            tools.len() >= 9,
+            "expected at least 9 tools, got {}",
             tools.len()
         );
 
@@ -613,6 +651,7 @@ mod tests {
         assert!(names.contains(&"release_slot"));
         assert!(names.contains(&"start_session"));
         assert!(names.contains(&"get_review_status"));
+        assert!(names.contains(&"get_session_log"));
         assert!(names.contains(&"list_repos"));
         assert!(names.contains(&"list_slots"));
         assert!(names.contains(&"list_sessions"));

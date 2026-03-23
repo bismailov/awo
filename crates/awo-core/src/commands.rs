@@ -1,9 +1,9 @@
 use crate::config::AppConfig;
-use crate::error::AwoResult;
+use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
-use crate::slot::SlotStrategy;
+use crate::slot::{SlotStatus, SlotStrategy};
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -107,6 +107,12 @@ pub enum Command {
     SessionCancel { session_id: String },
     #[serde(rename = "session.delete")]
     SessionDelete { session_id: String },
+    #[serde(rename = "session.log")]
+    SessionLog {
+        session_id: String,
+        lines: Option<usize>,
+        stream: Option<String>,
+    },
     #[serde(rename = "review.status")]
     ReviewStatus { repo_id: Option<String> },
 }
@@ -134,6 +140,7 @@ impl Command {
             Self::SessionList { .. } => "session.list",
             Self::SessionCancel { .. } => "session.cancel",
             Self::SessionDelete { .. } => "session.delete",
+            Self::SessionLog { .. } => "session.log",
             Self::ReviewStatus { .. } => "review.status",
         }
     }
@@ -178,6 +185,73 @@ impl<'a> CommandRunner<'a> {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn repo_not_found_error(&self, repo_id: &str) -> AwoError {
+        let hint = self
+            .store
+            .list_repositories()
+            .ok()
+            .map(|repos| {
+                if repos.is_empty() {
+                    "no repos registered; run `awo repo add <path>` first".to_string()
+                } else {
+                    let ids: Vec<_> = repos.iter().map(|r| r.id.as_str()).collect();
+                    format!("registered repos: {}", ids.join(", "))
+                }
+            })
+            .unwrap_or_default();
+        if hint.is_empty() {
+            AwoError::unknown_repo(repo_id)
+        } else {
+            AwoError::validation(format!("unknown repo id `{repo_id}`; {hint}"))
+        }
+    }
+
+    pub(super) fn slot_not_found_error(&self, slot_id: &str) -> AwoError {
+        let hint = self
+            .store
+            .list_slots(None)
+            .ok()
+            .map(|slots| {
+                let active: Vec<_> = slots
+                    .iter()
+                    .filter(|s| s.status == SlotStatus::Active)
+                    .map(|s| s.id.as_str())
+                    .collect();
+                if active.is_empty() {
+                    "no active slots; run `awo slot acquire <repo_id> <task>` first".to_string()
+                } else {
+                    format!("active slots: {}", active.join(", "))
+                }
+            })
+            .unwrap_or_default();
+        if hint.is_empty() {
+            AwoError::unknown_slot(slot_id)
+        } else {
+            AwoError::validation(format!("unknown slot id `{slot_id}`; {hint}"))
+        }
+    }
+
+    pub(super) fn session_not_found_error(&self, session_id: &str) -> AwoError {
+        let hint = self
+            .store
+            .list_sessions(None)
+            .ok()
+            .map(|sessions| {
+                if sessions.is_empty() {
+                    "no sessions exist; start one with `awo session start <slot_id> <runtime> <prompt>`".to_string()
+                } else {
+                    let ids: Vec<_> = sessions.iter().take(5).map(|s| s.id.as_str()).collect();
+                    format!("recent sessions: {}", ids.join(", "))
+                }
+            })
+            .unwrap_or_default();
+        if hint.is_empty() {
+            AwoError::unknown_session(session_id)
+        } else {
+            AwoError::validation(format!("unknown session id `{session_id}`; {hint}"))
+        }
     }
 
     pub fn run(&mut self, command: Command) -> AwoResult<CommandOutcome> {
@@ -232,6 +306,11 @@ impl<'a> CommandRunner<'a> {
             Command::SessionList { repo_id } => self.run_session_list(repo_id),
             Command::SessionCancel { session_id } => self.run_session_cancel(session_id),
             Command::SessionDelete { session_id } => self.run_session_delete(session_id),
+            Command::SessionLog {
+                session_id,
+                lines,
+                stream,
+            } => self.run_session_log(session_id, lines, stream),
             Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
         }
     }

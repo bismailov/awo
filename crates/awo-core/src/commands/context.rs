@@ -1,7 +1,7 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::context::{discover_repo_context, doctor_repo_context};
 use crate::diagnostics::DiagnosticSeverity;
-use crate::error::{AwoError, AwoResult};
+use crate::error::AwoResult;
 use crate::events::DomainEvent;
 use std::path::Path;
 
@@ -10,7 +10,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let context = discover_repo_context(Path::new(&repo.repo_root))?;
         self.store.insert_action(
             "context_pack",
@@ -49,7 +49,7 @@ impl<'a> CommandRunner<'a> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
+            .ok_or_else(|| self.repo_not_found_error(&repo_id))?;
         let context = discover_repo_context(Path::new(&repo.repo_root))?;
         let report = doctor_repo_context(&context);
         let error_count = report

@@ -95,6 +95,13 @@ pub enum DomainEvent {
         dirty: usize,
         stale: usize,
     },
+    SessionLogLoaded {
+        session_id: String,
+        stream: String,
+        lines_returned: usize,
+        log_path: String,
+        content: String,
+    },
     TeamArchived {
         team_id: String,
     },
@@ -217,6 +224,14 @@ impl DomainEvent {
             Self::SessionListLoaded { count } => format!("Loaded {count} session(s)."),
             Self::ReviewStatusLoaded { dirty, stale } => {
                 format!("Review status: {dirty} dirty slot(s), {stale} stale slot(s)")
+            }
+            Self::SessionLogLoaded {
+                session_id,
+                stream,
+                lines_returned,
+                ..
+            } => {
+                format!("Loaded {lines_returned} line(s) of {stream} for session `{session_id}`")
             }
             Self::TeamArchived { team_id } => {
                 format!("Team `{team_id}` archived")

@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use awo_core::{
     AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
-    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, TeamSummary,
+    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, RuntimeKind, SessionLaunchMode,
+    SessionSummary, SlotStrategy, SlotSummary, TeamSummary,
 };
 use crossterm::event::{self, Event as CEvent, KeyCode};
 use crossterm::execute;
@@ -31,12 +32,23 @@ impl Drop for TerminalGuard {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TuiFocus {
+    Repos,
+    Teams,
+    Slots,
+    Sessions,
+}
+
 #[derive(Debug)]
 struct TuiState {
     status: String,
     messages: Vec<String>,
+    focus: TuiFocus,
     selected_repo_index: usize,
     selected_team_index: usize,
+    selected_slot_index: usize,
+    selected_session_index: usize,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -56,8 +68,11 @@ pub fn run_tui() -> Result<()> {
             .into_iter()
             .map(|event| event.to_message())
             .collect(),
+        focus: TuiFocus::Repos,
         selected_repo_index: 0,
         selected_team_index: 0,
+        selected_slot_index: 0,
+        selected_session_index: 0,
     };
 
     info!("TUI started");
@@ -75,27 +90,118 @@ pub fn run_tui() -> Result<()> {
         {
             match key.code {
                 KeyCode::Char('q') => break,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if state.selected_repo_index > 0 {
-                        state.selected_repo_index -= 1;
-                        state.selected_team_index = 0;
+                KeyCode::Tab => {
+                    state.focus = match state.focus {
+                        TuiFocus::Repos => TuiFocus::Teams,
+                        TuiFocus::Teams => TuiFocus::Slots,
+                        TuiFocus::Slots => TuiFocus::Sessions,
+                        TuiFocus::Sessions => TuiFocus::Repos,
+                    };
+                }
+                KeyCode::BackTab => {
+                    state.focus = match state.focus {
+                        TuiFocus::Repos => TuiFocus::Sessions,
+                        TuiFocus::Teams => TuiFocus::Repos,
+                        TuiFocus::Slots => TuiFocus::Teams,
+                        TuiFocus::Sessions => TuiFocus::Slots,
+                    };
+                }
+                KeyCode::Up | KeyCode::Char('k') => match state.focus {
+                    TuiFocus::Repos => {
+                        if state.selected_repo_index > 0 {
+                            state.selected_repo_index -= 1;
+                        }
+                    }
+                    TuiFocus::Teams => {
+                        if state.selected_team_index > 0 {
+                            state.selected_team_index -= 1;
+                        }
+                    }
+                    TuiFocus::Slots => {
+                        if state.selected_slot_index > 0 {
+                            state.selected_slot_index -= 1;
+                        }
+                    }
+                    TuiFocus::Sessions => {
+                        if state.selected_session_index > 0 {
+                            state.selected_session_index -= 1;
+                        }
+                    }
+                },
+                KeyCode::Down | KeyCode::Char('j') => match state.focus {
+                    TuiFocus::Repos => {
+                        if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
+                            state.selected_repo_index += 1;
+                        }
+                    }
+                    TuiFocus::Teams => {
+                        if state.selected_team_index + 1 < visible_teams(&snapshot, &state).len() {
+                            state.selected_team_index += 1;
+                        }
+                    }
+                    TuiFocus::Slots => {
+                        if state.selected_slot_index + 1 < visible_slots(&snapshot, &state).len() {
+                            state.selected_slot_index += 1;
+                        }
+                    }
+                    TuiFocus::Sessions => {
+                        if state.selected_session_index + 1
+                            < visible_sessions(&snapshot, &state).len()
+                        {
+                            state.selected_session_index += 1;
+                        }
+                    }
+                },
+                KeyCode::Char('s') => {
+                    if let Some(repo) = selected_repo(&snapshot, &state) {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::SlotAcquire {
+                                repo_id: repo.id.clone(),
+                                task_name: "tui-task".to_string(),
+                                strategy: SlotStrategy::Fresh,
+                            },
+                        );
                     }
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
-                        state.selected_repo_index += 1;
-                        state.selected_team_index = 0;
+                KeyCode::Enter => {
+                    if let Some(slot) = selected_slot(&snapshot, &state) {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::SessionStart {
+                                slot_id: slot.id.clone(),
+                                runtime: RuntimeKind::Shell,
+                                prompt: "ls -R".to_string(),
+                                read_only: false,
+                                dry_run: false,
+                                launch_mode: SessionLaunchMode::Oneshot,
+                                attach_context: true,
+                            },
+                        );
                     }
                 }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    if state.selected_team_index > 0 {
-                        state.selected_team_index -= 1;
+                KeyCode::Char('x') => {
+                    if let Some(session) = selected_session(&snapshot, &state) {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::SessionCancel {
+                                session_id: session.id.clone(),
+                            },
+                        );
                     }
                 }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    let visible_teams = visible_teams(&snapshot, &state);
-                    if state.selected_team_index + 1 < visible_teams.len() {
-                        state.selected_team_index += 1;
+                KeyCode::Char('X') => {
+                    if let Some(slot) = selected_slot(&snapshot, &state) {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::SlotRelease {
+                                slot_id: slot.id.clone(),
+                            },
+                        );
                     }
                 }
                 KeyCode::Char('a') => {
@@ -176,20 +282,71 @@ fn selected_team<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a 
     teams.get(state.selected_team_index).copied()
 }
 
+fn visible_slots<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SlotSummary> {
+    let selected_repo = selected_repo(snapshot, state);
+    snapshot
+        .slots
+        .iter()
+        .filter(|slot| selected_repo.is_none_or(|repo| repo.id == slot.repo_id))
+        .collect()
+}
+
+fn selected_slot<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a SlotSummary> {
+    let slots = visible_slots(snapshot, state);
+    slots.get(state.selected_slot_index).copied()
+}
+
+fn visible_sessions<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SessionSummary> {
+    let selected_repo = selected_repo(snapshot, state);
+    snapshot
+        .sessions
+        .iter()
+        .filter(|session| {
+            selected_repo.is_none_or(|repo| {
+                snapshot
+                    .slots
+                    .iter()
+                    .find(|slot| slot.id == session.slot_id)
+                    .map(|slot| slot.repo_id == repo.id)
+                    .unwrap_or(false)
+            })
+        })
+        .collect()
+}
+
+fn selected_session<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a SessionSummary> {
+    let sessions = visible_sessions(snapshot, state);
+    sessions.get(state.selected_session_index).copied()
+}
+
 fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
     let repo_count = snapshot.registered_repos.len();
-    if repo_count > 0 {
-        state.selected_repo_index = state.selected_repo_index.min(repo_count - 1);
+    state.selected_repo_index = if repo_count > 0 {
+        state.selected_repo_index.min(repo_count - 1)
     } else {
-        state.selected_repo_index = 0;
-    }
+        0
+    };
 
     let team_count = visible_teams(snapshot, state).len();
-    if team_count > 0 {
-        state.selected_team_index = state.selected_team_index.min(team_count - 1);
+    state.selected_team_index = if team_count > 0 {
+        state.selected_team_index.min(team_count - 1)
     } else {
-        state.selected_team_index = 0;
-    }
+        0
+    };
+
+    let slot_count = visible_slots(snapshot, state).len();
+    state.selected_slot_index = if slot_count > 0 {
+        state.selected_slot_index.min(slot_count - 1)
+    } else {
+        0
+    };
+
+    let session_count = visible_sessions(snapshot, state).len();
+    state.selected_session_index = if session_count > 0 {
+        state.selected_session_index.min(session_count - 1)
+    } else {
+        0
+    };
 }
 
 fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
@@ -220,6 +377,9 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let selected_repo = selected_repo(snapshot, state);
     let visible_teams = visible_teams(snapshot, state);
     let selected_team = selected_team(snapshot, state);
+    let visible_slots = visible_slots(snapshot, state);
+    let visible_sessions = visible_sessions(snapshot, state);
+
     let vertical = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(11),
@@ -229,7 +389,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "awo V1 slice | q quit | j/k repo | h/l team | a add repo | c/d doctors | n noop | r refresh | {}",
+        "awo V1 | q quit | Tab focus | s acquire | Enter start | x cancel | X release | r refresh | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title("Status"));
@@ -298,8 +458,17 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             .map(|(index, repo)| render_repo_item(repo, index == state.selected_repo_index))
             .collect::<Vec<_>>()
     };
-    let repos =
-        List::new(repo_items).block(Block::default().borders(Borders::ALL).title("Repositories"));
+    let repos_border_style = if state.focus == TuiFocus::Repos {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let repos = List::new(repo_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Repositories")
+            .border_style(repos_border_style),
+    );
     frame.render_widget(repos, top[0]);
 
     let repo_detail_title = match selected_repo {
@@ -329,13 +498,18 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     );
     frame.render_widget(team_detail_widget, top[2]);
 
-    let slot_items: Vec<ListItem> = snapshot
-        .slots
+    let slot_items: Vec<ListItem> = visible_slots
         .iter()
-        .filter(|slot| selected_repo.is_none_or(|repo| repo.id == slot.repo_id))
-        .map(|slot| {
+        .enumerate()
+        .map(|(index, slot)| {
+            let marker = if index == state.selected_slot_index {
+                ">"
+            } else {
+                " "
+            };
             ListItem::new(format!(
-                "{} [{}] {} {} dirty={} fp={}",
+                "{} {} [{}] {} {} dirty={} fp={}",
+                marker,
                 slot.task_name,
                 slot.id,
                 slot.status,
@@ -350,25 +524,31 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     } else {
         slot_items
     };
-    let slots = List::new(slot_items).block(Block::default().borders(Borders::ALL).title("Slots"));
+    let slots_border_style = if state.focus == TuiFocus::Slots {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let slots = List::new(slot_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Slots")
+            .border_style(slots_border_style),
+    );
     frame.render_widget(slots, top[3]);
 
-    let session_items: Vec<ListItem> = snapshot
-        .sessions
+    let session_items: Vec<ListItem> = visible_sessions
         .iter()
-        .filter(|session| {
-            selected_repo.is_none_or(|repo| {
-                snapshot
-                    .slots
-                    .iter()
-                    .find(|slot| slot.id == session.slot_id)
-                    .map(|slot| slot.repo_id == repo.id)
-                    .unwrap_or(false)
-            })
-        })
-        .map(|session| {
+        .enumerate()
+        .map(|(index, session)| {
+            let marker = if index == state.selected_session_index {
+                ">"
+            } else {
+                " "
+            };
             ListItem::new(format!(
-                "{} [{}] {} read_only={} dry_run={} exit={}",
+                "{} {} [{}] {} read_only={} dry_run={} exit={}",
+                marker,
                 session.runtime,
                 session.slot_id,
                 session.status,
@@ -386,8 +566,17 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     } else {
         session_items
     };
-    let sessions =
-        List::new(session_items).block(Block::default().borders(Borders::ALL).title("Sessions"));
+    let sessions_border_style = if state.focus == TuiFocus::Sessions {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let sessions = List::new(session_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Sessions")
+            .border_style(sessions_border_style),
+    );
     frame.render_widget(sessions, bottom[0]);
 
     let team_items: Vec<ListItem> = if visible_teams.is_empty() {
@@ -395,13 +584,13 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     } else {
         visible_teams
             .iter()
-            .map(|team| {
-                let marker =
-                    if selected_team.is_some_and(|selected| selected.team_id == team.team_id) {
-                        ">"
-                    } else {
-                        " "
-                    };
+            .enumerate()
+            .map(|(index, team)| {
+                let marker = if index == state.selected_team_index {
+                    ">"
+                } else {
+                    " "
+                };
                 ListItem::new(format!(
                     "{} {} {} {}/{} w={}",
                     marker,
@@ -414,7 +603,17 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             })
             .collect()
     };
-    let teams = List::new(team_items).block(Block::default().borders(Borders::ALL).title("Teams"));
+    let teams_border_style = if state.focus == TuiFocus::Teams {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let teams = List::new(team_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Teams")
+            .border_style(teams_border_style),
+    );
     frame.render_widget(teams, bottom[1]);
 
     let warning_items: Vec<ListItem> = snapshot

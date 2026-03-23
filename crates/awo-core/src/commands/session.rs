@@ -25,7 +25,7 @@ impl<'a> CommandRunner<'a> {
         } = options;
         if !detect_runtime(runtime) {
             return Err(AwoError::runtime_launch(format!(
-                "runtime `{}` is not available on PATH",
+                "runtime `{}` is not available on PATH; install it or check your PATH configuration",
                 runtime.as_str()
             )));
         }
@@ -38,22 +38,23 @@ impl<'a> CommandRunner<'a> {
         let mut slot = self
             .store
             .get_slot(&slot_id)?
-            .ok_or_else(|| AwoError::unknown_slot(&slot_id))?;
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
         self.refresh_slot_state(&mut slot)?;
         self.store.upsert_slot(&slot)?;
         if slot.status != SlotStatus::Active {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` is not active"
+                "slot `{slot_id}` is in `{}` state, not `active`; acquire a new slot with `awo slot acquire`",
+                slot.status
             )));
         }
         if !read_only && slot.dirty {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` is dirty; refusing to start another write-capable session"
+                "slot `{slot_id}` is dirty; commit or stash changes, then run `awo slot refresh {slot_id}`, or use `--read-only`"
             )));
         }
         if !read_only && slot.fingerprint_status == FingerprintStatus::Stale {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` is stale; refresh or reacquire it before launching a write-capable session"
+                "slot `{slot_id}` is stale; run `awo slot refresh {slot_id}` to update, or use `--read-only`"
             )));
         }
 
@@ -64,7 +65,7 @@ impl<'a> CommandRunner<'a> {
                 .any(|session| session.blocks_release() && session.is_write_capable())
         {
             return Err(AwoError::invalid_state(format!(
-                "slot `{slot_id}` already has a pending write-capable session"
+                "slot `{slot_id}` already has a pending write-capable session; cancel it with `awo session cancel <session_id>` first, or use `--read-only`"
             )));
         }
 
@@ -109,7 +110,7 @@ impl<'a> CommandRunner<'a> {
                 let mut failed = self
                     .store
                     .get_session(&session_id)?
-                    .ok_or_else(|| AwoError::unknown_session(&session_id))?;
+                    .ok_or_else(|| self.session_not_found_error(&session_id))?;
                 failed.status = SessionStatus::Failed;
                 self.store.upsert_session(&failed)?;
                 return Err(AwoError::runtime_launch(format!(
@@ -188,7 +189,7 @@ impl<'a> CommandRunner<'a> {
         let mut session = self
             .store
             .get_session(&session_id)?
-            .ok_or_else(|| AwoError::unknown_session(&session_id))?;
+            .ok_or_else(|| self.session_not_found_error(&session_id))?;
         if session.is_terminal() {
             return Err(AwoError::invalid_state(format!(
                 "session `{session_id}` is already terminal"
@@ -226,11 +227,81 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
+    pub(super) fn run_session_log(
+        &mut self,
+        session_id: String,
+        lines: Option<usize>,
+        stream: Option<String>,
+    ) -> AwoResult<CommandOutcome> {
+        let session = self
+            .store
+            .get_session(&session_id)?
+            .ok_or_else(|| self.session_not_found_error(&session_id))?;
+
+        let stream_name = stream.as_deref().unwrap_or("stdout");
+        let log_path = match stream_name {
+            "stdout" => session.stdout_path.as_deref(),
+            "stderr" => session.stderr_path.as_deref(),
+            other => {
+                return Err(AwoError::validation(format!(
+                    "unknown log stream `{other}`; valid streams are `stdout` and `stderr`"
+                )));
+            }
+        };
+
+        let log_path = log_path.ok_or_else(|| {
+            AwoError::invalid_state(format!(
+                "session `{session_id}` has no {stream_name} log path"
+            ))
+        })?;
+
+        let path = std::path::Path::new(log_path);
+        if !path.exists() {
+            return Err(AwoError::invalid_state(format!(
+                "log file for session `{session_id}` not found at {log_path}"
+            )));
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|source| AwoError::io("read session log", path, source))?;
+
+        let max_lines = lines.unwrap_or(50);
+        let all_lines: Vec<&str> = content.lines().collect();
+        let start = all_lines.len().saturating_sub(max_lines);
+        let tail_content = all_lines[start..].join("\n");
+        let lines_returned = all_lines.len() - start;
+
+        self.store.insert_action(
+            "session_log",
+            &format!("session_id={session_id} stream={stream_name} lines={lines_returned}"),
+        )?;
+
+        let events = vec![
+            DomainEvent::CommandReceived {
+                command: "session_log".to_string(),
+            },
+            DomainEvent::SessionLogLoaded {
+                session_id: session_id.clone(),
+                stream: stream_name.to_string(),
+                lines_returned,
+                log_path: log_path.to_string(),
+                content: tail_content,
+            },
+        ];
+
+        Ok(CommandOutcome {
+            summary: format!(
+                "Loaded {lines_returned} line(s) of {stream_name} for session `{session_id}`."
+            ),
+            events,
+        })
+    }
+
     pub(super) fn run_session_delete(&mut self, session_id: String) -> AwoResult<CommandOutcome> {
         let session = self
             .store
             .get_session(&session_id)?
-            .ok_or_else(|| AwoError::unknown_session(&session_id))?;
+            .ok_or_else(|| self.session_not_found_error(&session_id))?;
         if !session.is_terminal() {
             return Err(AwoError::invalid_state(format!(
                 "session `{session_id}` is not terminal; cancel it before deleting"

@@ -660,6 +660,91 @@ fn cancelling_running_oneshot_session_is_rejected() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn actionable_error_for_unknown_repo_with_registered_repos() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("known-repo")?)?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotAcquire {
+            repo_id: "nonexistent".to_string(),
+            task_name: "task".to_string(),
+            strategy: SlotStrategy::Fresh,
+        })
+        .expect_err("should fail for unknown repo");
+    let msg = error.to_string();
+    assert!(
+        msg.contains(&repo_id),
+        "error should list the registered repo id; got: {msg}"
+    );
+    assert!(
+        msg.contains("nonexistent"),
+        "error should mention the bad id; got: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn actionable_error_for_unknown_repo_with_empty_store() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotAcquire {
+            repo_id: "nonexistent".to_string(),
+            task_name: "task".to_string(),
+            strategy: SlotStrategy::Fresh,
+        })
+        .expect_err("should fail for unknown repo");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("awo repo add"),
+        "error should suggest `awo repo add`; got: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn actionable_error_for_unknown_slot() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotRelease {
+            slot_id: "nonexistent".to_string(),
+        })
+        .expect_err("should fail for unknown slot");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("awo slot acquire"),
+        "error should suggest `awo slot acquire`; got: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn actionable_error_for_unknown_session() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SessionCancel {
+            session_id: "nonexistent".to_string(),
+        })
+        .expect_err("should fail for unknown session");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("awo session start"),
+        "error should suggest `awo session start`; got: {msg}"
+    );
+
+    Ok(())
+}
+
 fn run_git(
     repo_dir: &Path,
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,

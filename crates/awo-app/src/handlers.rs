@@ -7,9 +7,9 @@ use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
     print_outcome, print_registered_repos, print_review, print_routing_preview,
     print_routing_recommendation, print_runtime_capabilities, print_runtime_pressure_profile,
-    print_sessions, print_skill_doctor, print_skills_catalog, print_slots, print_team_manifest,
-    print_team_manifests, print_team_member, print_team_task_execution, print_team_teardown_plan,
-    print_team_teardown_result,
+    print_session_log, print_sessions, print_skill_doctor, print_skills_catalog, print_slots,
+    print_team_manifest, print_team_manifests, print_team_member, print_team_task_execution,
+    print_team_teardown_plan, print_team_teardown_result,
 };
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
@@ -1010,6 +1010,23 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
         }
         SessionCommand::Delete { session_id } => {
             backend.dispatch(Command::SessionDelete { session_id })?
+        }
+        SessionCommand::Log {
+            session_id,
+            lines,
+            stream,
+        } => {
+            let outcome = backend.dispatch(Command::SessionLog {
+                session_id,
+                lines: Some(lines),
+                stream: Some(stream),
+            })?;
+            if output.json {
+                print_json_response(&(), Some(&outcome));
+            } else {
+                print_session_log(&outcome);
+            }
+            return Ok(());
         }
     };
 

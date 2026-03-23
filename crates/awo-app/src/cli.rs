@@ -385,6 +385,13 @@ pub enum SessionCommand {
     Delete {
         session_id: String,
     },
+    Log {
+        session_id: String,
+        #[arg(long, default_value = "50")]
+        lines: usize,
+        #[arg(long, default_value = "stdout")]
+        stream: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
