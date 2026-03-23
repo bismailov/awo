@@ -176,33 +176,7 @@ pub fn run_tui() -> Result<()> {
                 KeyCode::Enter => {
                     if state.focus == TuiFocus::Sessions {
                         if let Some(session) = selected_session(&snapshot, &state) {
-                            let outcome = core.dispatch(Command::SessionLog {
-                                session_id: session.id.clone(),
-                                lines: Some(100),
-                                stream: None,
-                            });
-                            match outcome {
-                                Ok(outcome) => {
-                                    for event in &outcome.events {
-                                        if let DomainEvent::SessionLogLoaded {
-                                            content,
-                                            log_path,
-                                            session_id,
-                                            ..
-                                        } = event
-                                        {
-                                            state.log_content = Some(content.clone());
-                                            state.log_session_id = Some(session_id.clone());
-                                            state.log_path = Some(log_path.clone());
-                                            state.show_log_panel = true;
-                                        }
-                                    }
-                                    append_events(&mut state, outcome.events);
-                                }
-                                Err(error) => {
-                                    state.status = format!("Error: {error:#}");
-                                }
-                            }
+                            fetch_session_log(&mut core, &mut state, &session.id);
                         }
                     } else if let Some(slot) = selected_slot(&snapshot, &state) {
                         apply_command(
@@ -211,11 +185,11 @@ pub fn run_tui() -> Result<()> {
                             Command::SessionStart {
                                 slot_id: slot.id.clone(),
                                 runtime: RuntimeKind::Shell,
-                                prompt: "ls -R".to_string(),
+                                prompt: "echo 'awo shell session started'; ls".to_string(),
                                 read_only: false,
                                 dry_run: false,
-                                launch_mode: SessionLaunchMode::Oneshot,
-                                attach_context: true,
+                                launch_mode: SessionLaunchMode::default_for_environment(),
+                                attach_context: false,
                             },
                         );
                     }
@@ -267,34 +241,8 @@ pub fn run_tui() -> Result<()> {
                 }
                 KeyCode::Char('r') => {
                     if state.show_log_panel {
-                        if let Some(session_id) = &state.log_session_id {
-                            let outcome = core.dispatch(Command::SessionLog {
-                                session_id: session_id.clone(),
-                                lines: Some(100),
-                                stream: None,
-                            });
-                            match outcome {
-                                Ok(outcome) => {
-                                    for event in &outcome.events {
-                                        if let DomainEvent::SessionLogLoaded {
-                                            content,
-                                            log_path,
-                                            session_id,
-                                            ..
-                                        } = event
-                                        {
-                                            state.log_content = Some(content.clone());
-                                            state.log_session_id = Some(session_id.clone());
-                                            state.log_path = Some(log_path.clone());
-                                            state.show_log_panel = true;
-                                        }
-                                    }
-                                    append_events(&mut state, outcome.events);
-                                }
-                                Err(error) => {
-                                    state.status = format!("Error: {error:#}");
-                                }
-                            }
+                        if let Some(session_id) = state.log_session_id.clone() {
+                            fetch_session_log(&mut core, &mut state, &session_id);
                         }
                     } else {
                         apply_command(
@@ -450,6 +398,35 @@ fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
     if state.messages.len() > 30 {
         let overflow = state.messages.len() - 30;
         state.messages.drain(0..overflow);
+    }
+}
+
+fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, session_id: &str) {
+    match core.dispatch(Command::SessionLog {
+        session_id: session_id.to_string(),
+        lines: Some(100),
+        stream: None,
+    }) {
+        Ok(outcome) => {
+            for event in &outcome.events {
+                if let DomainEvent::SessionLogLoaded {
+                    content,
+                    log_path,
+                    session_id,
+                    ..
+                } = event
+                {
+                    state.log_content = Some(content.clone());
+                    state.log_session_id = Some(session_id.clone());
+                    state.log_path = Some(log_path.clone());
+                    state.show_log_panel = true;
+                }
+            }
+            append_events(state, outcome.events);
+        }
+        Err(error) => {
+            state.status = format!("Error: {error:#}");
+        }
     }
 }
 
