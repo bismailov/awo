@@ -853,6 +853,182 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_repository_crud() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        assert!(store.list_repositories()?.is_empty());
+        assert!(store.get_repository("test-repo")?.is_none());
+
+        let repo = RegisteredRepo {
+            id: "test-repo".to_string(),
+            name: "test-repo".to_string(),
+            repo_root: "/tmp/test-repo".to_string(),
+            remote_url: None,
+            default_base_branch: "main".to_string(),
+            worktree_root: "/tmp/worktrees".to_string(),
+            shared_manifest_path: None,
+            shared_manifest_present: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        store.upsert_repository(&repo)?;
+
+        let loaded = store
+            .get_repository("test-repo")?
+            .expect("should find repo");
+        assert_eq!(loaded.id, "test-repo");
+        assert_eq!(loaded.repo_root, "/tmp/test-repo");
+        assert_eq!(store.list_repositories()?.len(), 1);
+
+        // Upsert with changes
+        let mut updated = repo.clone();
+        updated.repo_root = "/tmp/moved-repo".to_string();
+        store.upsert_repository(&updated)?;
+        let loaded = store
+            .get_repository("test-repo")?
+            .expect("should find repo");
+        assert_eq!(loaded.repo_root, "/tmp/moved-repo");
+        assert_eq!(store.list_repositories()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn roundtrip_slot_crud() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        assert!(store.list_slots(None)?.is_empty());
+        assert!(store.get_slot("slot-1")?.is_none());
+
+        let slot = SlotRecord {
+            id: "slot-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            task_name: "test-task".to_string(),
+            slot_path: "/tmp/slot-1".to_string(),
+            branch_name: "feat/test".to_string(),
+            base_branch: "main".to_string(),
+            strategy: SlotStrategy::Fresh,
+            status: SlotStatus::Active,
+            fingerprint_hash: Some("abc123".to_string()),
+            fingerprint_status: FingerprintStatus::Ready,
+            dirty: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        store.upsert_slot(&slot)?;
+
+        let loaded = store.get_slot("slot-1")?.expect("should find slot");
+        assert_eq!(loaded.task_name, "test-task");
+        assert_eq!(loaded.strategy, SlotStrategy::Fresh);
+        assert_eq!(loaded.status, SlotStatus::Active);
+        assert_eq!(store.list_slots(None)?.len(), 1);
+        assert_eq!(store.list_slots(Some("repo-1"))?.len(), 1);
+        assert_eq!(store.list_slots(Some("other-repo"))?.len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn roundtrip_session_crud() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        assert!(store.list_sessions(None)?.is_empty());
+        assert!(store.get_session("session-1")?.is_none());
+
+        let session = SessionRecord {
+            id: "session-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            slot_id: "slot-1".to_string(),
+            runtime: "shell".to_string(),
+            supervisor: Some("tmux".to_string()),
+            prompt: "echo hello".to_string(),
+            status: SessionStatus::Prepared,
+            read_only: false,
+            dry_run: false,
+            command_line: "bash -c 'echo hello'".to_string(),
+            stdout_path: Some("/tmp/stdout.log".to_string()),
+            stderr_path: Some("/tmp/stderr.log".to_string()),
+            exit_code: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        store.upsert_session(&session)?;
+
+        let loaded = store
+            .get_session("session-1")?
+            .expect("should find session");
+        assert_eq!(loaded.runtime, "shell");
+        assert_eq!(loaded.supervisor.as_deref(), Some("tmux"));
+        assert_eq!(loaded.status, SessionStatus::Prepared);
+        assert_eq!(store.list_sessions(None)?.len(), 1);
+        assert_eq!(store.list_sessions(Some("repo-1"))?.len(), 1);
+        assert_eq!(store.list_sessions(Some("other-repo"))?.len(), 0);
+        assert_eq!(store.list_sessions_for_slot("slot-1")?.len(), 1);
+        assert_eq!(store.list_sessions_for_slot("other-slot")?.len(), 0);
+
+        // Delete
+        store.delete_session("session-1")?;
+        assert!(store.get_session("session-1")?.is_none());
+        assert!(store.list_sessions(None)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn action_log_insert_and_query() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        store.insert_action("test_cmd", "payload=1")?;
+        store.insert_action("test_cmd", "payload=2")?;
+
+        let actions = store.recent_actions(10)?;
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].command_name, "test_cmd");
+        Ok(())
+    }
+
+    #[test]
+    fn find_reusable_warm_slot_returns_none_when_empty() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        assert!(store.find_reusable_warm_slot("repo-1")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn find_reusable_warm_slot_finds_released_warm_slot() -> Result<()> {
+        let (_dir, store) = open_store()?;
+        store.initialize_schema()?;
+
+        let slot = SlotRecord {
+            id: "warm-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            task_name: "old-task".to_string(),
+            slot_path: "/tmp/warm-1".to_string(),
+            branch_name: "feat/old".to_string(),
+            base_branch: "main".to_string(),
+            strategy: SlotStrategy::Warm,
+            status: SlotStatus::Released,
+            fingerprint_hash: None,
+            fingerprint_status: FingerprintStatus::Missing,
+            dirty: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        store.upsert_slot(&slot)?;
+
+        let found = store.find_reusable_warm_slot("repo-1")?;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "warm-1");
+
+        // Different repo should not find it
+        assert!(store.find_reusable_warm_slot("repo-2")?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn open_fails_on_directory_path() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         // Try to open a database where a directory already exists
