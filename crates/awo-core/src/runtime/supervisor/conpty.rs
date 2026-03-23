@@ -123,7 +123,9 @@ pub fn launch(
                 -1
             }
         };
-        let _ = fs::write(&exit_path, exit_code.to_string());
+        if let Err(e) = fs::write(&exit_path, exit_code.to_string()) {
+            tracing::error!("failed to write ConPTY exit code: {e}");
+        }
     });
 
     Ok(())

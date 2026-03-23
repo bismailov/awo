@@ -14,9 +14,9 @@ use crate::slot::{SlotStatus, SlotStrategy};
 use crate::snapshot::AppSnapshot;
 use crate::store::Store;
 use crate::team::{
-    TaskCard, TaskCardState, TeamManifest, TeamManifestGuard, TeamMember, TeamResetSummary,
-    TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan, TeamTeardownResult,
-    list_team_manifest_paths, remove_team_manifest, save_team_manifest,
+    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamManifestGuard, TeamMember,
+    TeamResetSummary, TeamStatus, TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan,
+    TeamTeardownResult, list_team_manifest_paths, remove_team_manifest, save_team_manifest,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -508,7 +508,7 @@ impl AppCore {
                 .member(&task.owner_id)
                 .cloned()
                 .ok_or_else(|| AwoError::unknown_owner(&task.owner_id))?;
-            if owner.execution_mode.as_str() != "external_slots" {
+            if owner.execution_mode != TeamExecutionMode::ExternalSlots {
                 return Err(AwoError::invalid_state(format!(
                     "team task execution currently supports only `external_slots`; owner `{}` uses `{}`",
                     owner.member_id, owner.execution_mode
@@ -561,7 +561,7 @@ impl AppCore {
             );
             let runtime = routing_decision.selected_runtime;
             let runtime_name = runtime.as_str().to_string();
-            let prompt = if runtime.as_str() == "shell" {
+            let prompt = if runtime == RuntimeKind::Shell {
                 task.summary.clone()
             } else {
                 manifest.manifest().render_task_prompt(&task.task_id)?
@@ -938,7 +938,7 @@ fn build_team_teardown_plan(store: &Store, manifest: &TeamManifest) -> AwoResult
 }
 
 fn reconcile_team_manifest_state(store: &Store, manifest: &mut TeamManifest) -> AwoResult<bool> {
-    if manifest.status.as_str() == "archived" {
+    if manifest.status == TeamStatus::Archived {
         return Ok(false);
     }
 
@@ -958,7 +958,7 @@ fn reconcile_team_manifest_state(store: &Store, manifest: &mut TeamManifest) -> 
         let has_running_session = sessions.iter().any(|session| !session.is_terminal());
         let slot_missing_or_released = slot
             .as_ref()
-            .is_none_or(|slot| slot.status.as_str() == "released");
+            .is_none_or(|slot| slot.status == SlotStatus::Released);
 
         if has_running_session {
             if task.state != TaskCardState::InProgress {
@@ -969,14 +969,14 @@ fn reconcile_team_manifest_state(store: &Store, manifest: &mut TeamManifest) -> 
         }
 
         if let Some(session) = sessions.iter().find(|session| session.is_terminal()) {
-            match session.status.as_str() {
-                "completed" => {
+            match session.status {
+                SessionStatus::Completed => {
                     if !matches!(task.state, TaskCardState::Done | TaskCardState::Review) {
                         task.state = TaskCardState::Review;
                         changed = true;
                     }
                 }
-                "failed" | "cancelled" => {
+                SessionStatus::Failed | SessionStatus::Cancelled => {
                     if task.state != TaskCardState::Blocked {
                         task.state = TaskCardState::Blocked;
                         changed = true;
@@ -1050,7 +1050,7 @@ fn should_clear_member_slot_binding(
 
     Ok(store
         .get_slot(slot_id)?
-        .is_none_or(|slot| slot.status.as_str() == "released"))
+        .is_none_or(|slot| slot.status == SlotStatus::Released))
 }
 
 #[cfg(test)]

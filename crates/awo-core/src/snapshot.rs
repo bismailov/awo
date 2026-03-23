@@ -13,7 +13,9 @@ use crate::skills::{
 };
 use crate::slot::{FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy};
 use crate::store::Store;
-use crate::team::{TeamManifest, list_team_manifest_paths, load_team_manifest};
+use crate::team::{
+    TaskCardState, TeamManifest, TeamStatus, list_team_manifest_paths, load_team_manifest,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -84,7 +86,7 @@ pub struct RepoSkillRuntimeSummary {
 pub struct TeamSummary {
     pub team_id: String,
     pub repo_id: String,
-    pub status: String,
+    pub status: TeamStatus,
     pub objective: String,
     pub member_count: usize,
     pub write_member_count: usize,
@@ -389,7 +391,7 @@ impl From<TeamManifest> for TeamSummary {
         let open_task_count = value
             .tasks
             .iter()
-            .filter(|task| task.state.as_str() != "done")
+            .filter(|task| task.state != TaskCardState::Done)
             .count();
         let routing_preferences = value
             .routing_preferences
@@ -422,7 +424,7 @@ impl From<TeamManifest> for TeamSummary {
         Self {
             team_id: value.team_id,
             repo_id: value.repo_id,
-            status: value.status.to_string(),
+            status: value.status,
             objective: value.objective,
             member_count,
             write_member_count,
@@ -498,7 +500,10 @@ fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> Rev
             is_missing: slot.is_missing(),
             dirty: slot.dirty,
             dirty_files: if slot.dirty {
-                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|_| vec![])
+                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|err| {
+                    warn!(slot_id = slot.id.as_str(), %err, "failed to list dirty files for slot");
+                    vec![]
+                })
             } else {
                 vec![]
             },
@@ -528,7 +533,10 @@ fn build_review_summary_from_summaries(
             is_missing: slot.is_missing(),
             dirty: slot.dirty,
             dirty_files: if slot.dirty {
-                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|_| vec![])
+                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|err| {
+                    warn!(slot_id = slot.id.as_str(), %err, "failed to list dirty files for slot");
+                    vec![]
+                })
             } else {
                 vec![]
             },

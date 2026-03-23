@@ -831,6 +831,406 @@ fn git_stdout(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+// ---------------------------------------------------------------------------
+// Negative-path: store edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_slot_nonexistent_returns_none() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let core = harness.core()?;
+    let snapshot = core.snapshot()?;
+    assert!(
+        snapshot
+            .slots
+            .iter()
+            .all(|slot| slot.id != "nonexistent-slot-id"),
+        "snapshot should contain no slot with a fabricated id"
+    );
+    Ok(())
+}
+
+#[test]
+fn get_session_nonexistent_returns_none() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let core = harness.core()?;
+    let snapshot = core.snapshot()?;
+    assert!(
+        snapshot
+            .sessions
+            .iter()
+            .all(|session| session.id != "nonexistent-session-id"),
+        "snapshot should contain no session with a fabricated id"
+    );
+    Ok(())
+}
+
+#[test]
+fn get_repository_nonexistent_returns_none() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let core = harness.core()?;
+    let snapshot = core.snapshot()?;
+    assert!(
+        snapshot
+            .registered_repos
+            .iter()
+            .all(|repo| repo.id != "nonexistent-repo-id"),
+        "snapshot should contain no repo with a fabricated id"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_slots_nonexistent_repo_filter_returns_empty() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("filter-slots")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id,
+        task_name: "some task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+
+    let snapshot = core.snapshot()?;
+    let filtered: Vec<_> = snapshot
+        .slots
+        .iter()
+        .filter(|slot| slot.repo_id == "nonexistent-repo-id")
+        .collect();
+    assert!(
+        filtered.is_empty(),
+        "filtering slots by nonexistent repo_id should yield empty vec"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_sessions_nonexistent_repo_filter_returns_empty() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("filter-sessions")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "session task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf hello".to_string(),
+        read_only: true,
+        dry_run: true,
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+
+    let snapshot = core.snapshot()?;
+    let filtered: Vec<_> = snapshot
+        .sessions
+        .iter()
+        .filter(|session| session.repo_id == "nonexistent-repo-id")
+        .collect();
+    assert!(
+        filtered.is_empty(),
+        "filtering sessions by nonexistent repo_id should yield empty vec"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Negative-path: session log edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn session_log_nonexistent_session_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SessionLog {
+            session_id: "nonexistent-session-id".to_string(),
+            lines: None,
+            stream: None,
+        })
+        .expect_err("session log for nonexistent session should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("nonexistent-session-id") || msg.contains("unknown session"),
+        "error should reference the bad session id; got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn session_log_invalid_stream_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("log-stream")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "log task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf hello".to_string(),
+        read_only: true,
+        dry_run: true,
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .map(|session| session.id)
+        .context("missing session")?;
+
+    let error = core
+        .dispatch(Command::SessionLog {
+            session_id,
+            lines: None,
+            stream: Some("invalid-stream".to_string()),
+        })
+        .expect_err("session log with invalid stream should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("unknown log stream") && msg.contains("invalid-stream"),
+        "error should mention the invalid stream name; got: {msg}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Negative-path: slot lifecycle edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn slot_acquire_nonexistent_repo_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotAcquire {
+            repo_id: "ghost-repo".to_string(),
+            task_name: "task".to_string(),
+            strategy: SlotStrategy::Fresh,
+        })
+        .expect_err("slot acquire for nonexistent repo should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("ghost-repo"),
+        "error should mention the bad repo id; got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn slot_release_nonexistent_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotRelease {
+            slot_id: "ghost-slot".to_string(),
+        })
+        .expect_err("slot release for nonexistent slot should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("ghost-slot") || msg.contains("awo slot acquire"),
+        "error should reference the bad slot id or suggest acquiring; got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn slot_refresh_nonexistent_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let mut core = harness.core()?;
+
+    let error = core
+        .dispatch(Command::SlotRefresh {
+            slot_id: "ghost-slot".to_string(),
+        })
+        .expect_err("slot refresh for nonexistent slot should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("ghost-slot") || msg.contains("awo slot acquire"),
+        "error should reference the bad slot id or suggest acquiring; got: {msg}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Negative-path: session lifecycle edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn session_start_on_released_slot_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("released-slot-session")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "release me".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    core.dispatch(Command::SlotRelease {
+        slot_id: slot.id.clone(),
+    })?;
+
+    let error = core
+        .dispatch(Command::SessionStart {
+            slot_id: slot.id.clone(),
+            runtime: RuntimeKind::Shell,
+            prompt: "printf nope".to_string(),
+            read_only: true,
+            dry_run: true,
+            launch_mode: SessionLaunchMode::Oneshot,
+            attach_context: false,
+        })
+        .expect_err("session start on released slot should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("not `active`") || msg.contains("released"),
+        "error should indicate slot is not active; got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn session_delete_on_non_terminal_session_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("delete-pending")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "delete pending".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf hello".to_string(),
+        read_only: true,
+        dry_run: true,
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id && session.status == SessionStatus::Prepared)
+        .map(|session| session.id)
+        .context("missing pending session")?;
+
+    let error = core
+        .dispatch(Command::SessionDelete {
+            session_id: session_id.clone(),
+        })
+        .expect_err("deleting a non-terminal session should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("not terminal"),
+        "error should indicate session is not terminal; got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn session_cancel_on_terminal_session_returns_error() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("cancel-terminal")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "cancel terminal".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "printf hello".to_string(),
+        read_only: true,
+        dry_run: true,
+        launch_mode: SessionLaunchMode::Oneshot,
+        attach_context: false,
+    })?;
+    let session_id = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .map(|session| session.id)
+        .context("missing session")?;
+
+    // Cancel the session to make it terminal
+    core.dispatch(Command::SessionCancel {
+        session_id: session_id.clone(),
+    })?;
+
+    // Try to cancel again -- should fail because session is already terminal
+    let error = core
+        .dispatch(Command::SessionCancel {
+            session_id: session_id.clone(),
+        })
+        .expect_err("cancelling a terminal session should fail");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("already terminal"),
+        "error should indicate session is already terminal; got: {msg}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
 fn kill_tmux_session(session_id: &str) -> Result<()> {
     use sha2::{Digest, Sha256};
 
