@@ -1,10 +1,10 @@
 use super::{
-    exit_code_path_for, materialize_shell_script, read_exit_code, shell_join, shell_quote,
-    PreparedCommand,
+    PreparedCommand, exit_code_path_for, materialize_shell_script, read_exit_code, shell_join,
+    shell_quote,
 };
 use crate::app::AppPaths;
+use crate::error::{AwoError, AwoResult};
 use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
-use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,21 +15,18 @@ pub(super) fn launch(
     slot_path: &Path,
     prepared: &PreparedCommand,
     combined_log_path: PathBuf,
-) -> Result<()> {
+) -> AwoResult<()> {
     if !supports_tmux_supervision() {
-        bail!("tmux is not available on PATH");
+        return Err(AwoError::supervisor("tmux is not available on PATH"));
     }
 
     if let Some(parent) = combined_log_path.parent() {
         fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create log dir at {}", parent.display()))?;
+            .map_err(|source| AwoError::io("create tmux log directory", parent, source))?;
     }
     if combined_log_path.exists() {
-        fs::remove_file(&combined_log_path).with_context(|| {
-            format!(
-                "failed to remove previous PTY log at {}",
-                combined_log_path.display()
-            )
+        fs::remove_file(&combined_log_path).map_err(|source| {
+            AwoError::io("remove previous PTY log", &combined_log_path, source)
         })?;
     }
     let exit_path = exit_code_path_for(
@@ -37,15 +34,10 @@ pub(super) fn launch(
         session_id,
     );
     if exit_path.exists() {
-        fs::remove_file(&exit_path).with_context(|| {
-            format!(
-                "failed to remove previous exit-code file at {}",
-                exit_path.display()
-            )
-        })?;
+        fs::remove_file(&exit_path)
+            .map_err(|source| AwoError::io("remove previous exit-code file", &exit_path, source))?;
     }
-    materialize_shell_script(prepared)
-        .with_context(|| format!("failed to materialize shell prompt script for `{session_id}`"))?;
+    materialize_shell_script(prepared)?;
 
     let supervisor_ref = supervisor_ref(session_id);
     let wrapped_command = build_wrapper(prepared, &combined_log_path, &exit_path);
@@ -60,30 +52,38 @@ pub(super) fn launch(
             &wrapped_command,
         ])
         .output()
-        .with_context(|| format!("failed to start tmux session `{supervisor_ref}`"))?;
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to start tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
 
     if !output.status.success() {
-        bail!(
+        return Err(AwoError::supervisor(format!(
             "failed to launch tmux-backed session: {}",
             String::from_utf8_lossy(&output.stderr).trim()
-        );
+        )));
     }
 
     let output = Command::new("tmux")
         .args(["set-option", "-t", &supervisor_ref, "remain-on-exit", "on"])
         .output()
-        .with_context(|| format!("failed to configure tmux session `{supervisor_ref}`"))?;
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to configure tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
     if !output.status.success() {
-        bail!(
+        return Err(AwoError::supervisor(format!(
             "failed to configure tmux session: {}",
             String::from_utf8_lossy(&output.stderr).trim()
-        );
+        )));
     }
 
     Ok(())
 }
 
-pub(super) fn sync(paths: &AppPaths, session_id: &str) -> Result<Option<i64>> {
+pub(super) fn sync(paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
     let supervisor_ref = supervisor_ref(session_id);
     match session_state(&supervisor_ref)? {
         Some(TmuxSessionState::Running) => Ok(None),
@@ -95,18 +95,25 @@ pub(super) fn sync(paths: &AppPaths, session_id: &str) -> Result<Option<i64>> {
     }
 }
 
-pub(super) fn kill(session_id: &str) -> Result<()> {
+pub(super) fn kill(session_id: &str) -> AwoResult<()> {
     let supervisor_ref = supervisor_ref(session_id);
     let output = Command::new("tmux")
         .args(["kill-session", "-t", &supervisor_ref])
         .output()
-        .with_context(|| format!("failed to kill tmux session `{supervisor_ref}`"))?;
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to kill tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("can't find session") || stderr.contains("no server running") {
             return Ok(());
         }
-        bail!("failed to kill tmux session: {}", stderr.trim());
+        return Err(AwoError::supervisor(format!(
+            "failed to kill tmux session: {}",
+            stderr.trim()
+        )));
     }
     Ok(())
 }
@@ -128,11 +135,15 @@ fn build_wrapper(prepared: &PreparedCommand, combined_log_path: &Path, exit_path
     format!("{} {}", shell_quote(shell), args)
 }
 
-fn session_state(supervisor_ref: &str) -> Result<Option<TmuxSessionState>> {
+fn session_state(supervisor_ref: &str) -> AwoResult<Option<TmuxSessionState>> {
     let has_session = Command::new("tmux")
         .args(["has-session", "-t", supervisor_ref])
         .status()
-        .with_context(|| format!("failed to check tmux session `{supervisor_ref}`"))?;
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to check tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
     if !has_session.success() {
         return Ok(None);
     }
@@ -146,7 +157,11 @@ fn session_state(supervisor_ref: &str) -> Result<Option<TmuxSessionState>> {
             "#{pane_dead} #{pane_dead_status}",
         ])
         .output()
-        .with_context(|| format!("failed to inspect tmux session `{supervisor_ref}`"))?;
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to inspect tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
     if !output.status.success() {
         return Ok(None);
     }

@@ -3,6 +3,7 @@ use crate::config::AppConfig;
 use crate::context::{
     ContextDoctorReport, RepoContext, discover_repo_context, doctor_repo_context,
 };
+use crate::dispatch::Dispatcher;
 use crate::error::{AwoError, AwoResult};
 use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus};
 use crate::skills::{
@@ -30,6 +31,21 @@ pub struct AppPaths {
     pub repos_dir: std::path::PathBuf,
     pub clones_dir: std::path::PathBuf,
     pub teams_dir: std::path::PathBuf,
+}
+
+impl AppPaths {
+    /// Returns the path for the daemon socket file.
+    ///
+    /// On Unix: `{data_dir}/awod.sock`
+    /// On Windows: this returns a file path but the daemon uses a Named Pipe.
+    pub fn daemon_socket_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("awod.sock")
+    }
+
+    /// Returns the path for the daemon lock file.
+    pub fn daemon_lock_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("awod.lock")
+    }
 }
 
 #[derive(Debug)]
@@ -60,8 +76,7 @@ impl AppCore {
     }
 
     pub fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
-        let mut runner = CommandRunner::new(&self.config, &self.store);
-        runner.run(command)
+        Dispatcher::dispatch(self, command)
     }
 
     pub fn snapshot(&self) -> AwoResult<AppSnapshot> {
@@ -671,7 +686,7 @@ impl AppCore {
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| (None, SessionStatus::Prepared));
+            .unwrap_or((None, SessionStatus::Prepared));
 
         let next_state = match session_status {
             SessionStatus::Completed => TaskCardState::Review,
@@ -783,6 +798,13 @@ impl AppCore {
                 self.reconcile_team_manifest(team_id)
             })
             .collect()
+    }
+}
+
+impl Dispatcher for AppCore {
+    fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
+        let mut runner = CommandRunner::new(&self.config, &self.store);
+        runner.run(command)
     }
 }
 

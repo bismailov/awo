@@ -14,6 +14,9 @@ use crate::output::{
 use crate::tui::run_tui;
 use anyhow::{Result, bail};
 use awo_core::capabilities::CostTier;
+use awo_core::commands::CommandOutcome;
+use awo_core::dispatch::Dispatcher;
+use awo_core::error::AwoResult;
 use awo_core::{
     AppCore, Command, RoutingContext, RoutingPreferences, RoutingTarget, RuntimeKind,
     RuntimePressure, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard,
@@ -23,6 +26,67 @@ use awo_core::{
 };
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
+
+// ---------------------------------------------------------------------------
+// CLI backend: auto-detects daemon and routes dispatch accordingly
+// ---------------------------------------------------------------------------
+
+/// Wraps `AppCore` with optional daemon dispatch.
+///
+/// When `awod` is running, mutations go through [`DaemonClient`] while
+/// reads (snapshot, context, etc.) go directly to SQLite via `AppCore`
+/// — safe because WAL mode supports concurrent readers.
+struct CliBackend {
+    core: AppCore,
+    #[cfg(unix)]
+    daemon: Option<awo_core::DaemonClient>,
+}
+
+impl CliBackend {
+    fn bootstrap() -> Result<Self> {
+        let core = AppCore::bootstrap()?;
+
+        #[cfg(unix)]
+        let daemon = {
+            if awo_core::daemon_is_running(core.paths()) {
+                match awo_core::DaemonClient::connect(&core.paths().daemon_socket_path()) {
+                    Ok(client) => {
+                        tracing::info!("connected to awod daemon");
+                        Some(client)
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "daemon appears running but connection failed, using direct mode");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        Ok(Self {
+            core,
+            #[cfg(unix)]
+            daemon,
+        })
+    }
+
+    fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
+        #[cfg(unix)]
+        if let Some(client) = &mut self.daemon {
+            return client.dispatch(command);
+        }
+        self.core.dispatch(command)
+    }
+
+    fn core(&self) -> &AppCore {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut AppCore {
+        &mut self.core
+    }
+}
 
 pub fn initialize_tracing() -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
@@ -60,9 +124,9 @@ pub fn execute(command: AppCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_debug(command: DebugCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     let outcome = match command {
-        DebugCommand::Noop { label } => core.dispatch(Command::NoOp { label })?,
+        DebugCommand::Noop { label } => backend.dispatch(Command::NoOp { label })?,
     };
 
     if output.json {
@@ -74,21 +138,21 @@ fn run_debug(command: DebugCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     let outcome = match command {
-        RepoCommand::Add { path } => core.dispatch(Command::RepoAdd { path: path.into() })?,
+        RepoCommand::Add { path } => backend.dispatch(Command::RepoAdd { path: path.into() })?,
         RepoCommand::Clone {
             remote_url,
             destination,
-        } => core.dispatch(Command::RepoClone {
+        } => backend.dispatch(Command::RepoClone {
             remote_url,
             destination: destination.map(Into::into),
         })?,
-        RepoCommand::Fetch { repo_id } => core.dispatch(Command::RepoFetch { repo_id })?,
-        RepoCommand::List => core.dispatch(Command::RepoList)?,
+        RepoCommand::Fetch { repo_id } => backend.dispatch(Command::RepoFetch { repo_id })?,
+        RepoCommand::List => backend.dispatch(Command::RepoList)?,
     };
 
-    let snapshot = core.snapshot()?;
+    let snapshot = backend.core().snapshot()?;
     if output.json {
         print_json_response(&snapshot.registered_repos, Some(&outcome));
     } else {
@@ -99,13 +163,13 @@ fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_context(command: ContextCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     match command {
         ContextCommand::Pack { repo_id } => {
-            let outcome = core.dispatch(Command::ContextPack {
+            let outcome = backend.dispatch(Command::ContextPack {
                 repo_id: repo_id.clone(),
             })?;
-            let context = core.context_for_repo(&repo_id)?;
+            let context = backend.core().context_for_repo(&repo_id)?;
             if output.json {
                 print_json_response(&context, Some(&outcome));
             } else {
@@ -114,10 +178,10 @@ fn run_context(command: ContextCommand, output: OutputMode) -> Result<()> {
             }
         }
         ContextCommand::Doctor { repo_id } => {
-            let outcome = core.dispatch(Command::ContextDoctor {
+            let outcome = backend.dispatch(Command::ContextDoctor {
                 repo_id: repo_id.clone(),
             })?;
-            let report = core.context_doctor_for_repo(&repo_id)?;
+            let report = backend.core().context_doctor_for_repo(&repo_id)?;
             if output.json {
                 print_json_response(&report, Some(&outcome));
             } else {
@@ -131,13 +195,13 @@ fn run_context(command: ContextCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     match command {
         SkillsCommand::List { repo_id } => {
-            let outcome = core.dispatch(Command::SkillsList {
+            let outcome = backend.dispatch(Command::SkillsList {
                 repo_id: repo_id.clone(),
             })?;
-            let catalog = core.skills_for_repo(&repo_id)?;
+            let catalog = backend.core().skills_for_repo(&repo_id)?;
             if output.json {
                 print_json_response(&catalog, Some(&outcome));
             } else {
@@ -147,14 +211,16 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
         }
         SkillsCommand::Doctor { repo_id, runtime } => {
             let parsed_runtimes = parse_skill_runtimes(runtime.as_deref())?;
-            let outcome = core.dispatch(Command::SkillsDoctor {
+            let outcome = backend.dispatch(Command::SkillsDoctor {
                 repo_id: repo_id.clone(),
                 runtime: parsed_runtimes
                     .first()
                     .copied()
                     .filter(|_| parsed_runtimes.len() == 1),
             })?;
-            let reports = core.skills_doctor_for_repo(&repo_id, &parsed_runtimes)?;
+            let reports = backend
+                .core()
+                .skills_doctor_for_repo(&repo_id, &parsed_runtimes)?;
             if output.json {
                 print_json_response(&reports, Some(&outcome));
             } else {
@@ -175,13 +241,17 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
             let mut reports = Vec::new();
             let mut outcomes = Vec::new();
             for runtime in runtimes {
-                let outcome = core.dispatch(Command::SkillsLink {
+                let outcome = backend.dispatch(Command::SkillsLink {
                     repo_id: repo_id.clone(),
                     runtime,
                     mode,
                 })?;
                 outcomes.push(outcome);
-                reports.extend(core.skills_doctor_for_repo(&repo_id, &[runtime])?);
+                reports.extend(
+                    backend
+                        .core()
+                        .skills_doctor_for_repo(&repo_id, &[runtime])?,
+                );
             }
             if output.json {
                 let merged = merge_command_outcomes(outcomes);
@@ -206,13 +276,17 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
             let mut reports = Vec::new();
             let mut outcomes = Vec::new();
             for runtime in runtimes {
-                let outcome = core.dispatch(Command::SkillsSync {
+                let outcome = backend.dispatch(Command::SkillsSync {
                     repo_id: repo_id.clone(),
                     runtime,
                     mode,
                 })?;
                 outcomes.push(outcome);
-                reports.extend(core.skills_doctor_for_repo(&repo_id, &[runtime])?);
+                reports.extend(
+                    backend
+                        .core()
+                        .skills_doctor_for_repo(&repo_id, &[runtime])?,
+                );
             }
             if output.json {
                 let merged = merge_command_outcomes(outcomes);
@@ -230,7 +304,7 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     match command {
         RuntimeCommand::List => {
             let capabilities = all_runtime_capabilities();
@@ -284,7 +358,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 avoid_metered,
                 max_cost_tier,
             };
-            let context = resolve_routing_context(&core, &pressure)?;
+            let context = resolve_routing_context(backend.core(), &pressure)?;
 
             let decision = route_runtime(primary_target, fallback_target, &preferences, &context);
 
@@ -295,7 +369,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
             }
         }
         RuntimeCommand::Pressure { command } => {
-            handle_runtime_pressure_command(&mut core, command, output)?
+            handle_runtime_pressure_command(backend.core_mut(), command, output)?
         }
     }
 
@@ -356,7 +430,8 @@ fn handle_runtime_pressure_command(
 }
 
 fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
+    let core = backend.core_mut();
     match command {
         TeamCommand::Init {
             repo_id,
@@ -454,7 +529,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             task,
             pressure,
         } => {
-            let context = resolve_routing_context(&core, &pressure)?;
+            let context = resolve_routing_context(core, &pressure)?;
             let recommendation = core.recommend_team_routing(
                 &team_id,
                 member.as_deref(),
@@ -854,7 +929,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     let repo_filter = match &command {
         SlotCommand::List { repo_id } => repo_id.clone(),
         _ => None,
@@ -864,19 +939,19 @@ fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
             repo_id,
             task_name,
             strategy,
-        } => core.dispatch(Command::SlotAcquire {
+        } => backend.dispatch(Command::SlotAcquire {
             repo_id,
             task_name,
             strategy: strategy
                 .parse::<SlotStrategy>()
                 .map_err(anyhow::Error::msg)?,
         })?,
-        SlotCommand::List { repo_id } => core.dispatch(Command::SlotList { repo_id })?,
-        SlotCommand::Release { slot_id } => core.dispatch(Command::SlotRelease { slot_id })?,
-        SlotCommand::Refresh { slot_id } => core.dispatch(Command::SlotRefresh { slot_id })?,
+        SlotCommand::List { repo_id } => backend.dispatch(Command::SlotList { repo_id })?,
+        SlotCommand::Release { slot_id } => backend.dispatch(Command::SlotRelease { slot_id })?,
+        SlotCommand::Refresh { slot_id } => backend.dispatch(Command::SlotRefresh { slot_id })?,
     };
 
-    let snapshot = core.snapshot()?;
+    let snapshot = backend.core().snapshot()?;
     let slots = snapshot
         .slots
         .iter()
@@ -897,7 +972,7 @@ fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     let repo_filter = match &command {
         SessionCommand::List { repo_id } => repo_id.clone(),
         _ => None,
@@ -919,7 +994,7 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
                     .map_err(anyhow::Error::msg)?,
                 None => SessionLaunchMode::default_for_environment(),
             };
-            core.dispatch(Command::SessionStart {
+            backend.dispatch(Command::SessionStart {
                 slot_id,
                 runtime,
                 prompt,
@@ -929,16 +1004,16 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
                 attach_context: !no_auto_context,
             })?
         }
-        SessionCommand::List { repo_id } => core.dispatch(Command::SessionList { repo_id })?,
+        SessionCommand::List { repo_id } => backend.dispatch(Command::SessionList { repo_id })?,
         SessionCommand::Cancel { session_id } => {
-            core.dispatch(Command::SessionCancel { session_id })?
+            backend.dispatch(Command::SessionCancel { session_id })?
         }
         SessionCommand::Delete { session_id } => {
-            core.dispatch(Command::SessionDelete { session_id })?
+            backend.dispatch(Command::SessionDelete { session_id })?
         }
     };
 
-    let snapshot = core.snapshot()?;
+    let snapshot = backend.core().snapshot()?;
     let sessions = snapshot
         .sessions
         .iter()
@@ -959,15 +1034,15 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_review(command: ReviewCommand, output: OutputMode) -> Result<()> {
-    let mut core = AppCore::bootstrap()?;
+    let mut backend = CliBackend::bootstrap()?;
     let repo_filter = match &command {
         ReviewCommand::Status { repo_id } => repo_id.clone(),
     };
     let outcome = match command {
-        ReviewCommand::Status { repo_id } => core.dispatch(Command::ReviewStatus { repo_id })?,
+        ReviewCommand::Status { repo_id } => backend.dispatch(Command::ReviewStatus { repo_id })?,
     };
 
-    let snapshot = core.snapshot()?;
+    let snapshot = backend.core().snapshot()?;
     let review = snapshot.review_for_repo(repo_filter.as_deref());
     if output.json {
         print_json_response(&review, Some(&outcome));

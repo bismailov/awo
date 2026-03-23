@@ -1,6 +1,6 @@
-mod tmux;
 #[cfg(windows)]
 mod conpty;
+mod tmux;
 
 use super::{RuntimeKind, SessionLaunchMode, SessionRecord};
 use crate::app::AppPaths;
@@ -8,7 +8,6 @@ use crate::error::{AwoError, AwoResult};
 use crate::platform::{
     default_shell_program, shell_command_args, shell_script_args, supports_tmux_supervision,
 };
-use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -99,21 +98,17 @@ impl SessionSupervisor {
         combined_log_path: PathBuf,
     ) -> AwoResult<()> {
         match self {
-            Self::Tmux => tmux::launch(session_id, slot_path, prepared, combined_log_path)
-                .map_err(|error| AwoError::supervisor(error.to_string())),
+            Self::Tmux => tmux::launch(session_id, slot_path, prepared, combined_log_path),
             #[cfg(windows)]
-            Self::Conpty => conpty::launch(session_id, slot_path, prepared, combined_log_path)
-                .map_err(|error| AwoError::supervisor(error.to_string())),
+            Self::Conpty => conpty::launch(session_id, slot_path, prepared, combined_log_path),
         }
     }
 
     pub(super) fn sync(self, paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
         match self {
-            Self::Tmux => tmux::sync(paths, session_id)
-                .map_err(|error| AwoError::supervisor(error.to_string())),
+            Self::Tmux => tmux::sync(paths, session_id),
             #[cfg(windows)]
-            Self::Conpty => conpty::sync(paths, session_id)
-                .map_err(|error| AwoError::supervisor(error.to_string())),
+            Self::Conpty => conpty::sync(paths, session_id),
         }
     }
 
@@ -128,7 +123,7 @@ impl SessionSupervisor {
             }
             #[cfg(windows)]
             Self::Conpty => {
-                let _ = conpty::kill(&session.id);
+                let _ = conpty::kill(paths, &session.id);
                 if session.exit_code.is_none() {
                     session.exit_code = read_exit_code(paths, &session.id)?;
                 }
@@ -303,9 +298,8 @@ pub(super) fn materialize_shell_script(prepared: &PreparedCommand) -> AwoResult<
     };
 
     if let Some(parent) = script_path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create shell script dir at {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|source| AwoError::io("create shell script directory", parent, source))?;
     }
 
     let mut contents = script_body.clone();
@@ -313,7 +307,7 @@ pub(super) fn materialize_shell_script(prepared: &PreparedCommand) -> AwoResult<
         contents.push('\n');
     }
     fs::write(script_path, contents)
-        .with_context(|| format!("failed to write shell script at {}", script_path.display()))?;
+        .map_err(|source| AwoError::io("write shell script", script_path, source))?;
     Ok(())
 }
 

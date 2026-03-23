@@ -166,7 +166,11 @@ mod tests {
 
     #[test]
     fn slot_record_status_helpers_classify_known_states() {
-        let active = sample_slot(SlotStatus::Active, SlotStrategy::Warm, FingerprintStatus::Ready);
+        let active = sample_slot(
+            SlotStatus::Active,
+            SlotStrategy::Warm,
+            FingerprintStatus::Ready,
+        );
         assert!(active.is_active());
         assert!(active.uses_warm_strategy());
         assert!(active.fingerprint_is_ready());
@@ -174,8 +178,11 @@ mod tests {
         assert!(!active.is_missing());
         assert!(!active.fingerprint_is_stale());
 
-        let released =
-            sample_slot(SlotStatus::Released, SlotStrategy::Fresh, FingerprintStatus::Stale);
+        let released = sample_slot(
+            SlotStatus::Released,
+            SlotStrategy::Fresh,
+            FingerprintStatus::Stale,
+        );
         assert!(released.is_released());
         assert!(released.fingerprint_is_stale());
         assert!(!released.is_active());

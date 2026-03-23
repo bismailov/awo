@@ -1,16 +1,16 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::context::{discover_repo_context, doctor_repo_context};
 use crate::diagnostics::DiagnosticSeverity;
+use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
-use anyhow::{Context, Result};
 use std::path::Path;
 
 impl<'a> CommandRunner<'a> {
-    pub(super) fn run_context_pack(&mut self, repo_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_context_pack(&mut self, repo_id: String) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let context = discover_repo_context(Path::new(&repo.repo_root))?;
         self.store.insert_action(
             "context_pack",
@@ -45,11 +45,11 @@ impl<'a> CommandRunner<'a> {
         })
     }
 
-    pub(super) fn run_context_doctor(&mut self, repo_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_context_doctor(&mut self, repo_id: String) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let context = discover_repo_context(Path::new(&repo.repo_root))?;
         let report = doctor_repo_context(&context);
         let error_count = report

@@ -200,10 +200,10 @@ pub fn dirty_files(path: &Path) -> AwoResult<Vec<String>> {
     let mut files = vec![];
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            if let Some(p) = trimmed.get(3..) {
-                files.push(p.trim().to_string());
-            }
+        if !trimmed.is_empty()
+            && let Some(p) = trimmed.get(3..)
+        {
+            files.push(p.trim().to_string());
         }
     }
     Ok(files)

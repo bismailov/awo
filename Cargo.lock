@@ -125,6 +125,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "awo-mcp"
+version = "0.1.0"
+dependencies = [
+ "awo-core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

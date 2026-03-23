@@ -1,6 +1,6 @@
 use crate::diagnostics::Diagnostic;
 use crate::error::{AwoError, AwoResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,9 @@ mod install;
 pub use catalog::discover_repo_skills;
 use install::{determine_install_state, install_skill, matches_mode, remove_target};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SkillRuntime {
@@ -32,7 +34,9 @@ impl SkillRuntime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SkillLinkMode {

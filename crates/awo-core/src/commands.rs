@@ -5,8 +5,7 @@ use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::SlotStrategy;
 use crate::store::Store;
-use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 mod context;
@@ -36,59 +35,63 @@ pub(super) struct SessionStartOptions {
     pub attach_context: bool,
 }
 
-#[derive(Debug, Clone)]
+/// A command that can be dispatched to the orchestration core.
+///
+/// Each variant maps to a JSON-RPC method name (e.g. `"slot.acquire"`),
+/// enabling transport-agnostic dispatch for both in-process CLI usage
+/// and future daemon-based RPC execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "method", content = "params")]
 pub enum Command {
-    NoOp {
-        label: String,
-    },
-    RepoAdd {
-        path: PathBuf,
-    },
+    #[serde(rename = "noop")]
+    NoOp { label: String },
+    #[serde(rename = "repo.add")]
+    RepoAdd { path: PathBuf },
+    #[serde(rename = "repo.clone")]
     RepoClone {
         remote_url: String,
         destination: Option<PathBuf>,
     },
-    RepoFetch {
-        repo_id: String,
-    },
+    #[serde(rename = "repo.fetch")]
+    RepoFetch { repo_id: String },
+    #[serde(rename = "repo.list")]
     RepoList,
-    ContextPack {
-        repo_id: String,
-    },
-    ContextDoctor {
-        repo_id: String,
-    },
-    SkillsList {
-        repo_id: String,
-    },
+    #[serde(rename = "context.pack")]
+    ContextPack { repo_id: String },
+    #[serde(rename = "context.doctor")]
+    ContextDoctor { repo_id: String },
+    #[serde(rename = "skills.list")]
+    SkillsList { repo_id: String },
+    #[serde(rename = "skills.doctor")]
     SkillsDoctor {
         repo_id: String,
         runtime: Option<SkillRuntime>,
     },
+    #[serde(rename = "skills.link")]
     SkillsLink {
         repo_id: String,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
     },
+    #[serde(rename = "skills.sync")]
     SkillsSync {
         repo_id: String,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
     },
+    #[serde(rename = "slot.acquire")]
     SlotAcquire {
         repo_id: String,
         task_name: String,
         strategy: SlotStrategy,
     },
-    SlotList {
-        repo_id: Option<String>,
-    },
-    SlotRelease {
-        slot_id: String,
-    },
-    SlotRefresh {
-        slot_id: String,
-    },
+    #[serde(rename = "slot.list")]
+    SlotList { repo_id: Option<String> },
+    #[serde(rename = "slot.release")]
+    SlotRelease { slot_id: String },
+    #[serde(rename = "slot.refresh")]
+    SlotRefresh { slot_id: String },
+    #[serde(rename = "session.start")]
     SessionStart {
         slot_id: String,
         runtime: RuntimeKind,
@@ -98,21 +101,60 @@ pub enum Command {
         launch_mode: SessionLaunchMode,
         attach_context: bool,
     },
-    SessionList {
-        repo_id: Option<String>,
-    },
-    SessionCancel {
-        session_id: String,
-    },
-    SessionDelete {
-        session_id: String,
-    },
-    ReviewStatus {
-        repo_id: Option<String>,
-    },
+    #[serde(rename = "session.list")]
+    SessionList { repo_id: Option<String> },
+    #[serde(rename = "session.cancel")]
+    SessionCancel { session_id: String },
+    #[serde(rename = "session.delete")]
+    SessionDelete { session_id: String },
+    #[serde(rename = "review.status")]
+    ReviewStatus { repo_id: Option<String> },
 }
 
-#[derive(Debug, Clone, Serialize)]
+impl Command {
+    /// Returns the JSON-RPC method name for this command variant.
+    pub fn method_name(&self) -> &'static str {
+        match self {
+            Self::NoOp { .. } => "noop",
+            Self::RepoAdd { .. } => "repo.add",
+            Self::RepoClone { .. } => "repo.clone",
+            Self::RepoFetch { .. } => "repo.fetch",
+            Self::RepoList => "repo.list",
+            Self::ContextPack { .. } => "context.pack",
+            Self::ContextDoctor { .. } => "context.doctor",
+            Self::SkillsList { .. } => "skills.list",
+            Self::SkillsDoctor { .. } => "skills.doctor",
+            Self::SkillsLink { .. } => "skills.link",
+            Self::SkillsSync { .. } => "skills.sync",
+            Self::SlotAcquire { .. } => "slot.acquire",
+            Self::SlotList { .. } => "slot.list",
+            Self::SlotRelease { .. } => "slot.release",
+            Self::SlotRefresh { .. } => "slot.refresh",
+            Self::SessionStart { .. } => "session.start",
+            Self::SessionList { .. } => "session.list",
+            Self::SessionCancel { .. } => "session.cancel",
+            Self::SessionDelete { .. } => "session.delete",
+            Self::ReviewStatus { .. } => "review.status",
+        }
+    }
+
+    /// Reconstruct a `Command` from a JSON-RPC method name and params.
+    ///
+    /// This leverages the adjacently-tagged serde representation: the
+    /// `method` and `params` fields from a JSON-RPC request map directly
+    /// to the serde envelope for `Command`.
+    pub fn from_rpc(method: &str, params: serde_json::Value) -> Result<Self, serde_json::Error> {
+        let envelope = serde_json::json!({
+            "method": method,
+            "params": params,
+        });
+        serde_json::from_value(envelope)
+    }
+}
+
+/// The result of executing a command, including a human-readable summary
+/// and structured domain events suitable for JSON-RPC responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandOutcome {
     pub summary: String,
     pub events: Vec<DomainEvent>,
@@ -140,7 +182,7 @@ impl<'a> CommandRunner<'a> {
 
     pub fn run(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         match command {
-            Command::NoOp { label } => self.run_noop(label).map_err(Into::into),
+            Command::NoOp { label } => self.run_noop(label),
             Command::RepoAdd { path } => self.run_repo_add(path),
             Command::RepoClone {
                 remote_url,
@@ -148,28 +190,20 @@ impl<'a> CommandRunner<'a> {
             } => self.run_repo_clone(remote_url, destination),
             Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id),
             Command::RepoList => self.run_repo_list(),
-            Command::ContextPack { repo_id } => self.run_context_pack(repo_id).map_err(Into::into),
-            Command::ContextDoctor { repo_id } => {
-                self.run_context_doctor(repo_id).map_err(Into::into)
-            }
-            Command::SkillsList { repo_id } => self.run_skills_list(repo_id).map_err(Into::into),
-            Command::SkillsDoctor { repo_id, runtime } => {
-                self.run_skills_doctor(repo_id, runtime).map_err(Into::into)
-            }
+            Command::ContextPack { repo_id } => self.run_context_pack(repo_id),
+            Command::ContextDoctor { repo_id } => self.run_context_doctor(repo_id),
+            Command::SkillsList { repo_id } => self.run_skills_list(repo_id),
+            Command::SkillsDoctor { repo_id, runtime } => self.run_skills_doctor(repo_id, runtime),
             Command::SkillsLink {
                 repo_id,
                 runtime,
                 mode,
-            } => self
-                .run_skills_link(repo_id, runtime, mode)
-                .map_err(Into::into),
+            } => self.run_skills_link(repo_id, runtime, mode),
             Command::SkillsSync {
                 repo_id,
                 runtime,
                 mode,
-            } => self
-                .run_skills_sync(repo_id, runtime, mode)
-                .map_err(Into::into),
+            } => self.run_skills_sync(repo_id, runtime, mode),
             Command::SlotAcquire {
                 repo_id,
                 task_name,
@@ -202,7 +236,7 @@ impl<'a> CommandRunner<'a> {
         }
     }
 
-    fn run_noop(&mut self, label: String) -> Result<CommandOutcome> {
+    fn run_noop(&mut self, label: String) -> AwoResult<CommandOutcome> {
         let command_name = "noop";
         let payload = format!("label={label}");
         self.store.insert_action(command_name, &payload)?;

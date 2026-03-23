@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/awo-core", "crates/awo-app"]
+members = ["crates/awo-core", "crates/awo-app", "crates/awo-mcp"]
 resolver = "2"
 
 [workspace.package]

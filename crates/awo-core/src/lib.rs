@@ -3,7 +3,9 @@ pub mod capabilities;
 pub mod commands;
 pub mod config;
 pub mod context;
+pub mod daemon;
 pub mod diagnostics;
+pub mod dispatch;
 pub mod error;
 pub mod events;
 pub mod fingerprint;
@@ -24,7 +26,14 @@ pub use capabilities::{
 };
 pub use commands::{Command, CommandOutcome};
 pub use context::{ContextDoctorReport, RepoContext};
+#[cfg(unix)]
+pub use daemon::DaemonClient;
+pub use daemon::{DaemonOptions, DaemonServer, ShutdownHandle, daemon_is_running};
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
+pub use dispatch::{
+    Dispatcher, RpcError, RpcRequest, RpcResponse, RpcResult, dispatch_rpc, error_code_for,
+    parse_rpc_request,
+};
 pub use error::{AwoError, AwoResult};
 pub use events::DomainEvent;
 pub use routing::{

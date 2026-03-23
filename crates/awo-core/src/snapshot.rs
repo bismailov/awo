@@ -602,12 +602,11 @@ fn build_review_summary_impl<'a>(
         if slot.dirty {
             let mut dirs = HashSet::new();
             for file in &slot.dirty_files {
-                if let Some(parent) = Path::new(file).parent() {
-                    if let Some(parent_str) = parent.to_str() {
-                        if !parent_str.is_empty() {
-                            dirs.insert(parent_str.to_string());
-                        }
-                    }
+                if let Some(parent) = Path::new(file).parent()
+                    && let Some(parent_str) = parent.to_str()
+                    && !parent_str.is_empty()
+                {
+                    dirs.insert(parent_str.to_string());
                 }
             }
             dirty_slot_map.insert(slot.id, (slot.dirty_files.clone(), dirs));
@@ -656,7 +655,7 @@ fn build_review_summary_impl<'a>(
                         Path::new(f)
                             .parent()
                             .and_then(|p| p.to_str())
-                            .map_or(false, |p| p == dir)
+                            .is_some_and(|p| p == dir)
                     })
                     .collect();
                 let mut files_in_dir_b: Vec<_> = files_b
@@ -665,7 +664,7 @@ fn build_review_summary_impl<'a>(
                         Path::new(f)
                             .parent()
                             .and_then(|p| p.to_str())
-                            .map_or(false, |p| p == dir)
+                            .is_some_and(|p| p == dir)
                     })
                     .collect();
 

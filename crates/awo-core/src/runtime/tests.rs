@@ -609,8 +609,16 @@ fn session_record_non_terminal_states() {
     for status in [SessionStatus::Running, SessionStatus::Prepared] {
         let mut session = running_oneshot_session("s1");
         session.status = status;
-        assert!(!session.is_terminal(), "{:?} should not be terminal", status);
-        assert!(session.blocks_release(), "{:?} should block release", status);
+        assert!(
+            !session.is_terminal(),
+            "{:?} should not be terminal",
+            status
+        );
+        assert!(
+            session.blocks_release(),
+            "{:?} should block release",
+            status
+        );
     }
 }
 

@@ -3,8 +3,8 @@ use crate::context::{discover_repo_context, plan_session_context, render_session
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::runtime::{
-    SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session, detect_runtime, detect_tmux,
-    execute_prepared_session, prepare_session,
+    SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session, detect_runtime,
+    detect_tmux, execute_prepared_session, prepare_session,
 };
 use crate::slot::{FingerprintStatus, SlotStatus};
 use std::path::Path;

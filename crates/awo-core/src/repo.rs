@@ -1,7 +1,6 @@
 use crate::app::AppPaths;
 use crate::error::{AwoError, AwoResult};
 use crate::git::GitDiscovery;
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -163,7 +162,7 @@ fn load_shared_manifest(path: &Path) -> AwoResult<SharedRepoManifest> {
     let contents = fs::read_to_string(path)
         .map_err(|source| AwoError::io("read shared repo manifest", path, source))?;
     let manifest = toml::from_str::<SharedRepoManifest>(&contents)
-        .with_context(|| format!("failed to parse shared repo manifest at {}", path.display()))?;
+        .map_err(|e| AwoError::team_manifest_parse(path, e))?;
     Ok(manifest)
 }
 
@@ -218,8 +217,7 @@ fn write_local_overlay(paths: &AppPaths, overlay: &LocalRepoOverlay) -> AwoResul
     fs::create_dir_all(&paths.repos_dir)
         .map_err(|source| AwoError::io("create repo overlay dir", &paths.repos_dir, source))?;
     let overlay_path = paths.repos_dir.join(format!("{}.toml", overlay.repo_id));
-    let contents =
-        toml::to_string_pretty(overlay).context("failed to serialize local repo overlay")?;
+    let contents = toml::to_string_pretty(overlay).map_err(AwoError::team_manifest_serialize)?;
     fs::write(&overlay_path, contents)
         .map_err(|source| AwoError::io("write repo overlay", &overlay_path, source))?;
     Ok(overlay_path)

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{AwoError, AwoResult};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -19,7 +19,7 @@ pub struct Fingerprint {
     pub files: Vec<String>,
 }
 
-pub fn fingerprint_for_dir(root: &Path) -> Result<Fingerprint> {
+pub fn fingerprint_for_dir(root: &Path) -> AwoResult<Fingerprint> {
     let mut hasher = Sha256::new();
     let mut files = Vec::new();
 
@@ -27,7 +27,9 @@ pub fn fingerprint_for_dir(root: &Path) -> Result<Fingerprint> {
         let path = root.join(relative);
         if path.is_file() {
             hasher.update(relative.as_bytes());
-            hasher.update(fs::read(&path)?);
+            let contents = fs::read(&path)
+                .map_err(|source| AwoError::io("read fingerprint file", &path, source))?;
+            hasher.update(contents);
             files.push(relative.to_string());
         }
     }

@@ -140,7 +140,9 @@ impl RuntimeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display, EnumString, IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SessionLaunchMode {
@@ -226,7 +228,7 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSess
             runtime: request.runtime.as_str().to_string(),
             supervisor: supervisor.map(|supervisor| supervisor.as_str().to_string()),
             prompt: request.prompt.to_string(),
-            status: status,
+            status,
             read_only: request.read_only,
             dry_run: request.dry_run,
             command_line,
@@ -317,7 +319,7 @@ pub fn execute_prepared_session(
     } else {
         SessionStatus::Failed
     };
-    
+
     prepared_session.session.exit_code = output.status.code().map(i64::from);
     let exit_code = prepared_session.session.exit_code.unwrap_or(-1);
     fs::write(&exit_path, exit_code.to_string())

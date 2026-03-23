@@ -311,10 +311,10 @@ impl Store {
                     slot.fingerprint_status.as_str(),
                     slot.dirty
                 ],
-                )
-                .map_err(|e| AwoError::store("failed to upsert slot", e))?;
-                Ok(())
-                }
+            )
+            .map_err(|e| AwoError::store("failed to upsert slot", e))?;
+        Ok(())
+    }
 
     pub fn get_slot(&self, slot_id: &str) -> AwoResult<Option<SlotRecord>> {
         let connection = self

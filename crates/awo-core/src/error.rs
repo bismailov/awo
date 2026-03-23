@@ -91,8 +91,6 @@ pub enum AwoError {
     },
     #[error("store error: {message}")]
     StoreInit { message: String },
-    #[error(transparent)]
-    Internal(#[from] anyhow::Error),
 }
 
 #[macro_export]

@@ -1,19 +1,19 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::diagnostics::DiagnosticSeverity;
+use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::skills::{
     RuntimeSkillRoots, SkillLinkMode, SkillRuntime, discover_repo_skills, doctor_repo_skills,
     link_repo_skills, sync_repo_skills,
 };
-use anyhow::{Context, Result};
 use std::path::Path;
 
 impl<'a> CommandRunner<'a> {
-    pub(super) fn run_skills_list(&mut self, repo_id: String) -> Result<CommandOutcome> {
+    pub(super) fn run_skills_list(&mut self, repo_id: String) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         self.store.insert_action(
             "skills_list",
@@ -40,11 +40,11 @@ impl<'a> CommandRunner<'a> {
         &mut self,
         repo_id: String,
         runtime: Option<SkillRuntime>,
-    ) -> Result<CommandOutcome> {
+    ) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let runtimes = runtime
@@ -53,8 +53,8 @@ impl<'a> CommandRunner<'a> {
         let reports = runtimes
             .iter()
             .copied()
-            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots).map_err(Into::into))
-            .collect::<Result<Vec<_>>>()?;
+            .map(|runtime| doctor_repo_skills(&catalog, runtime, &roots))
+            .collect::<AwoResult<Vec<_>>>()?;
         let warning_count = reports
             .iter()
             .flat_map(|report| report.diagnostics.iter())
@@ -96,11 +96,11 @@ impl<'a> CommandRunner<'a> {
         repo_id: String,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
-    ) -> Result<CommandOutcome> {
+    ) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let report = link_repo_skills(&catalog, runtime, &roots, mode)?;
@@ -141,11 +141,11 @@ impl<'a> CommandRunner<'a> {
         repo_id: String,
         runtime: SkillRuntime,
         mode: SkillLinkMode,
-    ) -> Result<CommandOutcome> {
+    ) -> AwoResult<CommandOutcome> {
         let repo = self
             .store
             .get_repository(&repo_id)?
-            .with_context(|| format!("unknown repo id `{repo_id}`"))?;
+            .ok_or_else(|| AwoError::unknown_repo(&repo_id))?;
         let catalog = discover_repo_skills(Path::new(&repo.repo_root))?;
         let roots = RuntimeSkillRoots::from_environment();
         let report = sync_repo_skills(&catalog, runtime, &roots, mode)?;

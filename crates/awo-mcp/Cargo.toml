@@ -1,5 +1,5 @@
 [package]
-name = "awo-app"
+name = "awo-mcp"
 version.workspace = true
 edition.workspace = true
 
@@ -7,19 +7,11 @@ edition.workspace = true
 workspace = true
 
 [[bin]]
-name = "awo"
+name = "awo-mcp"
 path = "src/main.rs"
 
-[[bin]]
-name = "awod"
-path = "src/awod.rs"
-
 [dependencies]
-anyhow = "1.0.102"
 awo-core = { path = "../awo-core" }
-clap = { version = "4.6.0", features = ["derive"] }
-crossterm = "0.29.0"
-ratatui = "0.30.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tracing = "0.1.44"
