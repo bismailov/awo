@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use awo_core::{
     AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
     RoutingPreferencesSummary, RuntimeCapabilityDescriptor, RuntimeKind, SessionLaunchMode,
-    SessionSummary, SlotStrategy, SlotSummary, TeamSummary,
+    SessionSummary, SlotStrategy, SlotSummary, TaskCardState, TeamSummary, TeamTaskStartOptions,
 };
 use crossterm::event::{self, Event as CEvent, KeyCode};
 use crossterm::execute;
@@ -327,6 +327,11 @@ pub fn run_tui() -> Result<()> {
                         );
                     }
                 }
+                KeyCode::Char('t') => {
+                    if let Some(team) = selected_team(&snapshot, &state) {
+                        start_next_team_task(&mut core, &mut state, &team.team_id);
+                    }
+                }
                 _ => {}
             }
         }
@@ -448,6 +453,60 @@ fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
     }
 }
 
+fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, team_id: &str) {
+    let manifest = match core.load_team_manifest(team_id) {
+        Ok(m) => m,
+        Err(err) => {
+            state.status = format!("Error loading team: {err:#}");
+            return;
+        }
+    };
+    let next_task = manifest
+        .tasks
+        .iter()
+        .find(|t| t.state == TaskCardState::Todo);
+    let task = match next_task {
+        Some(t) => t,
+        None => {
+            state.status = format!("Team `{team_id}` has no todo tasks.");
+            return;
+        }
+    };
+    let options = TeamTaskStartOptions {
+        team_id: team_id.to_string(),
+        task_id: task.task_id.clone(),
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::default_for_environment()
+            .as_str()
+            .to_string(),
+        attach_context: true,
+        routing_preferences: None,
+    };
+    match core.start_team_task(options) {
+        Ok((_manifest, slot_outcome, session_outcome, execution)) => {
+            let mut messages = Vec::new();
+            if let Some(slot_out) = &slot_outcome {
+                messages.push(slot_out.summary.clone());
+            }
+            messages.push(session_outcome.summary.clone());
+            messages.push(format!(
+                "Task `{}` started with {} on slot `{}`.",
+                execution.task_id, execution.runtime, execution.slot_id
+            ));
+            state.status = messages.last().cloned().unwrap_or_default();
+            if let Some(slot_out) = slot_outcome {
+                append_events(state, slot_out.events);
+            }
+            append_events(state, session_outcome.events);
+        }
+        Err(err) => {
+            state.status = format!("Error: {err:#}");
+            state.messages.push(state.status.clone());
+        }
+    }
+}
+
 fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let selected_repo = selected_repo(snapshot, state);
     let visible_teams = visible_teams(snapshot, state);
@@ -464,7 +523,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | {}",
+        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | t team task | r refresh | Esc close | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title("Status"));

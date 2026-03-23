@@ -2,12 +2,12 @@
 
 ## 1. Current State
 
-`awo` is a working orchestrator with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 158+ tests. The infrastructure exists — the next priority is **using it end-to-end**.
+`awo` is a working orchestrator with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 313+ tests. All roadmap Section 3 items are now complete — the app is ready for its first end-to-end smoke test.
 
 ### What's Built
 
 **Core (`awo-core`)**
-- Typed state engine: `SessionStatus`, `SlotStatus`, `FingerprintStatus` enums
+- Typed state engine: `SessionStatus`, `SlotStatus`, `FingerprintStatus`, `TeamStatus`, `TaskCardState` enums — zero string-based status comparisons
 - SQLite persistence with WAL mode, versioned migrations
 - Command/Dispatcher pattern: transport-agnostic command execution
 - Review engine: risky-overlap and soft-overlap detection across slots
@@ -16,6 +16,7 @@
 - Git worktree isolation, context packs, skill catalogs
 - Routing engine with cost-tier/capability-aware runtime selection
 - Team manifests with task cards, execution modes, member routing
+- Actionable error messages with recovery hints throughout
 
 **Daemon (`awod`)**
 - JSON-RPC 2.0 over Unix Domain Socket
@@ -25,44 +26,58 @@
 
 **MCP Server (`awo-mcp`)**
 - Stdio JSON-RPC 2.0 transport (synchronous, no Tokio)
-- 8 tools: `list_repos`, `acquire_slot`, `release_slot`, `list_slots`, `start_session`, `cancel_session`, `list_sessions`, `get_review_status`
+- 9 tools: `list_repos`, `acquire_slot`, `release_slot`, `list_slots`, `start_session`, `cancel_session`, `list_sessions`, `get_review_status`, `get_session_log`
 - 4 resources: `awo://repos`, `awo://slots`, `awo://sessions`, `awo://review`
-- 14 unit tests
 
 **CLI (`awo-app`)**
-- 9 subcommands covering full lifecycle
+- 9 subcommands covering full lifecycle including `session log`
 - `CliBackend` auto-detects daemon for dispatch, reads directly from SQLite
-- TUI: ratatui-based dashboard with repo/team/slot/session panels
+- TUI: ratatui-based dashboard with full keyboard operability
+
+**TUI Operations**
+- `s` acquire slot, `Enter` start session / view log, `x` cancel session, `X` release slot
+- `t` start next team task (auto-selects first todo task, acquires slot, launches session)
+- `r` refresh review / refresh log, `Esc` close log panel
+- `a` add repo, `c` context doctor, `d` skills doctor
+- Tab/BackTab panel cycling, Up/Down/j/k navigation
+- Inline log viewer overlay with refresh
 
 **Quality**
 - `unsafe_code = "forbid"` workspace-wide
-- Zero `anyhow` in core (typed `AwoError` throughout)
-- 158+ tests across all modules
+- Zero `anyhow` in production core code (typed `AwoError` throughout)
+- 313+ tests: 166 unit, 29 integration (command_flows), 21 MCP, 35 app, 32 store, 30+ others
 
-## 2. Immediate Priority: See It Work
+## 2. Immediate Priority: Smoke Test
 
-The app has never been run end-to-end by the project owner. Before adding anything new, the focus is:
+The app has all features needed for end-to-end use. The operator should:
 
-1. **Smoke-test the CLI workflow**: `awo repo add` → `awo slot acquire` → `awo session start` → observe in TUI
-2. **Fix any runtime issues** discovered during the smoke test
-3. **TUI operability**: The TUI currently shows state but doesn't let you drive operations. Wire up keyboard commands for the slot/session lifecycle (see job card)
+1. `awo repo add .` — register a repository
+2. `awo slot acquire <repo_id> <task>` — get a workspace
+3. `awo session start <slot_id> shell "ls"` — run a command
+4. `awo tui` — open the dashboard, observe state, press Enter to view logs
+5. Alternatively: do the entire workflow from within `awo tui`
 
-## 3. Next Steps (Post-Smoke-Test)
+## 3. Completed Items
 
-These are the only items on the roadmap until the app is proven usable:
+All of these were on the roadmap and are now done:
 
-- **TUI interactivity**: Add keyboard-driven slot acquire/release, session start/cancel from TUI panels
-- **Error UX**: Surface actionable error messages in TUI and CLI when things go wrong
-- **Log tailing**: Show live PTY output in TUI for running sessions
-- **Team run from TUI**: Let the operator kick off a team run and watch progress
+- **TUI interactivity**: Keyboard-driven slot acquire/release, session start/cancel
+- **Error UX**: Actionable error messages with recovery hints in CLI and core
+- **Log viewing**: Inline session log viewer in TUI (Enter on session, Esc to close, r to refresh)
+- **Team run from TUI**: `t` key starts next todo task for selected team
+- **Hardening**: All string-based status comparisons replaced with typed enums, git error swallowing replaced with warn logging, 14 new negative-path tests
 
-## 4. Deferred (Not Now)
+## 4. Next Wave (Post-Smoke-Test)
 
-These are real ideas but explicitly parked to avoid feature creep:
+- **Hardening depth**: More negative-path tests for edge filesystems, malformed manifests
+- **Review intelligence**: Richer overlap and conflict analysis, decision-quality review output
+- **Team execution depth**: Result consolidation, multi-agent handoff flows
+- **Middleware mode**: Daemon broker, MCP facade, routing policy engine
+
+## 5. Deferred (Not Now)
 
 - WASI sandboxing research
 - Windows CI / ConPTY verification
 - MCP resource subscriptions
 - Named Pipe transport for Windows daemon
-- Routing auto-selection / policy engine
 - Context pack auto-generation
