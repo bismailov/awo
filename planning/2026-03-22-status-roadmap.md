@@ -45,7 +45,7 @@
 **Quality**
 - `unsafe_code = "forbid"` workspace-wide
 - Zero `anyhow` in production core code (typed `AwoError` throughout)
-- 313+ tests: 166 unit, 29 integration (command_flows), 21 MCP, 35 app, 32 store, 30+ others
+- 336 tests: 189 unit, 29 integration (command_flows), 21 MCP, 35 app, 32 store, 30+ others
 
 ## 2. Immediate Priority: Smoke Test
 
