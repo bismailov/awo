@@ -1271,6 +1271,9 @@ fn kill_tmux_session(session_id: &str) -> Result<()> {
 
 #[test]
 fn session_timeout_is_enforced() -> Result<()> {
+    if !detect_tmux() {
+        return Ok(());
+    }
     let harness = TestHarness::new()?;
     let repo_id = harness.register_repo(harness.create_repo("timeout-test")?)?;
     let mut core = harness.core()?;
