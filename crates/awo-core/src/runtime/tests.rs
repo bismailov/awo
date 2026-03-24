@@ -819,3 +819,30 @@ fn prepare_session_command_line_is_populated() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn unknown_runtime_kind_parse_fails() {
+    let result = "unknown".parse::<RuntimeKind>();
+    assert!(
+        result.is_err(),
+        "expected error parsing unknown RuntimeKind"
+    );
+}
+
+#[test]
+fn unknown_session_status_parse_fails() {
+    let result = "bogus".parse::<SessionStatus>();
+    assert!(
+        result.is_err(),
+        "expected error parsing unknown SessionStatus"
+    );
+}
+
+#[test]
+fn unknown_launch_mode_parse_fails() {
+    let result = "invalid".parse::<SessionLaunchMode>();
+    assert!(
+        result.is_err(),
+        "expected error parsing unknown SessionLaunchMode"
+    );
+}

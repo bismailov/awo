@@ -199,11 +199,10 @@ pub fn dirty_files(path: &Path) -> AwoResult<Vec<String>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut files = vec![];
     for line in stdout.lines() {
-        let trimmed = line.trim();
-        if !trimmed.is_empty()
-            && let Some(p) = trimmed.get(3..)
-        {
-            files.push(p.trim().to_string());
+        // Porcelain format: 2-char status + space + filename (e.g. " M README.md")
+        // Do not trim the line — the leading space is part of the status format
+        if line.len() > 3 {
+            files.push(line[3..].to_string());
         }
     }
     Ok(files)
@@ -337,6 +336,119 @@ mod tests {
         let non_existent = temp.path().join("missing");
         let result = is_clean(&non_existent);
         assert!(result.is_err());
+        Ok(())
+    }
+
+    /// Initialise a bare git repo with an initial commit so refs exist.
+    fn init_repo(path: &Path) -> AwoResult<()> {
+        use std::process::Command;
+        let run = |args: &[&str]| -> AwoResult<()> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .output()
+                .map_err(|e| AwoError::git_invocation("test init", path, e))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(AwoError::git_command_failed(
+                    "test init",
+                    path,
+                    stderr.trim(),
+                ));
+            }
+            Ok(())
+        };
+
+        run(&["init"])?;
+        run(&["config", "user.email", "test@test.com"])?;
+        run(&["config", "user.name", "Test"])?;
+        Ok(())
+    }
+
+    /// Commit a file into the test repo so HEAD exists.
+    fn commit_to_repo(path: &Path, filename: &str, contents: &str) -> AwoResult<()> {
+        use std::process::Command;
+        std::fs::write(path.join(filename), contents)
+            .map_err(|e| AwoError::io("write test file", path, e))?;
+        let run = |args: &[&str]| -> AwoResult<()> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .output()
+                .map_err(|e| AwoError::git_invocation("test commit", path, e))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(AwoError::git_command_failed(
+                    "test commit",
+                    path,
+                    stderr.trim(),
+                ));
+            }
+            Ok(())
+        };
+        run(&["add", filename])?;
+        run(&["commit", "-m", "test commit"])?;
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_files_on_clean_repo_returns_empty() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "hello")?;
+        let files = dirty_files(temp.path())?;
+        assert!(files.is_empty(), "expected no dirty files, got: {files:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_files_on_dirty_repo_returns_modified_files() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "hello")?;
+        // Add an untracked file so the porcelain prefix ("?? ") is handled
+        // correctly by the trim-then-skip-3 parser in dirty_files().
+        std::fs::write(temp.path().join("new.txt"), "untracked")
+            .map_err(|e| AwoError::io("write untracked file", temp.path(), e))?;
+        let files = dirty_files(temp.path())?;
+        assert!(
+            files.contains(&"new.txt".to_string()),
+            "expected new.txt in dirty list, got: {files:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_files_on_non_git_dir_returns_error() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let result = dirty_files(temp.path());
+        assert!(result.is_err(), "expected error for non-git directory");
+        Ok(())
+    }
+
+    #[test]
+    fn detach_worktree_on_nonexistent_path_returns_error() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let non_existent = temp.path().join("does-not-exist");
+        let result = detach_worktree(&non_existent, "main");
+        assert!(
+            result.is_err(),
+            "expected error for nonexistent worktree path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reuse_worktree_on_nonexistent_path_returns_error() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let non_existent = temp.path().join("does-not-exist");
+        let result = reuse_worktree(&non_existent, "feature-branch", "main");
+        assert!(
+            result.is_err(),
+            "expected error for nonexistent worktree path"
+        );
         Ok(())
     }
 }
