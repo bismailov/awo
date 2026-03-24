@@ -4,8 +4,12 @@ use crate::runtime::SessionStatus;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
+pub mod reconcile;
 mod storage;
 
+pub use reconcile::{
+    build_team_teardown_plan, collect_bound_slot_ids, reconcile_team_manifest_state,
+};
 pub use storage::{
     TeamManifestGuard, default_team_manifest_path, list_team_manifest_paths, load_team_manifest,
     remove_team_manifest, save_team_manifest,
