@@ -241,6 +241,7 @@ pub fn daemon_is_running(paths: &AppPaths) -> bool {
 
     #[cfg(not(unix))]
     {
+        let _ = paths;
         false
     }
 }
@@ -298,6 +299,7 @@ pub fn get_daemon_status(paths: &AppPaths) -> DaemonStatus {
 
     #[cfg(not(unix))]
     {
+        let _ = pid;
         DaemonStatus::NotRunning
     }
 }
