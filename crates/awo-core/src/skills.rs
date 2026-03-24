@@ -420,7 +420,7 @@ fn reconcile_repo_skills(
                     } else {
                         path.parent().unwrap_or(target_dir).join(linked_to)
                     };
-                    let resolved = match fs::canonicalize(&resolved) {
+                    let resolved = match dunce::canonicalize(&resolved) {
                         Ok(resolved) => resolved,
                         Err(source) => {
                             warn!(

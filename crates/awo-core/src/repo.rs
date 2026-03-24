@@ -54,7 +54,7 @@ pub fn register_repo(
     input_path: PathBuf,
     git: GitDiscovery,
 ) -> AwoResult<RegisterRepoResult> {
-    let canonical_root = fs::canonicalize(&git.git_root)
+    let canonical_root = dunce::canonicalize(&git.git_root)
         .map_err(|source| AwoError::io("canonicalize repo root", &git.git_root, source))?;
     let shared_manifest_path = canonical_root.join(".awo").join("repo.toml");
     let shared_manifest = load_shared_manifest(&shared_manifest_path)?;

@@ -131,9 +131,9 @@ fn copy_dir_all(source_path: &Path, target_path: &Path) -> AwoResult<()> {
 }
 
 fn same_path(left: &Path, right: &Path) -> AwoResult<bool> {
-    let left =
-        fs::canonicalize(left).map_err(|source| AwoError::io("canonicalize path", left, source))?;
-    let right = fs::canonicalize(right)
+    let left = dunce::canonicalize(left)
+        .map_err(|source| AwoError::io("canonicalize path", left, source))?;
+    let right = dunce::canonicalize(right)
         .map_err(|source| AwoError::io("canonicalize path", right, source))?;
     Ok(left == right)
 }

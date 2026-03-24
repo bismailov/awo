@@ -61,7 +61,7 @@ impl SessionContextPlan {
 
 pub fn discover_repo_context(repo_root: &Path) -> AwoResult<RepoContext> {
     let repo_root_display = repo_root.display().to_string();
-    let repo_root = fs::canonicalize(repo_root)
+    let repo_root = dunce::canonicalize(repo_root)
         .map_err(|source| AwoError::io("canonicalize repo root", repo_root_display, source))?;
 
     let entrypoints = discover_entrypoints(&repo_root);

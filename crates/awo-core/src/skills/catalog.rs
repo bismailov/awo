@@ -8,7 +8,7 @@ use std::path::Path;
 
 pub fn discover_repo_skills(repo_root: &Path) -> AwoResult<RepoSkillCatalog> {
     let repo_root_display = repo_root.display().to_string();
-    let repo_root = fs::canonicalize(repo_root)
+    let repo_root = dunce::canonicalize(repo_root)
         .map_err(|source| AwoError::io("canonicalize repo root", repo_root_display, source))?;
     let shared_root = repo_root.join(".agents/skills");
     let lockfile_path = repo_root.join("skills-lock.json");

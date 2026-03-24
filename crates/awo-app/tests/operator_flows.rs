@@ -67,6 +67,8 @@ impl TestEnv {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_awo"));
         cmd.arg("--json");
         cmd.env("HOME", &self.root);
+        cmd.env("AWO_CONFIG_DIR", self.root.join("config"));
+        cmd.env("AWO_DATA_DIR", self.root.join("data"));
         cmd.env("XDG_CONFIG_HOME", self.root.join("config"));
         cmd.env("XDG_DATA_HOME", self.root.join("data"));
         #[cfg(windows)]
@@ -94,6 +96,8 @@ impl TestEnv {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_awo"));
         cmd.args(args);
         cmd.env("HOME", &self.root);
+        cmd.env("AWO_CONFIG_DIR", self.root.join("config"));
+        cmd.env("AWO_DATA_DIR", self.root.join("data"));
         cmd.env("XDG_CONFIG_HOME", self.root.join("config"));
         cmd.env("XDG_DATA_HOME", self.root.join("data"));
         #[cfg(windows)]
