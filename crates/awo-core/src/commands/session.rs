@@ -22,6 +22,7 @@ impl<'a> CommandRunner<'a> {
             dry_run,
             launch_mode,
             attach_context,
+            timeout_secs,
         } = options;
         if !dry_run {
             if !detect_runtime(runtime) {
@@ -99,6 +100,7 @@ impl<'a> CommandRunner<'a> {
             read_only,
             dry_run,
             launch_mode,
+            timeout_secs,
         })?;
         self.store.upsert_session(&prepared.session)?;
         let session_id = prepared.session.id.clone();

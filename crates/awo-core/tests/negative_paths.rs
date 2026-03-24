@@ -268,7 +268,7 @@ fn dispatch_session_start_nonexistent_slot_returns_error() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     });
     assert!(result.is_err());
     Ok(())

@@ -96,7 +96,7 @@ fn session_start_with_nonexistent_slot_returns_error() -> Result<()> {
         read_only: false,
         dry_run: false,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     });
 
     assert!(result.is_err());

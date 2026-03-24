@@ -538,6 +538,7 @@ impl AppCore {
             dry_run: options.dry_run,
             launch_mode,
             attach_context: options.attach_context,
+            timeout_secs: None,
         }) {
             Ok(outcome) => outcome,
             Err(error) => {

@@ -274,6 +274,8 @@ fn roundtrip_session_crud() -> Result<()> {
         stdout_path: Some("/tmp/stdout.log".to_string()),
         stderr_path: Some("/tmp/stderr.log".to_string()),
         exit_code: None,
+        timeout_secs: None,
+        started_at: None,
         created_at: String::new(),
         updated_at: String::new(),
     };

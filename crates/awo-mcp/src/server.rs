@@ -343,6 +343,10 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                         "enum": ["pty", "oneshot"],
                         "description": "Session launch mode.",
                         "default": "pty"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Optional session timeout in seconds."
                     }
                 },
                 "required": ["slot_id", "runtime", "prompt"],
@@ -500,6 +504,10 @@ fn map_tool_to_command(
                 Some("oneshot") => awo_core::SessionLaunchMode::Oneshot,
                 _ => awo_core::SessionLaunchMode::Pty,
             };
+            let timeout_secs = args
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as i64);
             Ok(awo_core::Command::SessionStart {
                 slot_id,
                 runtime,
@@ -508,6 +516,7 @@ fn map_tool_to_command(
                 dry_run,
                 launch_mode,
                 attach_context: true,
+                timeout_secs,
             })
         }
         "cancel_session" => {

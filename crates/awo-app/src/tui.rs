@@ -62,6 +62,7 @@ enum InputMode {
 enum InputAction {
     AcquireSlot,
     StartSession,
+    SetFilter,
 }
 
 #[derive(Debug)]
@@ -81,6 +82,7 @@ struct TuiState {
     input_mode: InputMode,
     show_help: bool,
     log_scroll: u16,
+    filter_query: Option<String>,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -113,6 +115,7 @@ pub fn run_tui() -> Result<()> {
         input_mode: InputMode::Normal,
         show_help: false,
         log_scroll: 0,
+        filter_query: None,
     };
 
     let (tx, rx) = crossbeam_channel::unbounded::<BackgroundResult>();
@@ -212,6 +215,7 @@ pub fn run_tui() -> Result<()> {
                                             launch_mode: SessionLaunchMode::default_for_environment(
                                             ),
                                             attach_context: false,
+                                            timeout_secs: None,
                                         },
                                     );
 
@@ -224,6 +228,13 @@ pub fn run_tui() -> Result<()> {
                                         state.log_scroll = u16::MAX;
                                     }
                                 }
+                            }
+                            InputAction::SetFilter => {
+                                state.filter_query = if input.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(input.trim().to_lowercase())
+                                };
                             }
                         }
                     }
@@ -244,6 +255,20 @@ pub fn run_tui() -> Result<()> {
                 KeyCode::Char('q') => break,
                 KeyCode::Char('?') => {
                     state.show_help = !state.show_help;
+                }
+                KeyCode::Char('/') => {
+                    state.input_mode = InputMode::TextInput {
+                        prompt_label: "Filter: ".to_string(),
+                        buffer: String::new(),
+                        on_submit: InputAction::SetFilter,
+                    };
+                }
+                KeyCode::Esc => {
+                    if state.filter_query.is_some() {
+                        state.filter_query = None;
+                    } else if state.show_log_panel {
+                        state.show_log_panel = false;
+                    }
                 }
                 KeyCode::Tab => {
                     state.focus = match state.focus {
@@ -345,11 +370,6 @@ pub fn run_tui() -> Result<()> {
                         };
                     }
                 }
-                KeyCode::Esc => {
-                    if state.show_log_panel {
-                        state.show_log_panel = false;
-                    }
-                }
                 KeyCode::Char('x') => {
                     if let Some(session) = selected_session(&snapshot, &state) {
                         apply_command(
@@ -440,19 +460,35 @@ pub fn run_tui() -> Result<()> {
 }
 
 fn selected_repo<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a RepoSummary> {
-    snapshot.registered_repos.get(
-        state
-            .selected_repo_index
-            .min(snapshot.registered_repos.len().saturating_sub(1)),
-    )
+    let repos = visible_repos(snapshot, state);
+    repos
+        .get(state.selected_repo_index.min(repos.len().saturating_sub(1)))
+        .copied()
+}
+
+fn matches_filter(query: Option<&str>, text: &str) -> bool {
+    query.is_none_or(|q| text.to_lowercase().contains(&q.to_lowercase()))
+}
+
+fn visible_repos<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a RepoSummary> {
+    let q = state.filter_query.as_deref();
+    snapshot
+        .registered_repos
+        .iter()
+        .filter(|r| matches_filter(q, &r.id) || matches_filter(q, &r.name))
+        .collect()
 }
 
 fn visible_teams<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a TeamSummary> {
     let selected_repo = selected_repo(snapshot, state);
+    let q = state.filter_query.as_deref();
     snapshot
         .teams
         .iter()
-        .filter(|team| selected_repo.is_none_or(|repo| team.repo_id == repo.id))
+        .filter(|team| {
+            selected_repo.is_none_or(|repo| team.repo_id == repo.id)
+                && (matches_filter(q, &team.team_id) || matches_filter(q, &team.objective))
+        })
         .collect()
 }
 
@@ -463,10 +499,14 @@ fn selected_team<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a 
 
 fn visible_slots<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SlotSummary> {
     let selected_repo = selected_repo(snapshot, state);
+    let q = state.filter_query.as_deref();
     snapshot
         .slots
         .iter()
-        .filter(|slot| selected_repo.is_none_or(|repo| repo.id == slot.repo_id))
+        .filter(|slot| {
+            selected_repo.is_none_or(|repo| repo.id == slot.repo_id)
+                && (matches_filter(q, &slot.id) || matches_filter(q, &slot.task_name))
+        })
         .collect()
 }
 
@@ -477,6 +517,7 @@ fn selected_slot<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a 
 
 fn visible_sessions<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SessionSummary> {
     let selected_repo = selected_repo(snapshot, state);
+    let q = state.filter_query.as_deref();
     snapshot
         .sessions
         .iter()
@@ -488,7 +529,7 @@ fn visible_sessions<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a 
                     .find(|slot| slot.id == session.slot_id)
                     .map(|slot| slot.repo_id == repo.id)
                     .unwrap_or(false)
-            })
+            }) && (matches_filter(q, &session.id) || matches_filter(q, &session.runtime))
         })
         .collect()
 }
@@ -499,7 +540,7 @@ fn selected_session<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&
 }
 
 fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
-    let repo_count = snapshot.registered_repos.len();
+    let repo_count = visible_repos(snapshot, state).len();
     state.selected_repo_index = if repo_count > 0 {
         state.selected_repo_index.min(repo_count - 1)
     } else {
@@ -657,7 +698,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     };
 
     let header = Paragraph::new(format!(
-        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | t next task | {}",
+        "awo V1 | q quit | / search | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | t next task | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title(title));
@@ -716,16 +757,19 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     ])
     .split(vertical[3]);
 
-    let repo_items = if snapshot.registered_repos.is_empty() {
+    let repo_items = if visible_repos(snapshot, state).is_empty() {
         vec![ListItem::new("(no repos - press 'a' to add)")]
     } else {
-        snapshot
-            .registered_repos
+        visible_repos(snapshot, state)
             .iter()
             .enumerate()
             .map(|(index, repo)| render_repo_item(repo, index == state.selected_repo_index))
             .collect::<Vec<_>>()
     };
+    let filter_suffix = state
+        .filter_query
+        .as_deref()
+        .map_or("".to_string(), |q| format!(" (filter: {})", q));
     let repos_border_style = if state.focus == TuiFocus::Repos {
         Style::default().fg(Color::Yellow)
     } else {
@@ -734,7 +778,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let repos = List::new(repo_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Repositories")
+            .title(format!("Repositories{}", filter_suffix))
             .border_style(repos_border_style),
     );
     frame.render_widget(repos, top[0]);
@@ -800,7 +844,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let slots = List::new(slot_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Slots")
+            .title(format!("Slots{}", filter_suffix))
             .border_style(slots_border_style),
     );
     frame.render_widget(slots, top[3]);
@@ -842,7 +886,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let sessions = List::new(session_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Sessions")
+            .title(format!("Sessions{}", filter_suffix))
             .border_style(sessions_border_style),
     );
     frame.render_widget(sessions, bottom[0]);
@@ -879,7 +923,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let teams = List::new(team_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Teams")
+            .title(format!("Teams{}", filter_suffix))
             .border_style(teams_border_style),
     );
     frame.render_widget(teams, bottom[1]);
@@ -970,6 +1014,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         let help_text = vec![
             Line::from(""),
             Line::from("  s       Acquire slot (enter task name)"),
+            Line::from("  /       Filter panels (case-insensitive on IDs/names)"),
             Line::from("  Enter   Start session / View log"),
             Line::from("  x       Cancel session"),
             Line::from("  X       Release slot"),

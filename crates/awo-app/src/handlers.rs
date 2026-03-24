@@ -988,6 +988,7 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
             dry_run,
             launch_mode,
             no_auto_context,
+            timeout,
         } => {
             let runtime = runtime.parse::<RuntimeKind>().map_err(anyhow::Error::msg)?;
             let launch_mode = match launch_mode {
@@ -1004,6 +1005,7 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
                 dry_run,
                 launch_mode,
                 attach_context: !no_auto_context,
+                timeout_secs: timeout.map(|v| v as i64),
             })?
         }
         SessionCommand::List { repo_id } => backend.dispatch(Command::SessionList { repo_id })?,

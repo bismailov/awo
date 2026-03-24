@@ -8,7 +8,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const BASE_SCHEMA_VERSION: i64 = 3;
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -74,6 +74,8 @@ const BASE_SCHEMA_SQL: &str = r#"
 
 const MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL: &str =
     "ALTER TABLE sessions ADD COLUMN supervisor TEXT";
+
+const MIGRATION_V5_ADD_SESSION_TIMEOUT_SQL: &str = "ALTER TABLE sessions ADD COLUMN timeout_secs INTEGER; ALTER TABLE sessions ADD COLUMN started_at TEXT;";
 
 #[derive(Debug)]
 pub struct Store {
@@ -417,8 +419,8 @@ impl Store {
             .execute(
                 "INSERT INTO sessions (
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    command_line, stdout_path, stderr_path, exit_code, timeout_secs, started_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(id) DO UPDATE SET
                     repo_id = excluded.repo_id,
                     slot_id = excluded.slot_id,
@@ -432,6 +434,8 @@ impl Store {
                     stdout_path = excluded.stdout_path,
                     stderr_path = excluded.stderr_path,
                     exit_code = excluded.exit_code,
+                    timeout_secs = excluded.timeout_secs,
+                    started_at = excluded.started_at,
                     updated_at = CURRENT_TIMESTAMP",
                 params![
                     session.id,
@@ -446,7 +450,9 @@ impl Store {
                     session.command_line,
                     session.stdout_path,
                     session.stderr_path,
-                    session.exit_code
+                    session.exit_code,
+                    session.timeout_secs,
+                    session.started_at,
                 ],
             )
             .map_err(|e| {
@@ -474,14 +480,16 @@ impl Store {
         let query = if repo_id.is_some() {
             "SELECT
                 id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
+                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                timeout_secs, started_at
              FROM sessions
              WHERE repo_id = ?1
              ORDER BY created_at DESC"
         } else {
             "SELECT
                 id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
+                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                timeout_secs, started_at
              FROM sessions
              ORDER BY created_at DESC"
         };
@@ -514,7 +522,8 @@ impl Store {
             .prepare(
                 "SELECT
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
+                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                    timeout_secs, started_at
                  FROM sessions
                  WHERE id = ?1",
             )
@@ -536,7 +545,8 @@ impl Store {
             .prepare(
                 "SELECT
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at
+                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                    timeout_secs, started_at
                  FROM sessions
                  WHERE slot_id = ?1
                  ORDER BY created_at DESC",
@@ -620,6 +630,8 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
         stdout_path: row.get(10)?,
         stderr_path: row.get(11)?,
         exit_code: row.get(12)?,
+        timeout_secs: row.get(15)?,
+        started_at: row.get(16)?,
         created_at: row.get(13)?,
         updated_at: row.get(14)?,
     })
@@ -666,6 +678,17 @@ fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoR
             .execute(MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL, [])
             .map_err(|e| {
                 AwoError::store("failed to add `supervisor` column to sessions table", e)
+            })?;
+    }
+
+    if schema_version < 5 {
+        connection
+            .execute_batch(MIGRATION_V5_ADD_SESSION_TIMEOUT_SQL)
+            .map_err(|e| {
+                AwoError::store(
+                    "failed to add timeout and started_at columns to sessions table",
+                    e,
+                )
             })?;
     }
 

@@ -33,6 +33,7 @@ pub(super) struct SessionStartOptions {
     pub dry_run: bool,
     pub launch_mode: SessionLaunchMode,
     pub attach_context: bool,
+    pub timeout_secs: Option<i64>,
 }
 
 /// A command that can be dispatched to the orchestration core.
@@ -100,6 +101,7 @@ pub enum Command {
         dry_run: bool,
         launch_mode: SessionLaunchMode,
         attach_context: bool,
+        timeout_secs: Option<i64>,
     },
     #[serde(rename = "session.list")]
     SessionList { repo_id: Option<String> },
@@ -294,6 +296,7 @@ impl<'a> CommandRunner<'a> {
                 dry_run,
                 launch_mode,
                 attach_context,
+                timeout_secs,
             } => self.run_session_start(SessionStartOptions {
                 slot_id,
                 runtime,
@@ -302,6 +305,7 @@ impl<'a> CommandRunner<'a> {
                 dry_run,
                 launch_mode,
                 attach_context,
+                timeout_secs,
             }),
             Command::SessionList { repo_id } => self.run_session_list(repo_id),
             Command::SessionCancel { session_id } => self.run_session_cancel(session_id),

@@ -374,6 +374,8 @@ pub enum SessionCommand {
         launch_mode: Option<String>,
         #[arg(long)]
         no_auto_context: bool,
+        #[arg(long)]
+        timeout: Option<u64>,
     },
     List {
         #[arg(long)]

@@ -1,6 +1,7 @@
 use crate::app::AppPaths;
 use crate::error::{AwoError, AwoResult};
 use crate::platform::{default_shell_program, executable_exists};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,8 @@ pub struct SessionRecord {
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     pub exit_code: Option<i64>,
+    pub timeout_secs: Option<i64>,
+    pub started_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -175,6 +178,7 @@ pub struct SessionRunRequest<'a> {
     pub read_only: bool,
     pub dry_run: bool,
     pub launch_mode: SessionLaunchMode,
+    pub timeout_secs: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -238,6 +242,8 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSess
             stdout_path: Some(stdout_path.display().to_string()),
             stderr_path: stderr_path.as_ref().map(|path| path.display().to_string()),
             exit_code: None,
+            timeout_secs: request.timeout_secs,
+            started_at: None,
             created_at: String::new(),
             updated_at: String::new(),
         },
@@ -256,6 +262,8 @@ pub fn execute_prepared_session(
             session: prepared_session.session,
         });
     }
+
+    prepared_session.session.started_at = Some(Utc::now().to_rfc3339());
 
     if let Some(supervisor) = prepared_session.supervisor {
         supervisor.launch(
@@ -338,6 +346,19 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
     if session.is_terminal() {
         return Ok(false);
     }
+
+    if let (Some(timeout_secs), Some(started_at_str)) = (session.timeout_secs, &session.started_at)
+        && let Ok(started_at) = DateTime::parse_from_rfc3339(started_at_str)
+    {
+        let now = Utc::now();
+        let elapsed = now.signed_duration_since(started_at.with_timezone(&Utc));
+        if elapsed.num_seconds() >= timeout_secs {
+            cancel_session(paths, session)?;
+            session.status = SessionStatus::Failed;
+            return Ok(true);
+        }
+    }
+
     if session.status != SessionStatus::Running {
         return Ok(false);
     }
@@ -373,6 +394,27 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResul
             AwoError::invalid_state("running supervised session is missing supervisor metadata")
         })?;
         supervisor.cancel(paths, session)?;
+    } else {
+        // Handle oneshot session cancellation
+        let pid = read_pid(paths, &session.id)?;
+        if let Some(pid) = pid
+            && process_is_running(pid)
+        {
+            // On Unix, try to kill the process group if possible
+            #[cfg(unix)]
+            {
+                use std::process::Command;
+                let _ = Command::new("kill").args(["-9", &format!("-{pid}")]).status();
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+            }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string(), "/T"]).status();
+            }
+        }
+        let logs_dir = paths.logs_dir.join("sessions");
+        clear_sidecar_if_exists(&pid_path_for(&logs_dir, &session.id))?;
     }
 
     session.status = SessionStatus::Cancelled;

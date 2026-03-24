@@ -226,7 +226,7 @@ fn release_blocks_pending_session() -> Result<()> {
         read_only: false,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
 
     let error = core
@@ -264,7 +264,7 @@ fn cancelling_pending_session_unblocks_release() -> Result<()> {
         read_only: false,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
     let session_id = core
         .snapshot()?
@@ -315,7 +315,7 @@ fn deleting_terminal_session_removes_it_from_state() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
     let session_id = core
         .snapshot()?
@@ -396,7 +396,7 @@ fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
         read_only: true,
         dry_run: false,
         launch_mode: SessionLaunchMode::Pty,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
 
     let session = core
@@ -472,7 +472,7 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
         read_only: true,
         dry_run: false,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
 
     let config = harness.config.clone();
@@ -486,7 +486,7 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
             read_only: true,
             dry_run: false,
             launch_mode: SessionLaunchMode::Oneshot,
-            attach_context: false,
+            attach_context: false, timeout_secs: None,
         })?;
         Ok(())
     });
@@ -536,7 +536,7 @@ fn failed_session_is_reflected_in_review_summary() -> Result<()> {
         read_only: true,
         dry_run: false,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
 
     let session = core
@@ -589,7 +589,7 @@ fn oneshot_session_is_visible_while_running() -> Result<()> {
             read_only: true,
             dry_run: false,
             launch_mode: SessionLaunchMode::Oneshot,
-            attach_context: false,
+            attach_context: false, timeout_secs: None,
         })?;
         Ok(())
     });
@@ -644,7 +644,7 @@ fn cancelling_running_oneshot_session_is_rejected() -> Result<()> {
             read_only: true,
             dry_run: false,
             launch_mode: SessionLaunchMode::Oneshot,
-            attach_context: false,
+            attach_context: false, timeout_secs: None,
         })?;
         Ok(())
     });
@@ -937,7 +937,7 @@ fn list_sessions_nonexistent_repo_filter_returns_empty() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
 
     let snapshot = core.snapshot()?;
@@ -1002,7 +1002,7 @@ fn session_log_invalid_stream_returns_error() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
     let session_id = core
         .snapshot()?
@@ -1121,7 +1121,7 @@ fn session_start_on_released_slot_returns_error() -> Result<()> {
             read_only: true,
             dry_run: true,
             launch_mode: SessionLaunchMode::Oneshot,
-            attach_context: false,
+            attach_context: false, timeout_secs: None,
         })
         .expect_err("session start on released slot should fail");
     let msg = error.to_string();
@@ -1157,7 +1157,7 @@ fn session_delete_on_non_terminal_session_returns_error() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
     let session_id = core
         .snapshot()?
@@ -1205,7 +1205,7 @@ fn session_cancel_on_terminal_session_returns_error() -> Result<()> {
         read_only: true,
         dry_run: true,
         launch_mode: SessionLaunchMode::Oneshot,
-        attach_context: false,
+        attach_context: false, timeout_secs: None,
     })?;
     let session_id = core
         .snapshot()?
@@ -1252,5 +1252,66 @@ fn kill_tmux_session(session_id: &str) -> Result<()> {
     let _ = std::process::Command::new("tmux")
         .args(["kill-session", "-t", &session])
         .output();
+    Ok(())
+}
+
+#[test]
+fn session_timeout_is_enforced() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("timeout-test")?)?;
+    let mut core = harness.core()?;
+
+    // Acquire a slot
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "timeout task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.repo_id == repo_id)
+        .context("missing slot")?;
+
+    // Start a session with a 1-second timeout that runs for 10 seconds
+    core.dispatch(Command::SessionStart {
+        slot_id: slot.id.clone(),
+        runtime: RuntimeKind::Shell,
+        prompt: "sleep 10".to_string(),
+        read_only: true,
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Pty,
+        attach_context: false,
+        timeout_secs: Some(1),
+    })?;
+
+    let session = core
+        .snapshot()?
+        .sessions
+        .into_iter()
+        .find(|session| session.slot_id == slot.id)
+        .context("missing session")?;
+
+    assert_eq!(session.status, SessionStatus::Running);
+
+    // Wait for timeout to expire
+    sleep(Duration::from_secs(2));
+
+    // snapshot() calls sync_session which should enforce the timeout
+    let snapshot = core.snapshot()?;
+    let session = snapshot
+        .sessions
+        .into_iter()
+        .find(|s| s.id == session.id)
+        .context("missing session after sync")?;
+
+    assert_eq!(
+        session.status,
+        SessionStatus::Failed,
+        "Session should have failed due to timeout"
+    );
+
     Ok(())
 }
