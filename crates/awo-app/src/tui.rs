@@ -4,16 +4,24 @@ use awo_core::{
     RoutingPreferencesSummary, RuntimeCapabilityDescriptor, RuntimeKind, SessionLaunchMode,
     SessionSummary, SlotStrategy, SlotSummary, TaskCardState, TeamSummary, TeamTaskStartOptions,
 };
+use crossbeam_channel::Sender;
 use crossterm::event::{self, Event as CEvent, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use std::io;
+use std::thread;
 use std::time::Duration;
 use tracing::info;
+
+struct BackgroundResult {
+    summary: String,
+    events: Vec<DomainEvent>,
+    error: Option<String>,
+}
 
 struct TerminalGuard;
 
@@ -40,6 +48,22 @@ enum TuiFocus {
     Sessions,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum InputMode {
+    Normal,
+    TextInput {
+        prompt_label: String,
+        buffer: String,
+        on_submit: InputAction,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum InputAction {
+    AcquireSlot,
+    StartSession,
+}
+
 #[derive(Debug)]
 struct TuiState {
     status: String,
@@ -53,6 +77,10 @@ struct TuiState {
     log_session_id: Option<String>,
     log_path: Option<String>,
     show_log_panel: bool,
+    pending_ops: usize,
+    input_mode: InputMode,
+    show_help: bool,
+    log_scroll: u16,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -81,7 +109,13 @@ pub fn run_tui() -> Result<()> {
         log_session_id: None,
         log_path: None,
         show_log_panel: false,
+        pending_ops: 0,
+        input_mode: InputMode::Normal,
+        show_help: false,
+        log_scroll: 0,
     };
+
+    let (tx, rx) = crossbeam_channel::unbounded::<BackgroundResult>();
 
     info!("TUI started");
 
@@ -89,15 +123,128 @@ pub fn run_tui() -> Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     loop {
+        while let Ok(result) = rx.try_recv() {
+            if state.pending_ops > 0 {
+                state.pending_ops -= 1;
+            }
+            if let Some(error) = result.error {
+                state.status = format!("Error: {error}");
+            } else {
+                state.status = result.summary;
+                for event in &result.events {
+                    state.messages.push(event.to_message());
+                }
+            }
+        }
+
         let snapshot = core.snapshot()?;
         clamp_selection(&mut state, &snapshot);
+
+        if state.show_log_panel
+            && let Some(session_id) = state.log_session_id.clone()
+        {
+            let session_running = visible_sessions(&snapshot, &state).iter().any(|s| {
+                s.id == session_id && s.status == awo_core::runtime::SessionStatus::Running
+            });
+            if session_running {
+                fetch_session_log(&mut core, &mut state, &session_id);
+                state.log_scroll = u16::MAX;
+            }
+        }
+
         terminal.draw(|frame| render(frame, &snapshot, &state))?;
 
         if event::poll(Duration::from_millis(200))?
             && let CEvent::Key(key) = event::read()?
         {
+            if state.show_help {
+                state.show_help = false;
+                continue;
+            }
+            if let InputMode::TextInput {
+                prompt_label: _,
+                buffer,
+                on_submit,
+            } = &mut state.input_mode
+            {
+                match key.code {
+                    KeyCode::Enter => {
+                        let input = buffer.clone();
+                        let action = on_submit.clone();
+                        state.input_mode = InputMode::Normal;
+                        match action {
+                            InputAction::AcquireSlot => {
+                                if let Some(repo) = selected_repo(&snapshot, &state) {
+                                    state.status = "Working...".to_string();
+                                    state.pending_ops += 1;
+                                    dispatch_in_background(
+                                        Command::SlotAcquire {
+                                            repo_id: repo.id.clone(),
+                                            task_name: input,
+                                            strategy: SlotStrategy::Fresh,
+                                        },
+                                        tx.clone(),
+                                    );
+                                }
+                            }
+                            InputAction::StartSession => {
+                                let (runtime, prompt) = if let Some(colon) = input.find(':') {
+                                    let r = match &input[..colon] {
+                                        "claude" => RuntimeKind::Claude,
+                                        "codex" => RuntimeKind::Codex,
+                                        "gemini" => RuntimeKind::Gemini,
+                                        _ => RuntimeKind::Shell,
+                                    };
+                                    (r, input[colon + 1..].to_string())
+                                } else {
+                                    (RuntimeKind::Shell, input)
+                                };
+                                if let Some(slot) = selected_slot(&snapshot, &state) {
+                                    apply_command(
+                                        &mut core,
+                                        &mut state,
+                                        Command::SessionStart {
+                                            slot_id: slot.id.clone(),
+                                            runtime,
+                                            prompt,
+                                            read_only: false,
+                                            dry_run: false,
+                                            launch_mode: SessionLaunchMode::default_for_environment(
+                                            ),
+                                            attach_context: false,
+                                        },
+                                    );
+
+                                    // Let's get the fresh snapshot to see the newly created session
+                                    if let Ok(new_snapshot) = core.snapshot()
+                                        && let Some(session) =
+                                            visible_sessions(&new_snapshot, &state).last()
+                                    {
+                                        fetch_session_log(&mut core, &mut state, &session.id);
+                                        state.log_scroll = u16::MAX;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {
+                        state.input_mode = InputMode::Normal;
+                    }
+                    KeyCode::Backspace => {
+                        buffer.pop();
+                    }
+                    KeyCode::Char(c) => {
+                        buffer.push(c);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             match key.code {
                 KeyCode::Char('q') => break,
+                KeyCode::Char('?') => {
+                    state.show_help = !state.show_help;
+                }
                 KeyCode::Tab => {
                     state.focus = match state.focus {
                         TuiFocus::Repos => TuiFocus::Teams,
@@ -114,63 +261,75 @@ pub fn run_tui() -> Result<()> {
                         TuiFocus::Sessions => TuiFocus::Slots,
                     };
                 }
-                KeyCode::Up | KeyCode::Char('k') => match state.focus {
-                    TuiFocus::Repos => {
-                        if state.selected_repo_index > 0 {
-                            state.selected_repo_index -= 1;
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if state.show_log_panel {
+                        state.log_scroll = state.log_scroll.saturating_sub(1);
+                    } else {
+                        match state.focus {
+                            TuiFocus::Repos => {
+                                if state.selected_repo_index > 0 {
+                                    state.selected_repo_index -= 1;
+                                }
+                            }
+                            TuiFocus::Teams => {
+                                if state.selected_team_index > 0 {
+                                    state.selected_team_index -= 1;
+                                }
+                            }
+                            TuiFocus::Slots => {
+                                if state.selected_slot_index > 0 {
+                                    state.selected_slot_index -= 1;
+                                }
+                            }
+                            TuiFocus::Sessions => {
+                                if state.selected_session_index > 0 {
+                                    state.selected_session_index -= 1;
+                                }
+                            }
                         }
                     }
-                    TuiFocus::Teams => {
-                        if state.selected_team_index > 0 {
-                            state.selected_team_index -= 1;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if state.show_log_panel {
+                        state.log_scroll = state.log_scroll.saturating_add(1);
+                    } else {
+                        match state.focus {
+                            TuiFocus::Repos => {
+                                if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
+                                    state.selected_repo_index += 1;
+                                }
+                            }
+                            TuiFocus::Teams => {
+                                if state.selected_team_index + 1
+                                    < visible_teams(&snapshot, &state).len()
+                                {
+                                    state.selected_team_index += 1;
+                                }
+                            }
+                            TuiFocus::Slots => {
+                                if state.selected_slot_index + 1
+                                    < visible_slots(&snapshot, &state).len()
+                                {
+                                    state.selected_slot_index += 1;
+                                }
+                            }
+                            TuiFocus::Sessions => {
+                                if state.selected_session_index + 1
+                                    < visible_sessions(&snapshot, &state).len()
+                                {
+                                    state.selected_session_index += 1;
+                                }
+                            }
                         }
                     }
-                    TuiFocus::Slots => {
-                        if state.selected_slot_index > 0 {
-                            state.selected_slot_index -= 1;
-                        }
-                    }
-                    TuiFocus::Sessions => {
-                        if state.selected_session_index > 0 {
-                            state.selected_session_index -= 1;
-                        }
-                    }
-                },
-                KeyCode::Down | KeyCode::Char('j') => match state.focus {
-                    TuiFocus::Repos => {
-                        if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
-                            state.selected_repo_index += 1;
-                        }
-                    }
-                    TuiFocus::Teams => {
-                        if state.selected_team_index + 1 < visible_teams(&snapshot, &state).len() {
-                            state.selected_team_index += 1;
-                        }
-                    }
-                    TuiFocus::Slots => {
-                        if state.selected_slot_index + 1 < visible_slots(&snapshot, &state).len() {
-                            state.selected_slot_index += 1;
-                        }
-                    }
-                    TuiFocus::Sessions => {
-                        if state.selected_session_index + 1
-                            < visible_sessions(&snapshot, &state).len()
-                        {
-                            state.selected_session_index += 1;
-                        }
-                    }
-                },
+                }
                 KeyCode::Char('s') => {
-                    if let Some(repo) = selected_repo(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::SlotAcquire {
-                                repo_id: repo.id.clone(),
-                                task_name: "tui-task".to_string(),
-                                strategy: SlotStrategy::Fresh,
-                            },
-                        );
+                    if let Some(_repo) = selected_repo(&snapshot, &state) {
+                        state.input_mode = InputMode::TextInput {
+                            prompt_label: "Task name: ".to_string(),
+                            buffer: String::new(),
+                            on_submit: InputAction::AcquireSlot,
+                        };
                     }
                 }
                 KeyCode::Enter => {
@@ -178,20 +337,12 @@ pub fn run_tui() -> Result<()> {
                         if let Some(session) = selected_session(&snapshot, &state) {
                             fetch_session_log(&mut core, &mut state, &session.id);
                         }
-                    } else if let Some(slot) = selected_slot(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::SessionStart {
-                                slot_id: slot.id.clone(),
-                                runtime: RuntimeKind::Shell,
-                                prompt: "echo 'awo shell session started'; ls".to_string(),
-                                read_only: false,
-                                dry_run: false,
-                                launch_mode: SessionLaunchMode::default_for_environment(),
-                                attach_context: false,
-                            },
-                        );
+                    } else if let Some(_slot) = selected_slot(&snapshot, &state) {
+                        state.input_mode = InputMode::TextInput {
+                            prompt_label: "Prompt: ".to_string(),
+                            buffer: String::new(),
+                            on_submit: InputAction::StartSession,
+                        };
                     }
                 }
                 KeyCode::Esc => {
@@ -212,23 +363,22 @@ pub fn run_tui() -> Result<()> {
                 }
                 KeyCode::Char('X') => {
                     if let Some(slot) = selected_slot(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
+                        state.status = "Working...".to_string();
+                        state.pending_ops += 1;
+                        dispatch_in_background(
                             Command::SlotRelease {
                                 slot_id: slot.id.clone(),
                             },
+                            tx.clone(),
                         );
                     }
                 }
                 KeyCode::Char('a') => {
                     let current_dir = std::env::current_dir()
                         .context("failed to resolve current working directory")?;
-                    apply_command(
-                        &mut core,
-                        &mut state,
-                        Command::RepoAdd { path: current_dir },
-                    );
+                    state.status = "Working...".to_string();
+                    state.pending_ops += 1;
+                    dispatch_in_background(Command::RepoAdd { path: current_dir }, tx.clone());
                 }
                 KeyCode::Char('n') => {
                     apply_command(
@@ -243,6 +393,7 @@ pub fn run_tui() -> Result<()> {
                     if state.show_log_panel {
                         if let Some(session_id) = state.log_session_id.clone() {
                             fetch_session_log(&mut core, &mut state, &session_id);
+                            state.log_scroll = u16::MAX;
                         }
                     } else {
                         apply_command(
@@ -499,11 +650,17 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     ])
     .split(frame.area());
 
+    let title = if state.pending_ops > 0 {
+        format!("Status (Working: {} ops...)", state.pending_ops)
+    } else {
+        "Status".to_string()
+    };
+
     let header = Paragraph::new(format!(
-        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | t team task | r refresh | Esc close | {}",
+        "awo V1 | q quit | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | t next task | {}",
         state.status
     ))
-    .block(Block::default().borders(Borders::ALL).title("Status"));
+    .block(Block::default().borders(Borders::ALL).title(title));
     frame.render_widget(header, vertical[0]);
 
     let paths = vec![
@@ -760,15 +917,79 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     frame.render_widget(messages, bottom[3]);
 
     if state.show_log_panel {
+        let session_running = snapshot.sessions.iter().any(|s| {
+            Some(&s.id) == state.log_session_id.as_ref()
+                && s.status == awo_core::runtime::SessionStatus::Running
+        });
+        let status_indicator = if session_running { " [running]" } else { "" };
         let title = format!(
-            "Log: {} (Esc to close, r to refresh)",
-            state.log_session_id.as_deref().unwrap_or("?")
+            "Log: {}{} (Esc to close, r to refresh)",
+            state.log_session_id.as_deref().unwrap_or("?"),
+            status_indicator,
         );
         let content = state.log_content.as_deref().unwrap_or("(empty)");
         let log_widget = Paragraph::new(content)
             .block(Block::default().borders(Borders::ALL).title(title))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((state.log_scroll, 0));
         frame.render_widget(log_widget, vertical[3]);
+    }
+
+    // Input bar overlay
+    if let InputMode::TextInput {
+        prompt_label,
+        buffer,
+        ..
+    } = &state.input_mode
+    {
+        let area = frame.area();
+        let input_area = Rect {
+            x: area.x,
+            y: area.height.saturating_sub(3),
+            width: area.width,
+            height: 3,
+        };
+        let text = format!("{prompt_label}{buffer}_");
+        let input_widget =
+            Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Input"));
+        frame.render_widget(Clear, input_area);
+        frame.render_widget(input_widget, input_area);
+    }
+
+    // Help overlay
+    if state.show_help {
+        let area = frame.area();
+        let width = 50u16.min(area.width.saturating_sub(4));
+        let height = 16u16.min(area.height.saturating_sub(4));
+        let help_area = Rect {
+            x: (area.width.saturating_sub(width)) / 2,
+            y: (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        };
+        let help_text = vec![
+            Line::from(""),
+            Line::from("  s       Acquire slot (enter task name)"),
+            Line::from("  Enter   Start session / View log"),
+            Line::from("  x       Cancel session"),
+            Line::from("  X       Release slot"),
+            Line::from("  t       Start next team task"),
+            Line::from("  a       Add current dir as repo"),
+            Line::from("  r       Refresh review / Refresh log"),
+            Line::from("  c       Context doctor"),
+            Line::from("  d       Skills doctor"),
+            Line::from("  Tab     Next panel"),
+            Line::from("  Esc     Close panel / Cancel input"),
+            Line::from("  q       Quit"),
+            Line::from("  ?       This help"),
+        ];
+        let help_widget = Paragraph::new(help_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Keybindings (press any key to close)"),
+        );
+        frame.render_widget(Clear, help_area);
+        frame.render_widget(help_widget, help_area);
     }
 }
 
@@ -907,6 +1128,31 @@ fn render_team_detail(team: Option<&TeamSummary>) -> Vec<Line<'static>> {
     }
 
     lines
+}
+
+fn dispatch_in_background(command: Command, tx: Sender<BackgroundResult>) {
+    thread::spawn(move || {
+        let result = match AppCore::bootstrap() {
+            Ok(mut bg_core) => match bg_core.dispatch(command) {
+                Ok(outcome) => BackgroundResult {
+                    summary: outcome.summary,
+                    events: outcome.events,
+                    error: None,
+                },
+                Err(e) => BackgroundResult {
+                    summary: String::new(),
+                    events: vec![],
+                    error: Some(e.to_string()),
+                },
+            },
+            Err(e) => BackgroundResult {
+                summary: String::new(),
+                events: vec![],
+                error: Some(format!("failed to open background core: {e}")),
+            },
+        };
+        let _ = tx.send(result);
+    });
 }
 
 fn format_routing_preferences(preferences: &RoutingPreferencesSummary) -> String {
