@@ -451,4 +451,78 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn discover_repo_succeeds_on_valid_repo() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "README.md", "# test")?;
+        let disc = discover_repo(temp.path())?;
+        assert!(!disc.git_root.as_os_str().is_empty());
+        assert!(disc.remote_url.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn is_clean_true_on_clean_repo() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "content")?;
+        assert!(
+            is_clean(temp.path())?,
+            "clean repo should report is_clean=true"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn is_clean_false_on_dirty_repo() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "content")?;
+        std::fs::write(temp.path().join("file.txt"), "changed")
+            .map_err(|e| AwoError::io("modify file", temp.path(), e))?;
+        assert!(
+            !is_clean(temp.path())?,
+            "dirty repo should report is_clean=false"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_create_remove_roundtrip() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "content")?;
+        let slot = temp.path().join("test-slot");
+        create_worktree(temp.path(), &slot, "feat/test", "main")?;
+        assert!(
+            slot.exists(),
+            "worktree directory should exist after creation"
+        );
+        remove_worktree(temp.path(), &slot)?;
+        assert!(!slot.exists(), "worktree directory should be removed");
+        Ok(())
+    }
+
+    #[test]
+    fn create_worktree_fails_for_nonexistent_repo() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        let repo = temp.path().join("missing");
+        let slot = temp.path().join("slot");
+        let result = create_worktree(&repo, &slot, "br", "main");
+        assert!(result.is_err(), "expected error for nonexistent repo path");
+        Ok(())
+    }
+
+    #[test]
+    fn remove_worktree_errors_on_nonexistent_slot() -> AwoResult<()> {
+        let temp = tempdir().map_err(|e| AwoError::io("create temp dir", "temp", e))?;
+        init_repo(temp.path())?;
+        commit_to_repo(temp.path(), "file.txt", "content")?;
+        let slot = temp.path().join("missing-slot");
+        let result = remove_worktree(temp.path(), &slot);
+        assert!(result.is_err(), "expected error for nonexistent slot path");
+        Ok(())
+    }
 }
