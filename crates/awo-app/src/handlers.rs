@@ -1,7 +1,9 @@
+#[cfg(unix)]
+use crate::cli::DaemonCommand;
 use crate::cli::{
-    AppCommand, ContextCommand, DaemonCommand, DebugCommand, RepoCommand, ReviewCommand,
-    RuntimeCommand, RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand,
-    TeamCommand, TeamMemberCommand, TeamTaskCommand,
+    AppCommand, ContextCommand, DebugCommand, RepoCommand, ReviewCommand, RuntimeCommand,
+    RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand, TeamCommand,
+    TeamMemberCommand, TeamTaskCommand,
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
