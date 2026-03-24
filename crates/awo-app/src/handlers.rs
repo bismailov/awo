@@ -15,6 +15,7 @@ use crate::tui::run_tui;
 use anyhow::{Result, bail};
 use awo_core::capabilities::CostTier;
 use awo_core::commands::CommandOutcome;
+#[cfg(unix)]
 use awo_core::dispatch::Dispatcher;
 use awo_core::error::AwoResult;
 use awo_core::{

@@ -136,25 +136,25 @@ pub fn launch(
 /// Returns `None` if the process is alive, `Some(exit_code)` if it has
 /// exited.  Falls back to -1 if the exit code cannot be determined.
 pub fn sync(paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
-    if let Some(pid) = super::read_pid(paths, session_id)? {
-        if pid > 0 && super::process_is_running(pid) {
-            return Ok(None);
-        }
+    if let Some(pid) = super::read_pid(paths, session_id)?
+        && pid > 0
+        && super::process_is_running(pid)
+    {
+        return Ok(None);
     }
     Ok(read_exit_code(paths, session_id)?.or(Some(-1)))
 }
 
 /// Terminate a ConPTY-supervised session by killing the process via PID.
 pub fn kill(paths: &AppPaths, session_id: &str) -> AwoResult<()> {
-    if let Some(pid) = super::read_pid(paths, session_id)? {
-        if pid > 0 && super::process_is_running(pid) {
-            if let Err(err) = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output()
-            {
-                tracing::debug!(pid, %err, "taskkill failed (process may already be dead)");
-            }
-        }
+    if let Some(pid) = super::read_pid(paths, session_id)?
+        && pid > 0
+        && super::process_is_running(pid)
+        && let Err(err) = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output()
+    {
+        tracing::debug!(pid, %err, "taskkill failed (process may already be dead)");
     }
     Ok(())
 }

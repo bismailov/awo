@@ -6,12 +6,17 @@
 //! operation and single-writer safety for the SQLite database.
 
 use crate::app::AppPaths;
-use crate::dispatch::{Dispatcher, RpcResponse, dispatch_rpc, parse_rpc_request};
+use crate::dispatch::Dispatcher;
+#[cfg(unix)]
+use crate::dispatch::{RpcResponse, dispatch_rpc, parse_rpc_request};
 use crate::error::{AwoError, AwoResult};
 use fs2::FileExt;
 use std::fs;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 /// Daemon state: manages the socket, lock file, and shutdown signal.
 pub struct DaemonServer {
