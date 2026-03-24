@@ -337,3 +337,6 @@ impl<'a> CommandRunner<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

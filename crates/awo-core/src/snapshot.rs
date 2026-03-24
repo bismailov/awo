@@ -22,6 +22,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
+mod overlap;
+
 const DIRTY_CACHE_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
@@ -561,6 +563,7 @@ fn build_review_summary(
     build_review_summary_impl(
         slots.iter().map(|slot| SlotReviewView {
             id: slot.id.as_str(),
+            repo_id: slot.repo_id.as_str(),
             is_active: slot.is_active(),
             is_released: slot.is_released(),
             is_missing: slot.is_missing(),
@@ -591,6 +594,7 @@ fn build_review_summary_from_summaries(
     build_review_summary_impl(
         slots.iter().map(|slot| SlotReviewView {
             id: slot.id.as_str(),
+            repo_id: slot.repo_id.as_str(),
             is_active: slot.is_active(),
             is_released: slot.is_released(),
             is_missing: slot.is_missing(),
@@ -619,6 +623,7 @@ fn build_review_summary_from_summaries(
 
 pub(crate) struct SlotReviewView<'a> {
     id: &'a str,
+    repo_id: &'a str,
     is_active: bool,
     is_released: bool,
     is_missing: bool,
@@ -644,6 +649,9 @@ fn build_review_summary_impl<'a>(
     let slots: Vec<SlotReviewView<'a>> = slots.collect();
     let sessions: Vec<SessionReviewView<'a>> = sessions.collect();
     let mut summary = ReviewSummary::default();
+    summary
+        .warnings
+        .extend(overlap::detect_file_overlaps(&slots));
     let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
 
     for session in &sessions {
@@ -860,6 +868,7 @@ mod tests {
     fn detects_risky_overlap_between_dirty_slots() {
         let slot1 = SlotReviewView {
             id: "slot1",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -871,6 +880,7 @@ mod tests {
         };
         let slot2 = SlotReviewView {
             id: "slot2",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -888,6 +898,7 @@ mod tests {
     fn detects_soft_overlap_between_modules() {
         let slot1 = SlotReviewView {
             id: "slot1",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -899,6 +910,7 @@ mod tests {
         };
         let slot2 = SlotReviewView {
             id: "slot2",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -925,6 +937,7 @@ mod tests {
     fn reports_both_risky_and_soft_overlap_if_different_files_exist_in_same_module() {
         let slot1 = SlotReviewView {
             id: "slot1",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -936,6 +949,7 @@ mod tests {
         };
         let slot2 = SlotReviewView {
             id: "slot2",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -954,6 +968,7 @@ mod tests {
     fn no_overlap_when_slots_touch_different_files() {
         let slot1 = SlotReviewView {
             id: "slot1",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -965,6 +980,7 @@ mod tests {
         };
         let slot2 = SlotReviewView {
             id: "slot2",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -988,6 +1004,7 @@ mod tests {
     fn dirty_slot_warning_emitted() {
         let slot = SlotReviewView {
             id: "slot-dirty",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -1006,6 +1023,7 @@ mod tests {
     fn stale_active_slot_warning_emitted() {
         let slot = SlotReviewView {
             id: "slot-stale",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -1029,6 +1047,7 @@ mod tests {
     fn stale_warm_released_slot_warning() {
         let slot = SlotReviewView {
             id: "slot-warm",
+            repo_id: "repo1",
             is_active: false,
             is_released: true,
             is_missing: false,
@@ -1046,6 +1065,7 @@ mod tests {
     fn missing_slot_warning() {
         let slot = SlotReviewView {
             id: "slot-gone",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: true,
@@ -1063,6 +1083,7 @@ mod tests {
     fn slot_busy_with_pending_sessions() {
         let slot = SlotReviewView {
             id: "slot-busy",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -1087,6 +1108,7 @@ mod tests {
     fn slot_multi_session_warning() {
         let slot = SlotReviewView {
             id: "slot-multi",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -1124,6 +1146,7 @@ mod tests {
     fn releasable_slot_counted_when_clean_and_no_sessions() {
         let slot = SlotReviewView {
             id: "slot-clean",
+            repo_id: "repo1",
             is_active: true,
             is_released: false,
             is_missing: false,
@@ -1142,5 +1165,98 @@ mod tests {
                 || w.kind == "missing-slot"),
             "clean active slot should produce no warnings"
         );
+    }
+
+    #[test]
+    fn build_review_summary_handles_missing_worktree_gracefully() {
+        let mut cache = DirtyFileCache::new();
+        let slot = crate::slot::SlotRecord {
+            id: "slot-missing".to_string(),
+            repo_id: "repo-1".to_string(),
+            task_name: "test".to_string(),
+            slot_path: "/this/path/does/not/exist/anywhere".to_string(),
+            branch_name: "main".to_string(),
+            base_branch: "main".to_string(),
+            strategy: crate::slot::SlotStrategy::Fresh,
+            status: crate::slot::SlotStatus::Missing,
+            fingerprint_hash: None,
+            fingerprint_status: crate::slot::FingerprintStatus::Missing,
+            dirty: true, // Force it to check dirty files
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        // Should not panic when attempting to check dirty files on nonexistent path
+        let summary = build_review_summary(&[slot], &[], &mut cache);
+        assert!(summary.warnings.iter().any(|w| w.kind == "missing-slot"));
+    }
+
+    #[test]
+    fn dirty_file_cache_expired_entry_refreshes() {
+        let mut cache = DirtyFileCache::new();
+
+        // Insert a fake entry
+        cache.entries.insert(
+            "slot-1".to_string(),
+            CacheEntry {
+                files: vec!["old.rs".to_string()],
+                cached_at: Instant::now() - Duration::from_secs(10), // Expired
+            },
+        );
+
+        // Path doesn't exist, git will fail, returning empty vec
+        let files = cache.get_or_refresh("slot-1", "/does/not/exist");
+        assert!(
+            files.is_empty(),
+            "Expired entry should be refreshed and hit git (returning empty)"
+        );
+    }
+
+    #[test]
+    fn dirty_file_cache_retain_slots() {
+        let mut cache = DirtyFileCache::new();
+        cache.entries.insert(
+            "slot-1".to_string(),
+            CacheEntry {
+                files: vec![],
+                cached_at: Instant::now(),
+            },
+        );
+        cache.entries.insert(
+            "slot-2".to_string(),
+            CacheEntry {
+                files: vec![],
+                cached_at: Instant::now(),
+            },
+        );
+        cache.entries.insert(
+            "slot-3".to_string(),
+            CacheEntry {
+                files: vec![],
+                cached_at: Instant::now(),
+            },
+        );
+
+        cache.retain_slots(&["slot-1", "slot-3"]);
+
+        assert!(cache.entries.contains_key("slot-1"));
+        assert!(!cache.entries.contains_key("slot-2"));
+        assert!(cache.entries.contains_key("slot-3"));
+    }
+
+    #[test]
+    fn dirty_file_cache_invalidate() {
+        let mut cache = DirtyFileCache::new();
+        cache.entries.insert(
+            "slot-1".to_string(),
+            CacheEntry {
+                files: vec!["file.rs".to_string()],
+                cached_at: Instant::now(),
+            },
+        );
+
+        cache.invalidate("slot-1");
+
+        assert!(!cache.entries.contains_key("slot-1"));
     }
 }

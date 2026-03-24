@@ -366,3 +366,80 @@ fn open_fails_on_directory_path() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn open_fails_on_nonexistent_parent_directory() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("missing_dir").join("state.sqlite3");
+    let result = Store::open(&db_path);
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn get_nonexistent_records_returns_none() -> Result<()> {
+    let (_dir, store) = open_store()?;
+    store.initialize_schema()?;
+
+    assert!(store.get_repository("nonexistent")?.is_none());
+    assert!(store.get_slot("nonexistent")?.is_none());
+    assert!(store.get_session("nonexistent")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn delete_nonexistent_session_is_noop() -> Result<()> {
+    let (_dir, store) = open_store()?;
+    store.initialize_schema()?;
+
+    let result = store.delete_session("nonexistent");
+    assert!(
+        result.is_ok(),
+        "Deleting a nonexistent session should not error"
+    );
+    Ok(())
+}
+
+#[test]
+fn duplicate_repo_registration_updates_record() -> Result<()> {
+    let (_dir, store) = open_store()?;
+    store.initialize_schema()?;
+
+    let mut repo = RegisteredRepo {
+        id: "repo-1".to_string(),
+        name: "test".to_string(),
+        repo_root: "/test".to_string(),
+        remote_url: None,
+        default_base_branch: "main".to_string(),
+        worktree_root: "/worktrees".to_string(),
+        shared_manifest_path: None,
+        shared_manifest_present: false,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    store.upsert_repository(&repo)?;
+    repo.name = "updated".to_string();
+    let result = store.upsert_repository(&repo);
+    assert!(
+        result.is_ok(),
+        "Duplicate insert should succeed as an update"
+    );
+
+    let loaded = store.get_repository("repo-1")?.unwrap();
+    assert_eq!(loaded.name, "updated");
+    Ok(())
+}
+
+#[test]
+fn queries_with_empty_db_return_empty_collections() -> Result<()> {
+    let (_dir, store) = open_store()?;
+    store.initialize_schema()?;
+
+    assert!(store.list_repositories()?.is_empty());
+    assert!(store.list_slots(None)?.is_empty());
+    assert!(store.list_sessions(None)?.is_empty());
+    assert!(store.list_sessions_for_slot("any")?.is_empty());
+    assert!(store.recent_actions(10)?.is_empty());
+    Ok(())
+}
