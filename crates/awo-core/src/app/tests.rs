@@ -46,6 +46,7 @@ fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
             config,
             store,
             dirty_cache: std::cell::RefCell::new(crate::snapshot::DirtyFileCache::new()),
+            event_bus: crate::events::EventBus::new(),
         },
     ))
 }

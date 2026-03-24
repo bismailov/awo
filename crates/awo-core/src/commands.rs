@@ -146,6 +146,11 @@ pub enum Command {
     TeamTeardown { team_id: String, force: bool },
     #[serde(rename = "team.delete")]
     TeamDelete { team_id: String },
+    #[serde(rename = "events.poll")]
+    EventsPoll {
+        since_seq: Option<u64>,
+        limit: Option<usize>,
+    },
 }
 
 impl Command {
@@ -184,6 +189,7 @@ impl Command {
             Self::TeamArchive { .. } => "team.archive",
             Self::TeamTeardown { .. } => "team.teardown",
             Self::TeamDelete { .. } => "team.delete",
+            Self::EventsPoll { .. } => "events.poll",
         }
     }
 
@@ -372,6 +378,13 @@ impl<'a> CommandRunner<'a> {
             Command::TeamArchive { team_id, force } => self.run_team_archive(team_id, force),
             Command::TeamTeardown { team_id, force } => self.run_team_teardown(team_id, force),
             Command::TeamDelete { team_id } => self.run_team_delete(team_id),
+            Command::EventsPoll { .. } => {
+                // Handled at the AppCore level (requires EventBus access).
+                Ok(CommandOutcome {
+                    summary: "events.poll requires event bus context".to_string(),
+                    events: vec![],
+                })
+            }
         }
     }
 

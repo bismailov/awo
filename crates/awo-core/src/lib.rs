@@ -38,7 +38,7 @@ pub use dispatch::{
     parse_rpc_request,
 };
 pub use error::{AwoError, AwoResult};
-pub use events::DomainEvent;
+pub use events::{DomainEvent, EventBus, EventEntry, EventPollResult};
 pub use routing::{
     RoutingContext, RoutingDecision, RoutingPreferences, RoutingRecommendation, RoutingSource,
     RoutingTarget, RuntimePressure, route_runtime,

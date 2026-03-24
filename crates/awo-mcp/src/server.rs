@@ -638,6 +638,25 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["team_id"],
             }),
         },
+        ToolDefinition {
+            name: "poll_events".to_string(),
+            description: "Poll the event bus for new domain events. Returns events newer than since_seq. Use head_seq from the response as since_seq for the next poll.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "since_seq": {
+                        "type": "integer",
+                        "description": "Sequence number cursor. Returns events with seq > since_seq. Use 0 to get all buffered events.",
+                        "default": 0
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return.",
+                        "default": 100
+                    }
+                },
+            }),
+        },
     ]
 }
 
@@ -862,6 +881,14 @@ fn map_tool_to_command(
         "team_delete" => {
             let team_id = require_string(args, "team_id")?;
             Ok(awo_core::Command::TeamDelete { team_id })
+        }
+        "poll_events" => {
+            let since_seq = args.get("since_seq").and_then(|v| v.as_u64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            Ok(awo_core::Command::EventsPoll { since_seq, limit })
         }
         _ => Err(format!("unknown tool: {tool_name}")),
     }
@@ -1283,5 +1310,27 @@ mod tests {
         let result = map_tool_to_command("team_add_task", &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("missing required argument"));
+    }
+
+    #[test]
+    fn map_tool_poll_events_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "poll_events",
+                "arguments": { "since_seq": 0, "limit": 50 }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: events.poll"));
+    }
+
+    #[test]
+    fn map_tool_poll_events_defaults() {
+        let cmd = map_tool_to_command("poll_events", &serde_json::json!({})).unwrap();
+        assert_eq!(cmd.method_name(), "events.poll");
     }
 }

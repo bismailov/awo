@@ -7,6 +7,7 @@ use crate::context::{
 };
 use crate::dispatch::Dispatcher;
 use crate::error::{AwoError, AwoResult};
+use crate::events::{EventBus, EventPollResult};
 use crate::skills::{
     RepoSkillCatalog, RuntimeSkillRoots, SkillDoctorReport, SkillLinkMode, SkillLinkReport,
     SkillRuntime, discover_repo_skills, doctor_repo_skills,
@@ -52,6 +53,7 @@ pub struct AppCore {
     config: AppConfig,
     store: Store,
     dirty_cache: RefCell<DirtyFileCache>,
+    event_bus: EventBus,
 }
 
 impl AppCore {
@@ -68,6 +70,7 @@ impl AppCore {
             config,
             store,
             dirty_cache: RefCell::new(DirtyFileCache::new()),
+            event_bus: EventBus::new(),
         })
     }
 
@@ -160,6 +163,16 @@ impl AppCore {
         &self.config.paths
     }
 
+    /// Returns a cloneable handle to the event bus.
+    pub fn event_bus(&self) -> &EventBus {
+        &self.event_bus
+    }
+
+    /// Poll the event bus for entries newer than `since_seq`.
+    pub fn poll_events(&self, since_seq: u64, limit: usize) -> EventPollResult {
+        self.event_bus.poll(since_seq, limit)
+    }
+
     fn sync_runtime_state(&self, repo_id: Option<&str>) -> AwoResult<()> {
         let runner = CommandRunner::new(&self.config, &self.store);
         runner.sync_runtime_state(repo_id)?;
@@ -169,8 +182,24 @@ impl AppCore {
 
 impl Dispatcher for AppCore {
     fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
+        // Intercept EventsPoll — it reads from the bus, not from the store.
+        if let Command::EventsPoll { since_seq, limit } = &command {
+            let result = self
+                .event_bus
+                .poll(since_seq.unwrap_or(0), limit.unwrap_or(100));
+            return Ok(CommandOutcome {
+                summary: serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()),
+                events: vec![],
+            });
+        }
+
         let mut runner = CommandRunner::new(&self.config, &self.store);
-        runner.run(command)
+        let outcome = runner.run(command)?;
+
+        // Publish events to the bus after successful dispatch.
+        self.event_bus.publish(&outcome.events);
+
+        Ok(outcome)
     }
 }
 
