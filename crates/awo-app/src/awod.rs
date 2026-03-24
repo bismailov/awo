@@ -25,6 +25,7 @@ fn initialize_tracing() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        .with_writer(std::io::stderr)
         .with_target(false)
         .compact()
         .try_init()
