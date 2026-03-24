@@ -1271,7 +1271,7 @@ fn kill_tmux_session(session_id: &str) -> Result<()> {
 
 #[test]
 fn session_timeout_is_enforced() -> Result<()> {
-    if !detect_tmux() {
+    if cfg!(not(unix)) || !detect_tmux() {
         return Ok(());
     }
     let harness = TestHarness::new()?;
