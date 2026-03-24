@@ -367,6 +367,7 @@ fn repo_clone_registers_remote_repo() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "ConPTY is currently a stub")]
 fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
     if !detect_tmux() {
         return Ok(());
