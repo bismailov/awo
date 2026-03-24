@@ -40,6 +40,11 @@ impl AppPaths {
     pub fn daemon_lock_path(&self) -> std::path::PathBuf {
         self.data_dir.join("awod.lock")
     }
+
+    /// Returns the path for the daemon PID file.
+    pub fn daemon_pid_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("awod.pid")
+    }
 }
 
 #[derive(Debug)]

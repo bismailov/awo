@@ -22,6 +22,7 @@ use std::path::PathBuf;
 pub struct DaemonServer {
     socket_path: PathBuf,
     lock_path: PathBuf,
+    pid_path: PathBuf,
     _lock_file: fs::File,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -30,6 +31,7 @@ pub struct DaemonServer {
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub lock_path: PathBuf,
+    pub pid_path: PathBuf,
 }
 
 impl DaemonOptions {
@@ -37,6 +39,7 @@ impl DaemonOptions {
         Self {
             socket_path: paths.daemon_socket_path(),
             lock_path: paths.daemon_lock_path(),
+            pid_path: paths.daemon_pid_path(),
         }
     }
 }
@@ -69,9 +72,15 @@ impl DaemonServer {
             tracing::warn!(%err, path = %options.socket_path.display(), "failed to remove stale socket file");
         }
 
+        // Write PID file
+        let pid = std::process::id();
+        fs::write(&options.pid_path, pid.to_string())
+            .map_err(|source| AwoError::io("write daemon pid file", &options.pid_path, source))?;
+
         Ok(Self {
             socket_path: options.socket_path,
             lock_path: options.lock_path,
+            pid_path: options.pid_path,
             _lock_file: lock_file,
             shutdown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -91,6 +100,8 @@ impl DaemonServer {
     /// called or an unrecoverable error occurs.
     #[cfg(unix)]
     pub fn run(&self, dispatcher: &mut dyn Dispatcher) -> AwoResult<()> {
+        use signal_hook::consts::signal::*;
+        use signal_hook::iterator::Signals;
         use std::os::unix::net::UnixListener;
 
         let listener = UnixListener::bind(&self.socket_path)
@@ -100,6 +111,17 @@ impl DaemonServer {
         listener
             .set_nonblocking(true)
             .map_err(|source| AwoError::io("set socket nonblocking", &self.socket_path, source))?;
+        // Wire up signals
+        let mut signals = Signals::new([SIGINT, SIGTERM])
+            .map_err(|source| AwoError::io("register signals", Path::new("signal-hook"), source))?;
+
+        let shutdown_handle = self.shutdown_handle();
+        std::thread::spawn(move || {
+            if let Some(signal) = signals.forever().next() {
+                tracing::info!(signal, "received termination signal");
+                shutdown_handle.request_shutdown();
+            }
+        });
 
         tracing::info!(socket = %self.socket_path.display(), "awod listening");
 
@@ -147,6 +169,9 @@ impl DaemonServer {
         }
         if let Err(err) = fs::remove_file(&self.lock_path) {
             tracing::debug!(%err, path = %self.lock_path.display(), "failed to remove lock file during cleanup");
+        }
+        if let Err(err) = fs::remove_file(&self.pid_path) {
+            tracing::debug!(%err, path = %self.pid_path.display(), "failed to remove pid file during cleanup");
         }
     }
 }
@@ -209,21 +234,122 @@ fn handle_connection(
 
 /// Check whether a daemon is currently running and reachable.
 pub fn daemon_is_running(paths: &AppPaths) -> bool {
-    let socket_path = paths.daemon_socket_path();
-    if !socket_path.exists() {
-        return false;
-    }
-
     #[cfg(unix)]
     {
-        use std::os::unix::net::UnixStream;
-        UnixStream::connect(&socket_path).is_ok()
+        get_daemon_status(paths).is_running()
     }
 
     #[cfg(not(unix))]
     {
         false
     }
+}
+
+/// Status of the daemon process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonStatus {
+    NotRunning,
+    Running { pid: u32, socket_ok: bool },
+}
+
+impl DaemonStatus {
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running { .. })
+    }
+}
+
+/// Check the status of the daemon.
+pub fn get_daemon_status(paths: &AppPaths) -> DaemonStatus {
+    let pid_path = paths.daemon_pid_path();
+    if !pid_path.exists() {
+        return DaemonStatus::NotRunning;
+    }
+
+    let pid_str = match fs::read_to_string(&pid_path) {
+        Ok(s) => s,
+        Err(_) => return DaemonStatus::NotRunning,
+    };
+
+    let pid = match pid_str.trim().parse::<u32>() {
+        Ok(p) => p,
+        Err(_) => return DaemonStatus::NotRunning,
+    };
+
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+
+        // Check if process is alive using kill(pid, 0)
+        if kill(Pid::from_raw(pid as i32), None).is_err() {
+            return DaemonStatus::NotRunning;
+        }
+
+        // Check connectability
+        let socket_path = paths.daemon_socket_path();
+        let socket_ok = if socket_path.exists() {
+            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
+        } else {
+            false
+        };
+
+        DaemonStatus::Running { pid, socket_ok }
+    }
+
+    #[cfg(not(unix))]
+    {
+        DaemonStatus::NotRunning
+    }
+}
+
+/// Stop a running daemon.
+#[cfg(unix)]
+pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::time::{Duration, Instant};
+
+    let status = get_daemon_status(paths);
+    let pid = match status {
+        DaemonStatus::Running { pid, .. } => pid,
+        DaemonStatus::NotRunning => return Ok("daemon not running".to_string()),
+    };
+
+    // Send SIGTERM
+    let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+
+    // Wait up to 5 seconds for pidfile removal
+    let pid_path = paths.daemon_pid_path();
+    let start = Instant::now();
+    let timeout = Duration::from_secs(5);
+
+    while start.elapsed() < timeout {
+        // Check if the process is still alive
+        if kill(Pid::from_raw(pid as i32), None).is_err() {
+            // Process is gone — clean up any leftover pidfile as a safety net
+            let _ = fs::remove_file(&pid_path);
+            return Ok(format!("daemon (pid {}) stopped", pid));
+        }
+        if !pid_path.exists() {
+            return Ok(format!("daemon (pid {}) stopped cleanly", pid));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Force kill if still alive
+    let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    // Clean up stale files
+    let _ = fs::remove_file(&pid_path);
+    let _ = fs::remove_file(paths.daemon_socket_path());
+    let _ = fs::remove_file(paths.daemon_lock_path());
+    Ok(format!("daemon (pid {}) force-killed after timeout", pid))
+}
+
+#[cfg(not(unix))]
+pub fn stop_daemon(_paths: &AppPaths) -> AwoResult<String> {
+    Err(AwoError::supervisor(
+        "daemon mode is not yet supported on this platform",
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +456,7 @@ mod tests {
         let options = DaemonOptions::from_paths(&paths);
         assert_eq!(options.socket_path, PathBuf::from("/tmp/data/awod.sock"));
         assert_eq!(options.lock_path, PathBuf::from("/tmp/data/awod.lock"));
+        assert_eq!(options.pid_path, PathBuf::from("/tmp/data/awod.pid"));
     }
 
     #[test]
@@ -353,6 +480,7 @@ mod tests {
         let options = DaemonOptions {
             socket_path: temp_dir.path().join("test.sock"),
             lock_path: temp_dir.path().join("test.lock"),
+            pid_path: temp_dir.path().join("test.pid"),
         };
         let _server = DaemonServer::acquire(options).unwrap();
 
@@ -360,6 +488,7 @@ mod tests {
         let options2 = DaemonOptions {
             socket_path: temp_dir.path().join("test.sock"),
             lock_path: temp_dir.path().join("test.lock"),
+            pid_path: temp_dir.path().join("test.pid"),
         };
         let result = DaemonServer::acquire(options2);
         assert!(result.is_err(), "expected lock conflict");
@@ -385,10 +514,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let socket_path = temp_dir.path().join("e2e.sock");
         let lock_path = temp_dir.path().join("e2e.lock");
+        let pid_path = temp_dir.path().join("e2e.pid");
 
         let options = DaemonOptions {
             socket_path: socket_path.clone(),
             lock_path,
+            pid_path,
         };
         let server = DaemonServer::acquire(options).unwrap();
         let shutdown = server.shutdown_handle();
@@ -419,5 +550,84 @@ mod tests {
         // Shut down
         shutdown.request_shutdown();
         server_thread.join().unwrap().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_lifecycle_pidfile_and_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let options = DaemonOptions::from_paths(&paths);
+        assert!(!paths.daemon_pid_path().exists());
+
+        {
+            let _server = DaemonServer::acquire(options).unwrap();
+            assert!(paths.daemon_pid_path().exists());
+
+            let status = get_daemon_status(&paths);
+            assert!(status.is_running());
+            if let DaemonStatus::Running { pid, .. } = status {
+                assert_eq!(pid, std::process::id());
+            }
+        }
+
+        // Cleanup on drop
+        assert!(!paths.daemon_pid_path().exists());
+        assert!(!get_daemon_status(&paths).is_running());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_daemon_logic() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        // Create a dummy process to "stop"
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        // Mock the daemon state
+        fs::write(paths.daemon_pid_path(), pid.to_string()).unwrap();
+        // Socket doesn't need to be fully functional for stop_daemon to send the signal,
+        // but get_daemon_status will report socket_ok: false.
+
+        // Ensure status sees it as running
+        let status = get_daemon_status(&paths);
+        assert!(status.is_running());
+
+        // Stop it
+        let result = stop_daemon(&paths).unwrap();
+        assert!(result.contains(&format!("daemon (pid {})", pid)));
+
+        // The process might take a moment to die and for pidfile to be removed.
+        // But since it's a sleep process and we sent SIGTERM, it should die.
+        // Wait for it.
+        let _ = child.wait();
+
+        // Clean up pidfile manually if stop_daemon didn't (it only removes if it times out and force-kills,
+        // or if the daemon cleans itself up. Our dummy sleep doesn't clean up awod.pid).
+        let _ = fs::remove_file(paths.daemon_pid_path());
+
+        assert!(!get_daemon_status(&paths).is_running());
     }
 }

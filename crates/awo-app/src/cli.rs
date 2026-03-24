@@ -13,6 +13,12 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
     Tui,
+    /// Manage the background daemon (awod).
+    #[cfg(unix)]
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
@@ -414,4 +420,14 @@ pub enum DebugCommand {
         #[arg(long, default_value = "cli-debug")]
         label: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DaemonCommand {
+    /// Start the daemon in the foreground.
+    Start,
+    /// Stop a running daemon.
+    Stop,
+    /// Check the status of the daemon.
+    Status,
 }

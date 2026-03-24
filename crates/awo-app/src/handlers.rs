@@ -1,7 +1,7 @@
 use crate::cli::{
-    AppCommand, ContextCommand, DebugCommand, RepoCommand, ReviewCommand, RuntimeCommand,
-    RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand, TeamCommand,
-    TeamMemberCommand, TeamTaskCommand,
+    AppCommand, ContextCommand, DaemonCommand, DebugCommand, RepoCommand, ReviewCommand,
+    RuntimeCommand, RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand,
+    TeamCommand, TeamMemberCommand, TeamTaskCommand,
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
@@ -25,6 +25,8 @@ use awo_core::{
     TeamTaskStartOptions, all_runtime_capabilities, default_team_manifest_path, route_runtime,
     runtime_capabilities, starter_team_manifest,
 };
+#[cfg(unix)]
+use awo_core::{DaemonOptions, DaemonServer, DaemonStatus, get_daemon_status, stop_daemon};
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
@@ -114,6 +116,8 @@ pub fn execute(command: AppCommand, output: OutputMode) -> Result<()> {
             run_tui()
         }
         AppCommand::Repo { command } => run_repo(command, output),
+        #[cfg(unix)]
+        AppCommand::Daemon { command } => run_daemon(command, output),
         AppCommand::Context { command } => run_context(command, output),
         AppCommand::Skills { command } => run_skills(command, output),
         AppCommand::Runtime { command } => run_runtime(command, output),
@@ -161,6 +165,68 @@ fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
         print_outcome(&outcome);
         print_registered_repos(&snapshot);
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn run_daemon(command: DaemonCommand, output: OutputMode) -> Result<()> {
+    let core = AppCore::bootstrap()?;
+    let paths = core.paths();
+
+    match command {
+        DaemonCommand::Start => {
+            if output.json {
+                bail!("`--json` is not supported with `daemon start` (runs in foreground)");
+            }
+            println!("Starting awod daemon in foreground...");
+            let options = DaemonOptions::from_paths(paths);
+            let server = DaemonServer::acquire(options)?;
+            let mut dispatcher = core;
+            server.run(&mut dispatcher)?;
+        }
+        DaemonCommand::Stop => {
+            let message = stop_daemon(paths)?;
+            if output.json {
+                print_json_response(&message, None);
+            } else {
+                println!("{}", message);
+            }
+        }
+        DaemonCommand::Status => {
+            let status = get_daemon_status(paths);
+            if output.json {
+                let json = match &status {
+                    DaemonStatus::Running { pid, socket_ok } => serde_json::json!({
+                        "status": "running",
+                        "pid": pid,
+                        "socket_ok": socket_ok
+                    }),
+                    DaemonStatus::NotRunning => serde_json::json!({
+                        "status": "not_running"
+                    }),
+                };
+                print_json_response(&json, None);
+            } else {
+                match status {
+                    DaemonStatus::Running { pid, socket_ok } => {
+                        let socket_msg = if socket_ok {
+                            "socket ok"
+                        } else {
+                            "socket not responding"
+                        };
+                        println!("running (pid {}, {})", pid, socket_msg);
+                    }
+                    DaemonStatus::NotRunning => {
+                        println!("not running");
+                    }
+                }
+            }
+            if !status.is_running() {
+                std::process::exit(1);
+            }
+        }
+    }
+
     Ok(())
 }
 

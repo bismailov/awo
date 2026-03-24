@@ -28,7 +28,10 @@ pub use commands::{Command, CommandOutcome};
 pub use context::{ContextDoctorReport, RepoContext};
 #[cfg(unix)]
 pub use daemon::DaemonClient;
-pub use daemon::{DaemonOptions, DaemonServer, ShutdownHandle, daemon_is_running};
+pub use daemon::{
+    DaemonOptions, DaemonServer, DaemonStatus, ShutdownHandle, daemon_is_running,
+    get_daemon_status, stop_daemon,
+};
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
 pub use dispatch::{
     Dispatcher, RpcError, RpcRequest, RpcResponse, RpcResult, dispatch_rpc, error_code_for,
