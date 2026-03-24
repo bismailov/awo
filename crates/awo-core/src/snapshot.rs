@@ -886,4 +886,198 @@ mod tests {
         assert!(summary.warnings.iter().any(|w| w.kind == "risky-overlap"));
         assert!(summary.warnings.iter().any(|w| w.kind == "soft-overlap"));
     }
+
+    #[test]
+    fn no_overlap_when_slots_touch_different_files() {
+        let slot1 = SlotReviewView {
+            id: "slot1",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: true,
+            dirty_files: vec!["src/foo.rs".to_string()],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let slot2 = SlotReviewView {
+            id: "slot2",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: true,
+            dirty_files: vec!["tests/bar.rs".to_string()],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
+        assert!(
+            !summary
+                .warnings
+                .iter()
+                .any(|w| w.kind == "risky-overlap" || w.kind == "soft-overlap"),
+            "no overlap expected for disjoint files/modules"
+        );
+    }
+
+    #[test]
+    fn dirty_slot_warning_emitted() {
+        let slot = SlotReviewView {
+            id: "slot-dirty",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: true,
+            dirty_files: vec!["src/lib.rs".to_string()],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![].into_iter());
+        assert!(summary.warnings.iter().any(|w| w.kind == "dirty-slot"));
+        assert_eq!(summary.dirty_slots, 1);
+    }
+
+    #[test]
+    fn stale_active_slot_warning_emitted() {
+        let slot = SlotReviewView {
+            id: "slot-stale",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: false,
+            fingerprint_is_stale: true,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![].into_iter());
+        assert!(
+            summary
+                .warnings
+                .iter()
+                .any(|w| w.kind == "stale-active-slot")
+        );
+        assert_eq!(summary.stale_slots, 1);
+    }
+
+    #[test]
+    fn stale_warm_released_slot_warning() {
+        let slot = SlotReviewView {
+            id: "slot-warm",
+            is_active: false,
+            is_released: true,
+            is_missing: false,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: true,
+            fingerprint_is_ready: false,
+            fingerprint_is_stale: true,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![].into_iter());
+        assert!(summary.warnings.iter().any(|w| w.kind == "stale-warm-slot"));
+    }
+
+    #[test]
+    fn missing_slot_warning() {
+        let slot = SlotReviewView {
+            id: "slot-gone",
+            is_active: true,
+            is_released: false,
+            is_missing: true,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![].into_iter());
+        assert!(summary.warnings.iter().any(|w| w.kind == "missing-slot"));
+    }
+
+    #[test]
+    fn slot_busy_with_pending_sessions() {
+        let slot = SlotReviewView {
+            id: "slot-busy",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let session = SessionReviewView {
+            id: "sess-1",
+            slot_id: "slot-busy",
+            is_completed: false,
+            is_failed: false,
+            is_terminal: false,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![session].into_iter());
+        assert!(summary.warnings.iter().any(|w| w.kind == "slot-busy"));
+    }
+
+    #[test]
+    fn slot_multi_session_warning() {
+        let slot = SlotReviewView {
+            id: "slot-multi",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let sess1 = SessionReviewView {
+            id: "sess-1",
+            slot_id: "slot-multi",
+            is_completed: false,
+            is_failed: false,
+            is_terminal: false,
+        };
+        let sess2 = SessionReviewView {
+            id: "sess-2",
+            slot_id: "slot-multi",
+            is_completed: false,
+            is_failed: false,
+            is_terminal: false,
+        };
+        let summary =
+            build_review_summary_impl(vec![slot].into_iter(), vec![sess1, sess2].into_iter());
+        assert!(
+            summary
+                .warnings
+                .iter()
+                .any(|w| w.kind == "slot-multi-session")
+        );
+    }
+
+    #[test]
+    fn releasable_slot_counted_when_clean_and_no_sessions() {
+        let slot = SlotReviewView {
+            id: "slot-clean",
+            is_active: true,
+            is_released: false,
+            is_missing: false,
+            dirty: false,
+            dirty_files: vec![],
+            uses_warm_strategy: false,
+            fingerprint_is_ready: true,
+            fingerprint_is_stale: false,
+        };
+        let summary = build_review_summary_impl(vec![slot].into_iter(), vec![].into_iter());
+        assert_eq!(summary.releasable_slots, 1);
+        assert_eq!(summary.active_slots, 1);
+        assert!(
+            !summary.warnings.iter().any(|w| w.kind == "dirty-slot"
+                || w.kind == "stale-active-slot"
+                || w.kind == "missing-slot"),
+            "clean active slot should produce no warnings"
+        );
+    }
 }
