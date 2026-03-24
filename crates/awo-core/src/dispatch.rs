@@ -90,7 +90,7 @@ impl RpcRequest {
         let params = full
             .get("params")
             .cloned()
-            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+            .unwrap_or(serde_json::Value::Null);
         Ok(Self {
             jsonrpc: "2.0".to_string(),
             method: command.method_name().to_string(),

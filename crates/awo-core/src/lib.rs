@@ -30,7 +30,7 @@ pub use context::{ContextDoctorReport, RepoContext};
 pub use daemon::DaemonClient;
 pub use daemon::{
     DaemonOptions, DaemonServer, DaemonStatus, ShutdownHandle, daemon_is_running,
-    get_daemon_status, stop_daemon,
+    get_daemon_status, spawn_daemon, stop_daemon,
 };
 pub use diagnostics::{Diagnostic, DiagnosticSeverity};
 pub use dispatch::{

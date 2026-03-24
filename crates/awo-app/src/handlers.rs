@@ -65,7 +65,22 @@ impl CliBackend {
                     }
                 }
             } else {
-                None
+                match awo_core::spawn_daemon(core.paths()) {
+                    Ok(pid) => {
+                        tracing::info!(pid, "auto-started awod daemon");
+                        match awo_core::DaemonClient::connect(&core.paths().daemon_socket_path()) {
+                            Ok(client) => Some(client),
+                            Err(error) => {
+                                tracing::warn!(%error, "auto-started daemon but connection failed, using direct mode");
+                                None
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "could not auto-start daemon, using direct mode");
+                        None
+                    }
+                }
             }
         };
 

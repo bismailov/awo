@@ -348,7 +348,71 @@ pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
 }
 
 #[cfg(not(unix))]
-pub fn stop_daemon(_paths: &AppPaths) -> AwoResult<String> {
+pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
+    let _ = paths;
+    Err(AwoError::supervisor(
+        "daemon mode is not yet supported on this platform",
+    ))
+}
+
+/// Spawn `awod` as a detached background process.
+/// Returns Ok(pid) on success.
+#[cfg(unix)]
+pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
+    let awo_exe = std::env::current_exe()
+        .map_err(|e| AwoError::supervisor(format!("failed to get current executable path: {e}")))?;
+    let awod_exe = awo_exe.with_file_name("awod");
+
+    if !awod_exe.exists() {
+        return Err(AwoError::supervisor(format!(
+            "awod binary not found at {}",
+            awod_exe.display()
+        )));
+    }
+
+    let mut child = std::process::Command::new(&awod_exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|source| AwoError::io("spawn awod daemon", &awod_exe, source))?;
+
+    let pid = child.id();
+
+    // Poll until running
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(3);
+    let interval = std::time::Duration::from_millis(100);
+
+    while start.elapsed() < timeout {
+        if daemon_is_running(paths) {
+            tracing::info!(pid, "spawned awod daemon process");
+            return Ok(pid);
+        }
+
+        // Check if child exited prematurely
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(AwoError::supervisor(format!(
+                    "awod daemon exited prematurely with status: {status}"
+                )));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(%e, "error checking awod daemon status");
+            }
+        }
+
+        std::thread::sleep(interval);
+    }
+
+    Err(AwoError::supervisor(
+        "awod daemon failed to start within timeout",
+    ))
+}
+
+#[cfg(not(unix))]
+pub fn spawn_daemon(_paths: &AppPaths) -> AwoResult<u32> {
     Err(AwoError::supervisor(
         "daemon mode is not yet supported on this platform",
     ))
@@ -631,5 +695,24 @@ mod tests {
         let _ = fs::remove_file(paths.daemon_pid_path());
 
         assert!(!get_daemon_status(&paths).is_running());
+    }
+
+    #[test]
+    fn spawn_daemon_fails_when_awod_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let result = spawn_daemon(&paths);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("awod binary not found"));
     }
 }
