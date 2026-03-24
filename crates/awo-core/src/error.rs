@@ -262,3 +262,79 @@ impl AwoError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_display_messages_contain_context() {
+        let cases: Vec<(AwoError, &str)> = vec![
+            (AwoError::unknown_repo("repo-1"), "repo-1"),
+            (AwoError::unknown_slot("slot-1"), "slot-1"),
+            (AwoError::unknown_session("sess-1"), "sess-1"),
+            (AwoError::unknown_task("task-1"), "task-1"),
+            (AwoError::unknown_owner("owner-1"), "owner-1"),
+            (AwoError::unsupported("runtime", "bogus"), "bogus"),
+            (AwoError::invalid_state("broken"), "broken"),
+            (AwoError::validation("bad input"), "bad input"),
+            (AwoError::runtime_launch("spawn failed"), "spawn failed"),
+            (AwoError::supervisor("pty error"), "pty error"),
+            (AwoError::store_init("migration failed"), "migration failed"),
+            (AwoError::skill_target_dir_unresolved("claude"), "claude"),
+            (
+                AwoError::git_command_failed("push", "/tmp/repo", "rejected"),
+                "rejected",
+            ),
+        ];
+        for (error, expected_substr) in cases {
+            let msg = error.to_string();
+            assert!(
+                msg.contains(expected_substr),
+                "expected `{expected_substr}` in error message: `{msg}`"
+            );
+        }
+    }
+
+    #[test]
+    fn project_directories_unavailable_display() {
+        let err = AwoError::project_directories_unavailable();
+        assert!(err.to_string().contains("application directories"));
+    }
+
+    #[test]
+    fn io_error_contains_action_and_path() {
+        let source = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let err = AwoError::io("read config", "/etc/awo.toml", source);
+        let msg = err.to_string();
+        assert!(msg.contains("read config"), "should contain action");
+        assert!(msg.contains("/etc/awo.toml"), "should contain path");
+    }
+
+    #[test]
+    fn git_invocation_error_contains_operation() {
+        let source = std::io::Error::new(std::io::ErrorKind::NotFound, "git not found");
+        let err = AwoError::git_invocation("clone", "/tmp/repo", source);
+        let msg = err.to_string();
+        assert!(msg.contains("clone"), "should contain operation");
+        assert!(msg.contains("/tmp/repo"), "should contain path");
+    }
+
+    #[test]
+    fn awo_bail_macro_returns_validation_error() {
+        fn try_bail() -> AwoResult<()> {
+            awo_bail!("something went wrong");
+        }
+        let err = try_bail().unwrap_err();
+        assert!(err.to_string().contains("something went wrong"));
+    }
+
+    #[test]
+    fn awo_bail_macro_with_format_args() {
+        fn try_bail(id: &str) -> AwoResult<()> {
+            awo_bail!("bad id: {}", id);
+        }
+        let err = try_bail("xyz").unwrap_err();
+        assert!(err.to_string().contains("bad id: xyz"));
+    }
+}
