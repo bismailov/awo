@@ -1,8 +1,12 @@
 use super::*;
 use crate::commands::Command;
 use crate::config::{AppConfig, AppSettings};
-use crate::runtime::{SessionLaunchMode, SessionRecord};
-use crate::team::{TaskCard, TaskCardState, TeamExecutionMode, TeamMember, starter_team_manifest};
+use crate::runtime::{SessionLaunchMode, SessionRecord, SessionStatus};
+use crate::slot::SlotStatus;
+use crate::team::{
+    TaskCard, TaskCardState, TeamExecutionMode, TeamMember, TeamTaskStartOptions,
+    starter_team_manifest,
+};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,7 +40,14 @@ fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
     let store = Store::open(&config.paths.state_db_path)?;
     store.initialize_schema()?;
 
-    Ok((temp_dir, AppCore { config, store }))
+    Ok((
+        temp_dir,
+        AppCore {
+            config,
+            store,
+            dirty_cache: std::cell::RefCell::new(crate::snapshot::DirtyFileCache::new()),
+        },
+    ))
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<()> {

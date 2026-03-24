@@ -19,7 +19,65 @@ use crate::team::{
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::{Duration, Instant};
 use tracing::warn;
+
+const DIRTY_CACHE_TTL: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub struct DirtyFileCache {
+    entries: HashMap<String, CacheEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    files: Vec<String>,
+    cached_at: Instant,
+}
+
+impl Default for DirtyFileCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DirtyFileCache {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn get_or_refresh(&mut self, slot_id: &str, slot_path: &str) -> Vec<String> {
+        let now = Instant::now();
+        if let Some(entry) = self.entries.get(slot_id)
+            && now.duration_since(entry.cached_at) < DIRTY_CACHE_TTL
+        {
+            return entry.files.clone();
+        }
+        let files = git::dirty_files(Path::new(slot_path)).unwrap_or_else(|err| {
+            warn!(slot_id, %err, "failed to list dirty files for slot");
+            vec![]
+        });
+        self.entries.insert(
+            slot_id.to_string(),
+            CacheEntry {
+                files: files.clone(),
+                cached_at: now,
+            },
+        );
+        files
+    }
+
+    pub fn retain_slots(&mut self, active_slot_ids: &[&str]) {
+        self.entries
+            .retain(|id, _| active_slot_ids.contains(&id.as_str()));
+    }
+
+    pub fn invalidate(&mut self, slot_id: &str) {
+        self.entries.remove(slot_id);
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandLogEntry {
@@ -164,11 +222,15 @@ pub struct ReviewWarning {
 }
 
 impl AppSnapshot {
-    pub fn load(config: &AppConfig, store: &Store) -> AwoResult<Self> {
+    pub fn load(
+        config: &AppConfig,
+        store: &Store,
+        dirty_cache: &mut DirtyFileCache,
+    ) -> AwoResult<Self> {
         let repositories = store.list_repositories()?;
         let slots = store.list_slots(None)?;
         let sessions = store.list_sessions(None)?;
-        let review = build_review_summary(&slots, &sessions);
+        let review = build_review_summary(&slots, &sessions, dirty_cache);
         let teams = list_team_manifest_paths(&config.paths)?
             .into_iter()
             .filter_map(|path| match load_team_manifest(&path) {
@@ -491,7 +553,11 @@ impl SlotSummary {
     }
 }
 
-fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> ReviewSummary {
+fn build_review_summary(
+    slots: &[SlotRecord],
+    sessions: &[SessionRecord],
+    dirty_cache: &mut DirtyFileCache,
+) -> ReviewSummary {
     build_review_summary_impl(
         slots.iter().map(|slot| SlotReviewView {
             id: slot.id.as_str(),
@@ -500,10 +566,7 @@ fn build_review_summary(slots: &[SlotRecord], sessions: &[SessionRecord]) -> Rev
             is_missing: slot.is_missing(),
             dirty: slot.dirty,
             dirty_files: if slot.dirty {
-                git::dirty_files(Path::new(&slot.slot_path)).unwrap_or_else(|err| {
-                    warn!(slot_id = slot.id.as_str(), %err, "failed to list dirty files for slot");
-                    vec![]
-                })
+                dirty_cache.get_or_refresh(slot.id.as_str(), &slot.slot_path)
             } else {
                 vec![]
             },
