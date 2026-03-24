@@ -26,6 +26,7 @@ pub(super) struct SessionIoLayout {
     pub(super) stderr_path: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 pub(super) struct PreparedCommand {
     pub(super) program: String,
     pub(super) args: Vec<String>,

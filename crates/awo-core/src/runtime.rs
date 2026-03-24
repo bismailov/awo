@@ -164,6 +164,7 @@ impl SessionLaunchMode {
     }
 }
 
+#[derive(Debug)]
 pub struct SessionRunRequest<'a> {
     pub paths: &'a AppPaths,
     pub repo_id: &'a str,
@@ -176,10 +177,12 @@ pub struct SessionRunRequest<'a> {
     pub launch_mode: SessionLaunchMode,
 }
 
+#[derive(Debug)]
 pub struct SessionExecutionResult {
     pub session: SessionRecord,
 }
 
+#[derive(Debug)]
 pub struct PreparedSession {
     pub session: SessionRecord,
     prepared: PreparedCommand,

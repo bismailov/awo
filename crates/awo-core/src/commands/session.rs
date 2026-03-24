@@ -23,16 +23,18 @@ impl<'a> CommandRunner<'a> {
             launch_mode,
             attach_context,
         } = options;
-        if !detect_runtime(runtime) {
-            return Err(AwoError::runtime_launch(format!(
-                "runtime `{}` is not available on PATH; install it or check your PATH configuration",
-                runtime.as_str()
-            )));
-        }
-        if launch_mode == SessionLaunchMode::Pty && !detect_tmux() {
-            return Err(AwoError::runtime_launch(
-                "PTY launch is not available on this machine; use `--launch-mode oneshot` or install the configured supervisor backend",
-            ));
+        if !dry_run {
+            if !detect_runtime(runtime) {
+                return Err(AwoError::runtime_launch(format!(
+                    "runtime `{}` is not available on PATH; install it or check your PATH configuration",
+                    runtime.as_str()
+                )));
+            }
+            if launch_mode == SessionLaunchMode::Pty && !detect_tmux() {
+                return Err(AwoError::runtime_launch(
+                    "PTY launch is not available on this machine; use `--launch-mode oneshot` or install the configured supervisor backend",
+                ));
+            }
         }
 
         let mut slot = self
