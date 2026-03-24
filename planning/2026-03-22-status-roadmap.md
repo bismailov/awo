@@ -2,7 +2,7 @@
 
 ## 1. Current State
 
-`awo` is a working orchestrator with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 356+ tests. **CI is green on all three platforms** (macOS, Ubuntu, Windows). The app is ready for its first end-to-end smoke test.
+`awo` is a **usable daily-driver orchestrator** with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 356+ tests. **CI is green on all three platforms** (macOS, Ubuntu, Windows). All TUI usability blockers are resolved.
 
 ### What's Built
 
@@ -20,6 +20,8 @@
 - Collision-proof ID generation with atomic sequence counters
 - Team reconciliation logic extracted to `team/reconcile.rs`
 - Cross-platform path canonicalization via `dunce` crate
+- Module decomposition: `app/team_ops.rs` (team orchestration), `store/tests.rs` (test extraction)
+- `DirtyFileCache` with 5s TTL for git status caching in snapshot hot path
 
 **Daemon (`awod`)**
 - JSON-RPC 2.0 over Unix Domain Socket
@@ -38,99 +40,101 @@
 - TUI: ratatui-based dashboard with full keyboard operability
 
 **TUI Operations**
-- `s` acquire slot, `Enter` start session / view log, `x` cancel session, `X` release slot
+- `s` acquire slot (text input for task name), `Enter` start session (text input for runtime:prompt) / view log
+- `x` cancel session, `X` release slot (both non-blocking background ops)
 - `t` start next team task (auto-selects first todo task, acquires slot, launches session)
 - `r` refresh review / refresh log, `Esc` close log panel
 - `a` add repo, `c` context doctor, `d` skills doctor
+- `?` keybinding help overlay
 - Tab/BackTab panel cycling, Up/Down/j/k navigation
-- Inline log viewer overlay with refresh
+- Live log tailing with auto-refresh for running sessions, `[running]` indicator, scroll tracking
+- Input bar overlay for text entry
+- Background dispatch via `crossbeam-channel` for slot acquire/release
 
 **Quality**
 - `unsafe_code = "forbid"` workspace-wide
-- Zero `anyhow` in production core code (typed `AwoError` throughout)
+- Zero `anyhow` in production core code (typed `AwoError` throughout); `anyhow` only in test helpers
 - All error-swallowing patterns replaced with structured tracing logging
 - 356+ tests across all modules; **CI green on all 3 platforms**
 - `#[derive(Debug)]` on all public structs for debuggability
 
 ## 2. What Was Just Completed (March 24)
 
-- **Windows CI fully green**: `dunce::canonicalize` replacing `fs::canonicalize` across all call sites; e2e test isolation via `AWO_DATA_DIR`/`AWO_CONFIG_DIR`; gated unix-only imports; fixed shell/PTY test assertions
-- **Team reconcile extraction**: `reconcile_team_manifest_state`, `build_team_teardown_plan`, `collect_bound_slot_ids` moved to `team/reconcile.rs` (~160 LOC out of app.rs)
+### Wave 1 (earlier March 24)
+- **Windows CI fully green**: `dunce::canonicalize`, e2e test isolation, gated unix imports, fixed shell/PTY test assertions
+- **Team reconcile extraction**: moved to `team/reconcile.rs` (~160 LOC out of app.rs)
 - **Flaky test fix**: PTY timing test uses poll loop instead of fixed sleep
 
-### Items Closed From Previous Roadmap
+### Wave 2 (March 24)
+- **Module decomposition**: `app.rs` reduced from ~890 to ~165 LOC (team ops → `app/team_ops.rs`); `store.rs` reduced from ~1045 to ~675 LOC (tests → `store/tests.rs`)
+- **TUI input & help** (Job Card A): text input mode for task names and session prompts, `?` help overlay
+- **Background git ops** (Job Card B): `SlotAcquire` and `SlotRelease` via background threads with `crossbeam-channel`
+- **Live log tailing** (Job Card C): auto-refresh for running sessions, auto-open on session start, `[running]` indicator, scroll tracking
+- **Git status caching** (Job Card D): `DirtyFileCache` with 5s TTL, `RefCell` on `AppCore`, cache invalidation on mutations, stale entry pruning
 
-| Item | Status |
+### All Previous Blockers Resolved
+
+| Previous Gap | Resolution |
 |------|--------|
-| Windows path canonicalization | **Done** — `dunce` crate |
-| Extract reconcile logic | **Done** — `team/reconcile.rs` |
-| ConPTY completion | **Partially done** — CI green, tests pass, but real-device verification still pending |
+| TUI blocks on git ops | **Done** — background dispatch via crossbeam-channel |
+| No TUI input prompts | **Done** — inline text input for task name and runtime:prompt |
+| No session output streaming | **Done** — live log tailing with auto-refresh every 200ms |
+| `app.rs` ~890 LOC | **Done** — decomposed to ~165 LOC + `app/team_ops.rs` |
+| `store.rs` ~1050 LOC | **Done** — reduced to ~675 LOC + `store/tests.rs` |
+| Git status caching | **Done** — `DirtyFileCache` with 5s TTL |
+| No help overlay | **Done** — `?` keybinding reference |
 
-## 3. Smoke Test Readiness
+## 3. Next Wave: Hardening & Depth
 
-The app has all features needed for end-to-end use:
+Focus: **make the core more reliable and the review/runtime layers more capable** before broadening scope.
 
-1. `awo repo add .` — register a repository
-2. `awo slot acquire <repo_id> <task>` — get a workspace
-3. `awo session start <slot_id> shell "ls"` — run a command
-4. `awo tui` — open the dashboard, observe state, press Enter to view logs
-5. Alternatively: do the entire workflow from within `awo tui`
+### Milestone A: Negative-Path Test Coverage
 
-## 4. What's Missing For a Working Daily-Driver App
+The happy path is well-tested (356+ tests). The failure path is thin — corrupt state, broken manifests, missing git repos, runtime failures. Add targeted negative-path tests to the modules with the thinnest coverage relative to their complexity.
 
-The app is architecturally complete but has two categories of gaps that prevent comfortable daily use:
+Priority targets:
+- `store.rs` (676 LOC, 11 tests) — corrupt/missing DB, malformed rows, migration edge cases
+- `commands/` (1450 LOC, 0 tests) — invalid inputs, missing repos/slots/sessions, permission failures
+- `snapshot.rs` — broken slot paths, missing git repos, partial state
 
-### Category A: Blocking for real use
+See: `planning/job-card-E-negative-path-tests.md`
 
-| Gap | Impact |
-|-----|--------|
-| TUI blocks on git ops | Slot acquire/release/refresh call git synchronously — TUI freezes for seconds on large repos |
-| No TUI input prompts | `s` acquires with hardcoded "tui-task" name, `Enter` starts with hardcoded `echo` command. No way to enter task name, runtime, prompt from TUI |
-| No session output streaming | Log viewer shows final output only. No live tail during running sessions |
+### Milestone B: Review Intelligence
 
-### Category B: Important but not blocking
+The review engine produces useful warnings but doesn't yet analyze overlap by changed-file classes or explain *why* a slot is blocked/releasable. Richer review surfaces make the operator's decisions faster and safer.
 
-| Gap | Impact |
-|-----|--------|
-| `app.rs` still ~890 LOC | Readable but could be cleaner — team orchestration, slot mgmt, snapshot building mixed |
-| `store.rs` ~1050 LOC | Query builders and migrations interleaved |
-| Git status caching | Every snapshot calls `git status --porcelain` per slot — slow with many slots |
-| No help overlay in TUI | Users must remember keybindings |
+Priority targets:
+- Changed-file overlap detection (two slots touching the same files)
+- Richer blocking/releasable explanations in review warnings
+- Repo-scoped and team-scoped review depth
 
-## 5. Next Wave: Path to Working App
+See: `planning/job-card-F-review-intelligence.md`
 
-Focus: **make the app usable for real daily work**, not feature-complete.
+### Milestone C: Runtime Maturity (Future)
 
-### Phase 1: TUI Usability (Highest Priority)
+- Windows shell hardening
+- Session timeout/interruption controls
+- Structured runtime output parsing
 
-| Item | Description | Files |
-|------|-------------|-------|
-| TUI input prompts | Add simple text input for task name (on `s`), prompt/runtime (on `Enter`). Minimal inline input, not a full dialog system. | `tui.rs` |
-| Background git ops | Move slot acquire/release/refresh to `std::thread` with `crossbeam-channel` notification to unblock TUI event loop | `tui.rs`, `app.rs` |
-| Help overlay | `?` key shows keybinding reference | `tui.rs` |
+### Milestone D: Team Execution Depth (Future)
 
-### Phase 2: Session Experience
+- Result consolidation across workers
+- Routing policy reporting
+- Lead/worker reconciliation helpers
 
-| Item | Description | Files |
-|------|-------------|-------|
-| Live log tailing | Tail session log file during running sessions, update on `r` or auto-refresh | `tui.rs` |
-| Session status auto-sync | Periodic oneshot session sync in TUI loop (already polls at 200ms, just needs sync call) | `tui.rs` |
+### Milestone E: Middleware Mode (Future)
 
-### Phase 3: Code Organization (Can parallelize with Phase 1-2)
+- Stabilize JSON command contract
+- Broker/daemon mode
+- MCP facade
 
-| Item | Description | Files |
-|------|-------------|-------|
-| app.rs decomposition | Extract team orchestration and snapshot building into sub-modules | `app.rs` |
-| store.rs decomposition | Extract migrations and query builders | `store.rs` |
-
-## 6. Deferred (Not Now)
+## 4. Deferred (Not Now)
 
 - Async store / Tokio migration
 - MCP resource subscriptions
 - Named Pipe transport for Windows daemon
 - Context pack auto-generation
 - Comprehensive Rust doc comments
-- Richer conflict analysis (semantic overlaps)
 - Multi-agent handoff flows
 - Routing policy engine externalization
 - WASI sandboxing
