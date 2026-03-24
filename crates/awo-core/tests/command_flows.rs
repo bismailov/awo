@@ -406,15 +406,21 @@ fn pty_session_runs_and_syncs_to_completion() -> Result<()> {
         .context("missing PTY session")?;
     assert_eq!(session.status, SessionStatus::Running);
 
-    sleep(Duration::from_secs(2));
     let session_id = session.id.clone();
 
-    let session = core
-        .snapshot()?
-        .sessions
-        .into_iter()
-        .find(|session| session.id == session_id)
-        .context("missing synced PTY session")?;
+    let mut session = session;
+    for _ in 0..20 {
+        sleep(Duration::from_millis(500));
+        session = core
+            .snapshot()?
+            .sessions
+            .into_iter()
+            .find(|session| session.id == session_id)
+            .context("missing synced PTY session")?;
+        if session.status == SessionStatus::Completed {
+            break;
+        }
+    }
     assert_eq!(session.status, SessionStatus::Completed);
     assert_eq!(session.exit_code, Some(0));
     let log_path = session.log_path.context("missing PTY log path")?;

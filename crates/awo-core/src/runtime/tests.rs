@@ -1,8 +1,6 @@
 use super::*;
 use crate::app::AppPaths;
-#[cfg(not(windows))]
-use crate::platform::shell_script_args;
-use crate::platform::{default_shell_program, shell_command_args};
+use crate::platform::{default_shell_program, shell_command_args, shell_script_args};
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
@@ -309,25 +307,18 @@ fn prepare_command_shell_uses_platform_shell() {
         Some(expected_display.as_str())
     );
 
-    #[cfg(windows)]
-    {
-        let expected_args = shell_command_args("echo hello");
-        assert_eq!(prepared.args, expected_args);
-        assert!(prepared.script_path.is_none());
-        assert!(prepared.script_body.is_none());
-    }
-
-    #[cfg(not(windows))]
-    {
-        let expected_script = stdout.with_extension("sh");
-        let expected_args = shell_script_args(&expected_script);
-        assert_eq!(prepared.args, expected_args);
-        assert_eq!(
-            prepared.script_path.as_deref(),
-            Some(expected_script.as_path())
-        );
-        assert_eq!(prepared.script_body.as_deref(), Some("echo hello"));
-    }
+    let expected_script = if cfg!(windows) {
+        stdout.with_extension("ps1")
+    } else {
+        stdout.with_extension("sh")
+    };
+    let expected_args = shell_script_args(&expected_script);
+    assert_eq!(prepared.args, expected_args);
+    assert_eq!(
+        prepared.script_path.as_deref(),
+        Some(expected_script.as_path())
+    );
+    assert_eq!(prepared.script_body.as_deref(), Some("echo hello"));
     assert_eq!(prepared.cwd, slot);
 }
 
@@ -529,7 +520,7 @@ fn prepare_session_pty_log_path_naming() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[test]
 fn prepare_session_pty_is_unavailable_on_non_unix() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
