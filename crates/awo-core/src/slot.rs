@@ -98,11 +98,19 @@ impl SlotStrategy {
 }
 
 pub fn build_slot_id(repo_id: &str, task_name: &str) -> String {
-    let suffix = SystemTime::now()
+    let suffix = unique_millis();
+    format!("{}-{}-{suffix}", repo_id, slugify(task_name))
+}
+
+fn unique_millis() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("{}-{}-{suffix}", repo_id, slugify(task_name))
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{ts}-{seq}")
 }
 
 pub fn build_branch_name(task_name: &str, slot_id: &str) -> String {

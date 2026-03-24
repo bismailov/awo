@@ -317,11 +317,19 @@ pub(super) fn materialize_shell_script(prepared: &PreparedCommand) -> AwoResult<
 }
 
 pub(super) fn build_session_id(slot_id: &str, runtime: RuntimeKind) -> String {
-    let suffix = SystemTime::now()
+    let suffix = unique_millis();
+    format!("sess-{}-{}-{suffix}", runtime.as_str(), slot_id)
+}
+
+fn unique_millis() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("sess-{}-{}-{suffix}", runtime.as_str(), slot_id)
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{ts}-{seq}")
 }
 
 pub(super) fn read_exit_code(paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
