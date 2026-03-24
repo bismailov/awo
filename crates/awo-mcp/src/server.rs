@@ -235,6 +235,20 @@ impl McpServer {
                     text: events_json,
                 })
             }
+            "awo://teams" => {
+                let command = awo_core::Command::TeamList { repo_id: None };
+                let outcome = self
+                    .dispatcher
+                    .dispatch(command)
+                    .map_err(|e| e.to_string())?;
+                let events_json = serde_json::to_string_pretty(&outcome.events)
+                    .unwrap_or_else(|_| "[]".to_string());
+                Ok(ResourceContent {
+                    uri: uri.to_string(),
+                    mime_type: "application/json".to_string(),
+                    text: events_json,
+                })
+            }
             _ => Err(format!("unknown resource URI: {uri}")),
         }
     }
@@ -418,6 +432,212 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["session_id"],
             }),
         },
+        // ----- Team tools -----
+        ToolDefinition {
+            name: "list_teams".to_string(),
+            description: "List all team manifests, optionally filtered by repository.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "repo_id": {
+                        "type": "string",
+                        "description": "Optional repository ID to filter by."
+                    }
+                },
+            }),
+        },
+        ToolDefinition {
+            name: "show_team".to_string(),
+            description: "Load and display a team manifest by ID.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    }
+                },
+                "required": ["team_id"],
+            }),
+        },
+        ToolDefinition {
+            name: "init_team".to_string(),
+            description: "Initialize a new team manifest for a repository.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "repo_id": {
+                        "type": "string",
+                        "description": "The repository this team works on."
+                    },
+                    "objective": {
+                        "type": "string",
+                        "description": "The team's mission objective."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Overwrite existing manifest if present.",
+                        "default": false
+                    }
+                },
+                "required": ["team_id", "repo_id", "objective"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_add_member".to_string(),
+            description: "Add a member to an existing team.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "member_id": {
+                        "type": "string",
+                        "description": "Unique member identifier."
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": ["lead", "worker"],
+                        "description": "The member's role.",
+                        "default": "worker"
+                    },
+                    "runtime": {
+                        "type": "string",
+                        "enum": ["codex", "claude", "gemini", "shell"],
+                        "description": "The runtime this member uses."
+                    }
+                },
+                "required": ["team_id", "member_id", "runtime"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_add_task".to_string(),
+            description: "Add a task to an existing team.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Unique task identifier."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Human-readable task title."
+                    },
+                    "owner_id": {
+                        "type": "string",
+                        "description": "The member_id who owns this task."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "The task prompt for the agent."
+                    },
+                    "deliverable": {
+                        "type": "string",
+                        "description": "What this task should produce."
+                    },
+                    "write_scope": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Files/directories this task may modify."
+                    },
+                    "verification": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Verification steps for the task."
+                    },
+                    "verification_command": {
+                        "type": "string",
+                        "description": "Optional shell command to verify task completion."
+                    },
+                    "depends_on": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Task IDs this task depends on."
+                    }
+                },
+                "required": ["team_id", "task_id", "title", "owner_id", "prompt", "deliverable"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_reset".to_string(),
+            description:
+                "Reset a team to planning state, clearing all task progress and slot bindings."
+                    .to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Skip confirmation.",
+                        "default": false
+                    }
+                },
+                "required": ["team_id"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_report".to_string(),
+            description: "Generate a comprehensive markdown report of team activity and outcomes."
+                .to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    }
+                },
+                "required": ["team_id"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_archive".to_string(),
+            description: "Archive a team whose tasks are all in terminal states.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Skip confirmation.",
+                        "default": false
+                    }
+                },
+                "required": ["team_id"],
+            }),
+        },
+        ToolDefinition {
+            name: "team_delete".to_string(),
+            description: "Permanently delete a team manifest.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    }
+                },
+                "required": ["team_id"],
+            }),
+        },
     ]
 }
 
@@ -449,6 +669,12 @@ fn resource_definitions() -> Vec<ResourceDefinition> {
             uri: "awo://review".to_string(),
             name: "Review Status".to_string(),
             description: "Review and overlap detection status across all repos.".to_string(),
+            mime_type: "application/json".to_string(),
+        },
+        ResourceDefinition {
+            uri: "awo://teams".to_string(),
+            name: "Team List".to_string(),
+            description: "All team manifests.".to_string(),
             mime_type: "application/json".to_string(),
         },
     ]
@@ -544,6 +770,99 @@ fn map_tool_to_command(
                 stream,
             })
         }
+        "list_teams" => {
+            let repo_id = optional_string(args, "repo_id");
+            Ok(awo_core::Command::TeamList { repo_id })
+        }
+        "show_team" => {
+            let team_id = require_string(args, "team_id")?;
+            Ok(awo_core::Command::TeamShow { team_id })
+        }
+        "init_team" => {
+            let team_id = require_string(args, "team_id")?;
+            let repo_id = require_string(args, "repo_id")?;
+            let objective = require_string(args, "objective")?;
+            let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+            Ok(awo_core::Command::TeamInit {
+                team_id,
+                repo_id,
+                objective,
+                force,
+            })
+        }
+        "team_add_member" => {
+            let team_id = require_string(args, "team_id")?;
+            let member_id = require_string(args, "member_id")?;
+            let role = optional_string(args, "role").unwrap_or_else(|| "worker".to_string());
+            let runtime = optional_string(args, "runtime");
+            let member = awo_core::TeamMember {
+                member_id,
+                role,
+                runtime,
+                model: None,
+                execution_mode: awo_core::TeamExecutionMode::ExternalSlots,
+                slot_id: None,
+                branch_name: None,
+                read_only: false,
+                write_scope: Vec::new(),
+                context_packs: Vec::new(),
+                skills: Vec::new(),
+                notes: None,
+                fallback_runtime: None,
+                fallback_model: None,
+                routing_preferences: None,
+            };
+            Ok(awo_core::Command::TeamMemberAdd { team_id, member })
+        }
+        "team_add_task" => {
+            let team_id = require_string(args, "team_id")?;
+            let task_id = require_string(args, "task_id")?;
+            let title = require_string(args, "title")?;
+            let owner_id = require_string(args, "owner_id")?;
+            let prompt = require_string(args, "prompt")?;
+            let deliverable = require_string(args, "deliverable")?;
+            let write_scope = optional_string_array(args, "write_scope");
+            let verification = optional_string_array(args, "verification");
+            let verification_command = optional_string(args, "verification_command");
+            let depends_on = optional_string_array(args, "depends_on");
+            let task = awo_core::TaskCard {
+                task_id,
+                title,
+                summary: prompt,
+                owner_id,
+                runtime: None,
+                slot_id: None,
+                branch_name: None,
+                read_only: false,
+                write_scope,
+                deliverable,
+                verification,
+                verification_command,
+                depends_on,
+                state: awo_core::TaskCardState::Todo,
+                result_summary: None,
+                output_log_path: None,
+            };
+            Ok(awo_core::Command::TeamTaskAdd { team_id, task })
+        }
+        "team_reset" => {
+            let team_id = require_string(args, "team_id")?;
+            let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+            Ok(awo_core::Command::TeamReset { team_id, force })
+        }
+        "team_report" => {
+            let team_id = require_string(args, "team_id")?;
+            Ok(awo_core::Command::TeamReport { team_id })
+        }
+        "team_archive" => {
+            let team_id = require_string(args, "team_id")?;
+            let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+            Ok(awo_core::Command::TeamArchive { team_id, force })
+        }
+        "team_delete" => {
+            let team_id = require_string(args, "team_id")?;
+            Ok(awo_core::Command::TeamDelete { team_id })
+        }
         _ => Err(format!("unknown tool: {tool_name}")),
     }
 }
@@ -559,6 +878,17 @@ fn optional_string(args: &serde_json::Value, key: &str) -> Option<String> {
     args.get(key)
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+}
+
+fn optional_string_array(args: &serde_json::Value, key: &str) -> Vec<String> {
+    args.get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -650,12 +980,13 @@ mod tests {
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert!(
-            tools.len() >= 9,
-            "expected at least 9 tools, got {}",
+            tools.len() >= 18,
+            "expected at least 18 tools, got {}",
             tools.len()
         );
 
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        // Slot/session tools
         assert!(names.contains(&"acquire_slot"));
         assert!(names.contains(&"release_slot"));
         assert!(names.contains(&"start_session"));
@@ -665,6 +996,16 @@ mod tests {
         assert!(names.contains(&"list_slots"));
         assert!(names.contains(&"list_sessions"));
         assert!(names.contains(&"cancel_session"));
+        // Team tools
+        assert!(names.contains(&"list_teams"));
+        assert!(names.contains(&"show_team"));
+        assert!(names.contains(&"init_team"));
+        assert!(names.contains(&"team_add_member"));
+        assert!(names.contains(&"team_add_task"));
+        assert!(names.contains(&"team_reset"));
+        assert!(names.contains(&"team_report"));
+        assert!(names.contains(&"team_archive"));
+        assert!(names.contains(&"team_delete"));
     }
 
     #[test]
@@ -746,7 +1087,7 @@ mod tests {
         let resp = server.handle_message(&msg).unwrap();
         let result = resp.result.unwrap();
         let resources = result["resources"].as_array().unwrap();
-        assert!(resources.len() >= 4);
+        assert!(resources.len() >= 5);
 
         let uris: Vec<&str> = resources
             .iter()
@@ -756,6 +1097,7 @@ mod tests {
         assert!(uris.contains(&"awo://slots"));
         assert!(uris.contains(&"awo://sessions"));
         assert!(uris.contains(&"awo://review"));
+        assert!(uris.contains(&"awo://teams"));
     }
 
     #[test]
@@ -818,5 +1160,128 @@ mod tests {
         let result = map_tool_to_command("start_session", &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown runtime"));
+    }
+
+    #[test]
+    fn map_tool_list_teams_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "list_teams",
+                "arguments": {}
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.list"));
+    }
+
+    #[test]
+    fn map_tool_init_team_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "init_team",
+                "arguments": {
+                    "team_id": "alpha",
+                    "repo_id": "my-repo",
+                    "objective": "Fix all bugs"
+                }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.init"));
+    }
+
+    #[test]
+    fn map_tool_team_add_member_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "team_add_member",
+                "arguments": {
+                    "team_id": "alpha",
+                    "member_id": "agent-1",
+                    "runtime": "claude"
+                }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.member.add"));
+    }
+
+    #[test]
+    fn map_tool_team_add_task_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "team_add_task",
+                "arguments": {
+                    "team_id": "alpha",
+                    "task_id": "task-1",
+                    "title": "Fix the bug",
+                    "owner_id": "agent-1",
+                    "prompt": "Fix the login bug",
+                    "deliverable": "A tested patch"
+                }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.task.add"));
+    }
+
+    #[test]
+    fn map_tool_team_report_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "team_report",
+                "arguments": { "team_id": "alpha" }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.report"));
+    }
+
+    #[test]
+    fn map_tool_team_delete_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "team_delete",
+                "arguments": { "team_id": "alpha" }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.delete"));
+    }
+
+    #[test]
+    fn map_tool_team_add_task_missing_required_arg() {
+        let args = serde_json::json!({
+            "team_id": "alpha",
+            "task_id": "task-1"
+            // missing title, owner_id, prompt, deliverable
+        });
+        let result = map_tool_to_command("team_add_task", &args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing required argument"));
     }
 }
