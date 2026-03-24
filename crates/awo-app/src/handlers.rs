@@ -722,8 +722,11 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         write_scope,
                         deliverable,
                         verification,
+                        verification_command: None,
                         depends_on,
                         state: TaskCardState::Todo,
+                        result_summary: None,
+                        output_log_path: None,
                     },
                 )?;
                 if output.json {
@@ -871,6 +874,14 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             } else {
                 println!("Team `{}` reset to planning.", manifest.team_id);
                 print_team_manifest(&manifest);
+            }
+        }
+        TeamCommand::Report { team_id } => {
+            let outcome = backend.dispatch(Command::TeamReport { team_id })?;
+            if output.json {
+                print_json_response(&outcome.summary, Some(&outcome));
+            } else {
+                println!("{}", outcome.summary);
             }
         }
         TeamCommand::Teardown { team_id, force } => {

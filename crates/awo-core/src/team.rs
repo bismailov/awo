@@ -103,8 +103,14 @@ pub struct TaskCard {
     pub write_scope: Vec<String>,
     pub deliverable: String,
     pub verification: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_command: Option<String>,
     pub depends_on: Vec<String>,
     pub state: TaskCardState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

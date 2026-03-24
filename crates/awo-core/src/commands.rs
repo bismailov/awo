@@ -5,6 +5,7 @@ use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::{SlotStatus, SlotStrategy};
 use crate::store::Store;
+use crate::team::{TaskCard, TeamMember, TeamTaskStartOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,7 @@ mod review;
 mod session;
 mod skills;
 mod slot;
+mod team;
 
 pub(super) struct FreshSlotOptions<'a> {
     pub repo_id: &'a str,
@@ -117,6 +119,33 @@ pub enum Command {
     },
     #[serde(rename = "review.status")]
     ReviewStatus { repo_id: Option<String> },
+    #[serde(rename = "team.list")]
+    TeamList { repo_id: Option<String> },
+    #[serde(rename = "team.show")]
+    TeamShow { team_id: String },
+    #[serde(rename = "team.init")]
+    TeamInit {
+        team_id: String,
+        repo_id: String,
+        objective: String,
+        force: bool,
+    },
+    #[serde(rename = "team.member.add")]
+    TeamMemberAdd { team_id: String, member: TeamMember },
+    #[serde(rename = "team.task.add")]
+    TeamTaskAdd { team_id: String, task: TaskCard },
+    #[serde(rename = "team.task.start")]
+    TeamTaskStart { options: TeamTaskStartOptions },
+    #[serde(rename = "team.reset")]
+    TeamReset { team_id: String, force: bool },
+    #[serde(rename = "team.report")]
+    TeamReport { team_id: String },
+    #[serde(rename = "team.archive")]
+    TeamArchive { team_id: String, force: bool },
+    #[serde(rename = "team.teardown")]
+    TeamTeardown { team_id: String, force: bool },
+    #[serde(rename = "team.delete")]
+    TeamDelete { team_id: String },
 }
 
 impl Command {
@@ -144,6 +173,17 @@ impl Command {
             Self::SessionDelete { .. } => "session.delete",
             Self::SessionLog { .. } => "session.log",
             Self::ReviewStatus { .. } => "review.status",
+            Self::TeamList { .. } => "team.list",
+            Self::TeamShow { .. } => "team.show",
+            Self::TeamInit { .. } => "team.init",
+            Self::TeamMemberAdd { .. } => "team.member.add",
+            Self::TeamTaskAdd { .. } => "team.task.add",
+            Self::TeamTaskStart { .. } => "team.task.start",
+            Self::TeamReset { .. } => "team.reset",
+            Self::TeamReport { .. } => "team.report",
+            Self::TeamArchive { .. } => "team.archive",
+            Self::TeamTeardown { .. } => "team.teardown",
+            Self::TeamDelete { .. } => "team.delete",
         }
     }
 
@@ -316,6 +356,22 @@ impl<'a> CommandRunner<'a> {
                 stream,
             } => self.run_session_log(session_id, lines, stream),
             Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
+            Command::TeamList { repo_id } => self.run_team_list(repo_id),
+            Command::TeamShow { team_id } => self.run_team_show(team_id),
+            Command::TeamInit {
+                team_id,
+                repo_id,
+                objective,
+                force,
+            } => self.run_team_init(team_id, repo_id, objective, force),
+            Command::TeamMemberAdd { team_id, member } => self.run_team_member_add(team_id, member),
+            Command::TeamTaskAdd { team_id, task } => self.run_team_task_add(team_id, task),
+            Command::TeamTaskStart { options } => self.run_team_task_start(options),
+            Command::TeamReset { team_id, force } => self.run_team_reset(team_id, force),
+            Command::TeamReport { team_id } => self.run_team_report(team_id),
+            Command::TeamArchive { team_id, force } => self.run_team_archive(team_id, force),
+            Command::TeamTeardown { team_id, force } => self.run_team_teardown(team_id, force),
+            Command::TeamDelete { team_id } => self.run_team_delete(team_id),
         }
     }
 

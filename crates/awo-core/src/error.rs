@@ -83,12 +83,8 @@ pub enum AwoError {
     SkillTargetDirUnresolved { runtime: String },
     #[error("validation error: {message}")]
     Validation { message: String },
-    #[error("store error: {message}")]
-    Store {
-        message: String,
-        #[source]
-        source: rusqlite::Error,
-    },
+    #[error("store error while {message}: {error}")]
+    Store { message: String, error: String },
     #[error("store error: {message}")]
     StoreInit { message: String },
 }
@@ -249,10 +245,10 @@ impl AwoError {
         }
     }
 
-    pub fn store(message: impl Into<String>, source: rusqlite::Error) -> Self {
+    pub fn store(message: impl Into<String>, source: impl std::fmt::Display) -> Self {
         Self::Store {
             message: message.into(),
-            source,
+            error: source.to_string(),
         }
     }
 

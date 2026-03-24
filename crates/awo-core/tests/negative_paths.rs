@@ -91,8 +91,7 @@ fn store_rejects_future_schema_version() {
         )
         .unwrap();
     }
-    let store2 = Store::open(&db_path).unwrap();
-    let result = store2.initialize_schema();
+    let result = Store::open(&db_path);
     assert!(
         result.is_err(),
         "expected rejection of unsupported future version"

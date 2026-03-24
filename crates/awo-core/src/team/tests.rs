@@ -71,7 +71,10 @@ fn sample_manifest() -> TeamManifest {
             write_scope: vec!["crates/awo-core/src/runtime.rs".to_string()],
             deliverable: "A tested runtime/session patch".to_string(),
             verification: vec!["cargo test".to_string()],
+            verification_command: Some("cargo test".to_string()),
             depends_on: Vec::new(),
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         }],
     }
@@ -169,7 +172,10 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         write_scope: vec!["src/lib.rs".to_string()],
         deliverable: "A tested patch".to_string(),
         verification: vec!["cargo test".to_string()],
+        verification_command: None,
         depends_on: Vec::new(),
+        result_summary: None,
+        output_log_path: None,
         state: TaskCardState::Todo,
     })?;
 

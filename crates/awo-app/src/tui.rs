@@ -423,6 +423,17 @@ pub fn run_tui() -> Result<()> {
                         );
                     }
                 }
+                KeyCode::Char('R') => {
+                    if let Some(team) = selected_team(&snapshot, &state) {
+                        apply_command(
+                            &mut core,
+                            &mut state,
+                            Command::TeamReport {
+                                team_id: team.team_id.clone(),
+                            },
+                        );
+                    }
+                }
                 KeyCode::Char('c') => {
                     if let Some(repo) = selected_repo(&snapshot, &state) {
                         apply_command(
@@ -1019,6 +1030,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             Line::from("  x       Cancel session"),
             Line::from("  X       Release slot"),
             Line::from("  t       Start next team task"),
+            Line::from("  R       Generate team report"),
             Line::from("  a       Add current dir as repo"),
             Line::from("  r       Refresh review / Refresh log"),
             Line::from("  c       Context doctor"),

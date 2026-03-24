@@ -1,140 +1,68 @@
-# Awo Project Status & Roadmap (Updated March 24, 2026)
+# Awo Project Status & Roadmap (Updated March 24, 2026 - Late)
 
 ## 1. Current State
 
-`awo` is a **usable daily-driver orchestrator** with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 356+ tests. **CI is green on all three platforms** (macOS, Ubuntu, Windows). All TUI usability blockers are resolved.
+`awo` is now a **high-reliability orchestration substrate**. It has transitioned from a local-only CLI tool into a multi-interface system (CLI, TUI, Daemon, MCP) with deep safety guardrails and automated verification. **CI is green on all three platforms** (macOS, Ubuntu, Windows). Total test count is **433+** with extensive negative-path coverage.
 
-### What's Built
+### What's Built (Recently Added in **Bold**)
 
 **Core (`awo-core`)**
-- Typed state engine: `SessionStatus`, `SlotStatus`, `FingerprintStatus`, `TeamStatus`, `TaskCardState` enums — zero string-based status comparisons
-- SQLite persistence with WAL mode, versioned migrations
-- Command/Dispatcher pattern: transport-agnostic command execution
-- Review engine: risky-overlap and soft-overlap detection across slots (11 tests)
-- Multi-runtime support: Codex, Claude, Gemini, Shell
-- Platform layer: Unix (tmux PTY supervision), Windows (ConPTY via `portable-pty`)
-- Git worktree isolation, context packs, skill catalogs
-- Routing engine with cost-tier/capability-aware runtime selection (9 tests)
-- Team manifests with task cards, execution modes, member routing (41 tests)
-- Actionable error messages with recovery hints throughout
-- Collision-proof ID generation with atomic sequence counters
-- Team reconciliation logic extracted to `team/reconcile.rs`
-- Cross-platform path canonicalization via `dunce` crate
-- Module decomposition: `app/team_ops.rs` (team orchestration), `store/tests.rs` (test extraction)
-- `DirtyFileCache` with 5s TTL for git status caching in snapshot hot path
+- Typed state engine: `SessionStatus`, `SlotStatus`, `FingerprintStatus`, `TeamStatus`, `TaskCardState` enums.
+- SQLite persistence: **Version 5 schema** with WAL mode and **Session Timeouts/StartedAt tracking**.
+- Review engine: **Multi-tiered overlap detection** (Risky, Soft, and **File-level** grouping across repos).
+- Team orchestration: **Automatic task verification** (executing `verification_command` like `cargo test` on completion), **Result consolidation** (capturing logs/summaries into TaskCards), and **Markdown report generation**.
+- Hardening: **433+ tests** including **exhaustive negative-path tests** for store, commands, and snapshots.
+- Cross-platform: **Normalized path canonicalization** (via `dunce`), **authoritative process group/tree cancellation** (Unix `kill -9` / Windows `taskkill /F /T`).
 
 **Daemon (`awod`)**
-- JSON-RPC 2.0 over Unix Domain Socket
-- Single-writer safety via file lock
-- `DaemonClient` with `Dispatcher` trait impl
-- CLI auto-detection: `CliBackend` dispatches through daemon when running, falls back to direct
+- JSON-RPC 2.0 over Unix Domain Socket.
+- Headless execution support for all orchestration commands.
 
 **MCP Server (`awo-mcp`)**
-- Stdio JSON-RPC 2.0 transport (synchronous, no Tokio)
-- 9 tools: `list_repos`, `acquire_slot`, `release_slot`, `list_slots`, `start_session`, `cancel_session`, `list_sessions`, `get_review_status`, `get_session_log`
-- 4 resources: `awo://repos`, `awo://slots`, `awo://sessions`, `awo://review`
+- Fully synchronized with core: Supports **Session Timeouts** and **Team Task Start** with automatic context.
+- Exposes orchestration as tools and resources for external agents (Claude, etc.).
 
-**CLI (`awo-app`)**
-- 9 subcommands covering full lifecycle including `session log`
-- `CliBackend` auto-detects daemon for dispatch, reads directly from SQLite
-- TUI: ratatui-based dashboard with full keyboard operability
+**CLI & TUI (`awo-app`)**
+- **Panel-wide Filtering**: `/` search across Repos, Teams, Slots, and Sessions.
+- **Live Log Tailing**: Auto-refreshing log viewer with `[running]` status and scroll tracking.
+- **Background Operations**: Slow Git tasks (Acquire/Release/Add) use background threads to keep TUI responsive.
+- **Interactive Team Control**: `t` to start next task, `R` to generate team reports.
 
-**TUI Operations**
-- `s` acquire slot (text input for task name), `Enter` start session (text input for runtime:prompt) / view log
-- `x` cancel session, `X` release slot (both non-blocking background ops)
-- `t` start next team task (auto-selects first todo task, acquires slot, launches session)
-- `r` refresh review / refresh log, `Esc` close log panel
-- `a` add repo, `c` context doctor, `d` skills doctor
-- `?` keybinding help overlay
-- Tab/BackTab panel cycling, Up/Down/j/k navigation
-- Live log tailing with auto-refresh for running sessions, `[running]` indicator, scroll tracking
-- Input bar overlay for text entry
-- Background dispatch via `crossbeam-channel` for slot acquire/release
+## 2. Milestone D Completion Report
 
-**Quality**
-- `unsafe_code = "forbid"` workspace-wide
-- Zero `anyhow` in production core code (typed `AwoError` throughout); `anyhow` only in test helpers
-- All error-swallowing patterns replaced with structured tracing logging
-- 356+ tests across all modules; **CI green on all 3 platforms**
-- `#[derive(Debug)]` on all public structs for debuggability
+### Team Execution Depth & Result Consolidation
+- **Done**: TaskCards now carry `result_summary`, `output_log_path`, and `verification_command`.
+- **Done**: `awo team report <id>` generates a full history of the team's mission, status, and outcomes.
+- **Done**: Automated verification blocks tasks from entering `Review` if quality gates fail.
+- **Done**: Routing transparency via `routing_reason` in domain events.
 
-## 2. What Was Just Completed (March 24)
+## 3. Next Wave: Wave 4 (Middleware & Ecosystem)
 
-### Wave 1 (earlier March 24)
-- **Windows CI fully green**: `dunce::canonicalize`, e2e test isolation, gated unix imports, fixed shell/PTY test assertions
-- **Team reconcile extraction**: moved to `team/reconcile.rs` (~160 LOC out of app.rs)
-- **Flaky test fix**: PTY timing test uses poll loop instead of fixed sleep
+Now that the core is hardened and the local UX is highly efficient, we move toward **Headless Brokerage and External Integration**.
 
-### Wave 2 (March 24)
-- **Module decomposition**: `app.rs` reduced from ~890 to ~165 LOC (team ops → `app/team_ops.rs`); `store.rs` reduced from ~1045 to ~675 LOC (tests → `store/tests.rs`)
-- **TUI input & help** (Job Card A): text input mode for task names and session prompts, `?` help overlay
-- **Background git ops** (Job Card B): `SlotAcquire` and `SlotRelease` via background threads with `crossbeam-channel`
-- **Live log tailing** (Job Card C): auto-refresh for running sessions, auto-open on session start, `[running]` indicator, scroll tracking
-- **Git status caching** (Job Card D): `DirtyFileCache` with 5s TTL, `RefCell` on `AppCore`, cache invalidation on mutations, stale entry pruning
+### Milestone A: Stable Daemon & RPC (The "Broker" Mode)
+- **Persistence Layer Scaling**: Transition from `Mutex<Connection>` to a connection pool (`r2d2`) or `tokio-rusqlite` to support higher concurrency in Daemon mode.
+- **Daemon Lifecycle**: Implement `awod status`, `awod stop`, and automatic startup on CLI invocation.
+- **Named Pipe Support**: Finalize Windows-native Daemon transport.
 
-### All Previous Blockers Resolved
+### Milestone B: MCP Expansion
+- **Resource Subscriptions**: Enable long-polling or event-driven updates for MCP clients.
+- **Context Pack Auto-gen**: Tooling to automatically derive context packs from repository structure.
 
-| Previous Gap | Resolution |
-|------|--------|
-| TUI blocks on git ops | **Done** — background dispatch via crossbeam-channel |
-| No TUI input prompts | **Done** — inline text input for task name and runtime:prompt |
-| No session output streaming | **Done** — live log tailing with auto-refresh every 200ms |
-| `app.rs` ~890 LOC | **Done** — decomposed to ~165 LOC + `app/team_ops.rs` |
-| `store.rs` ~1050 LOC | **Done** — reduced to ~675 LOC + `store/tests.rs` |
-| Git status caching | **Done** — `DirtyFileCache` with 5s TTL |
-| No help overlay | **Done** — `?` keybinding reference |
+### Milestone C: Orchestration Intelligence
+- **Lead/Worker Handoff**: Dedicated commands for "Lead" agents to delegate sub-tasks to "Worker" slots with automatic context passing.
+- **WASI Sandboxing**: Research running runtime adapters in WASM for zero-trust execution.
 
-## 3. Next Wave: Hardening & Depth
+## 4. Current Workstream Assignments
 
-Focus: **make the core more reliable and the review/runtime layers more capable** before broadening scope.
+### Lane 1: Reliability/Core (Active)
+- Database connection pooling.
+- Completion of Windows ConPTY master/slave logic (currently a stub).
 
-### Milestone A: Negative-Path Test Coverage
+### Lane 2: Middleware/Daemon (Upcoming)
+- JSON-RPC event bus (push notifications for TUI/MCP).
+- Stable `awod` lifecycle management.
 
-The happy path is well-tested (356+ tests). The failure path is thin — corrupt state, broken manifests, missing git repos, runtime failures. Add targeted negative-path tests to the modules with the thinnest coverage relative to their complexity.
-
-Priority targets:
-- `store.rs` (676 LOC, 11 tests) — corrupt/missing DB, malformed rows, migration edge cases
-- `commands/` (1450 LOC, 0 tests) — invalid inputs, missing repos/slots/sessions, permission failures
-- `snapshot.rs` — broken slot paths, missing git repos, partial state
-
-See: `planning/job-card-E-negative-path-tests.md`
-
-### Milestone B: Review Intelligence
-
-The review engine produces useful warnings but doesn't yet analyze overlap by changed-file classes or explain *why* a slot is blocked/releasable. Richer review surfaces make the operator's decisions faster and safer.
-
-Priority targets:
-- Changed-file overlap detection (two slots touching the same files)
-- Richer blocking/releasable explanations in review warnings
-- Repo-scoped and team-scoped review depth
-
-See: `planning/job-card-F-review-intelligence.md`
-
-### Milestone C: Runtime Maturity (Future)
-
-- Windows shell hardening
-- Session timeout/interruption controls
-- Structured runtime output parsing
-
-### Milestone D: Team Execution Depth (Future)
-
-- Result consolidation across workers
-- Routing policy reporting
-- Lead/worker reconciliation helpers
-
-### Milestone E: Middleware Mode (Future)
-
-- Stabilize JSON command contract
-- Broker/daemon mode
-- MCP facade
-
-## 4. Deferred (Not Now)
-
-- Async store / Tokio migration
-- MCP resource subscriptions
-- Named Pipe transport for Windows daemon
-- Context pack auto-generation
-- Comprehensive Rust doc comments
-- Multi-agent handoff flows
-- Routing policy engine externalization
-- WASI sandboxing
+### Lane 3: Intelligent Flows (Upcoming)
+- Multi-agent handoff state machine.
+- Automatic result synthesis (LLM-assisted report summaries).

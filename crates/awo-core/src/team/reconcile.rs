@@ -4,6 +4,8 @@ use crate::slot::SlotStatus;
 use crate::store::Store;
 use crate::team::{TaskCardState, TeamManifest, TeamMember, TeamStatus, TeamTeardownPlan};
 use std::collections::BTreeSet;
+use std::path::Path;
+use std::process::Command;
 
 pub fn collect_bound_slot_ids(manifest: &TeamManifest) -> Vec<String> {
     std::iter::once(manifest.lead.slot_id.as_deref())
@@ -108,12 +110,52 @@ pub fn reconcile_team_manifest_state(
                         task.state = TaskCardState::Review;
                         changed = true;
                     }
+                    task.result_summary = Some("Session completed successfully.".to_string());
+                    task.output_log_path = session.stdout_path.clone();
+
+                    if let Some(cmd) = &task.verification_command
+                        && let Some(ref s) = slot
+                    {
+                        let path = Path::new(&s.slot_path);
+                        match Command::new("sh")
+                            .arg("-c")
+                            .arg(cmd)
+                            .current_dir(path)
+                            .output()
+                        {
+                            Ok(output) if output.status.success() => {
+                                task.result_summary = Some("Verification passed.".to_string());
+                            }
+                            Ok(output) => {
+                                task.state = TaskCardState::Blocked;
+                                changed = true;
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                task.result_summary =
+                                    Some(format!("Verification failed: {}", stderr.trim()));
+                            }
+                            Err(e) => {
+                                task.state = TaskCardState::Blocked;
+                                changed = true;
+                                task.result_summary =
+                                    Some(format!("Verification failed to run: {}", e));
+                            }
+                        }
+                    }
                 }
                 SessionStatus::Failed | SessionStatus::Cancelled => {
                     if task.state != TaskCardState::Blocked {
                         task.state = TaskCardState::Blocked;
                         changed = true;
                     }
+                    task.result_summary = Some(format!(
+                        "Session {}: exit={}",
+                        session.status,
+                        session
+                            .exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ));
+                    task.output_log_path = session.stdout_path.clone();
                 }
                 _ => {}
             }

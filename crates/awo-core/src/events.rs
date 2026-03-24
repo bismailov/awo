@@ -110,6 +110,37 @@ pub enum DomainEvent {
         tasks_reset: usize,
         slots_unbound: usize,
     },
+    TeamTaskStarted {
+        team_id: String,
+        task_id: String,
+        routing_reason: String,
+    },
+    TeamListLoaded {
+        repo_id: Option<String>,
+        count: usize,
+    },
+    TeamLoaded {
+        team_id: String,
+    },
+    TeamCreated {
+        team_id: String,
+        repo_id: String,
+    },
+    TeamMemberAdded {
+        team_id: String,
+        member_id: String,
+    },
+    TeamTaskAdded {
+        team_id: String,
+        task_id: String,
+    },
+    TeamReportGenerated {
+        team_id: String,
+        report_path: String,
+    },
+    TeamDeleted {
+        team_id: String,
+    },
 }
 
 impl DomainEvent {
@@ -244,6 +275,43 @@ impl DomainEvent {
                 format!(
                     "Team `{team_id}` reset to planning: {tasks_reset} task(s) reset, {slots_unbound} slot binding(s) cleared"
                 )
+            }
+            Self::TeamTaskStarted {
+                team_id,
+                task_id,
+                routing_reason,
+            } => {
+                format!("Team task `{task_id}` started on team `{team_id}`: {routing_reason}")
+            }
+            Self::TeamListLoaded { repo_id, count } => {
+                format!(
+                    "Loaded {count} team manifest(s){}",
+                    repo_id
+                        .as_ref()
+                        .map(|id| format!(" for repo `{id}`"))
+                        .unwrap_or_default()
+                )
+            }
+            Self::TeamLoaded { team_id } => {
+                format!("Loaded team `{team_id}`")
+            }
+            Self::TeamCreated { team_id, repo_id } => {
+                format!("Created team `{team_id}` for repo `{repo_id}`")
+            }
+            Self::TeamMemberAdded { team_id, member_id } => {
+                format!("Added member `{member_id}` to team `{team_id}`")
+            }
+            Self::TeamTaskAdded { team_id, task_id } => {
+                format!("Added task `{task_id}` to team `{team_id}`")
+            }
+            Self::TeamReportGenerated {
+                team_id,
+                report_path,
+            } => {
+                format!("Generated report for team `{team_id}` at `{report_path}`")
+            }
+            Self::TeamDeleted { team_id } => {
+                format!("Deleted team `{team_id}`")
             }
         }
     }

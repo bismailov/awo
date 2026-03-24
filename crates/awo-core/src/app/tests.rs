@@ -159,6 +159,9 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             deliverable: "A routing decision".to_string(),
             verification: vec!["true".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -256,6 +259,9 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             deliverable: "A file".to_string(),
             verification: vec!["test -f TEAM_TASK.txt".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -326,6 +332,9 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             deliverable: "A file".to_string(),
             verification: vec!["test -f TEAM_TASK.txt".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -423,6 +432,9 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
             deliverable: "A file".to_string(),
             verification: vec!["test -f TEAM_TASK.txt".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -807,6 +819,9 @@ fn create_team_with_bound_slot(
             deliverable: "A reconciled task".to_string(),
             verification: vec!["cargo test".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1001,6 +1016,9 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             deliverable: "A finished task".to_string(),
             verification: vec!["cargo test".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Done,
         },
     )?;
@@ -1087,6 +1105,9 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             deliverable: "A finished task".to_string(),
             verification: vec!["cargo test".to_string()],
             depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
             state: TaskCardState::Done,
         },
     )?;

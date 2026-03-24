@@ -199,6 +199,10 @@ pub enum TeamCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Generate a comprehensive report of team activity and outcomes.
+    Report {
+        team_id: String,
+    },
     /// Cancel cancellable sessions, release slots, and reset the team to planning.
     Teardown {
         team_id: String,

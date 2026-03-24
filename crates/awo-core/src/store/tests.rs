@@ -137,8 +137,7 @@ fn initialize_schema_rejects_unsupported_future_version() -> Result<()> {
     ))?;
     drop(connection);
 
-    let store = Store::open(&db_path)?;
-    let result = store.initialize_schema();
+    let result = Store::open(&db_path);
 
     assert!(result.is_err());
     assert!(
@@ -163,8 +162,7 @@ fn initialize_schema_rejects_malformed_version_string() -> Result<()> {
     )?;
     drop(connection);
 
-    let store = Store::open(&db_path)?;
-    let result = store.initialize_schema();
+    let result = Store::open(&db_path);
 
     assert!(result.is_err());
     assert!(
