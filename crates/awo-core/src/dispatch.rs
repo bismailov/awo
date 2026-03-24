@@ -215,7 +215,8 @@ mod tests {
                 read_only: false,
                 dry_run: true,
                 launch_mode: crate::runtime::SessionLaunchMode::Pty,
-                attach_context: true, timeout_secs: None,
+                attach_context: true,
+                timeout_secs: None,
             },
             Command::SlotList { repo_id: None },
             Command::SessionCancel {
@@ -255,7 +256,8 @@ mod tests {
             read_only: false,
             dry_run: false,
             launch_mode: crate::runtime::SessionLaunchMode::Oneshot,
-            attach_context: false, timeout_secs: None,
+            attach_context: false,
+            timeout_secs: None,
         };
         assert_eq!(command.method_name(), "session.start");
     }

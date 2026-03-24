@@ -404,13 +404,17 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResul
             #[cfg(unix)]
             {
                 use std::process::Command;
-                let _ = Command::new("kill").args(["-9", &format!("-{pid}")]).status();
+                let _ = Command::new("kill")
+                    .args(["-9", &format!("-{pid}")])
+                    .status();
                 let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
             }
             #[cfg(windows)]
             {
                 use std::process::Command;
-                let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string(), "/T"]).status();
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string(), "/T"])
+                    .status();
             }
         }
         let logs_dir = paths.logs_dir.join("sessions");

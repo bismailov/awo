@@ -40,7 +40,9 @@ fn running_oneshot_session(session_id: &str) -> SessionRecord {
         stdout_path: Some("/tmp/stdout.log".to_string()),
         stderr_path: Some("/tmp/stderr.log".to_string()),
         exit_code: None,
-        timeout_secs: None, started_at: None, created_at: String::new(),
+        timeout_secs: None,
+        started_at: None,
+        created_at: String::new(),
         updated_at: String::new(),
     }
 }
@@ -60,7 +62,9 @@ fn running_supervised_session(session_id: &str) -> SessionRecord {
         stdout_path: Some(format!("/tmp/{session_id}.pty.log")),
         stderr_path: None,
         exit_code: None,
-        timeout_secs: None, started_at: None, created_at: String::new(),
+        timeout_secs: None,
+        started_at: None,
+        created_at: String::new(),
         updated_at: String::new(),
     }
 }
@@ -81,7 +85,8 @@ fn prepare_session_creates_pending_pid_sidecar_for_oneshot() -> Result<()> {
         prompt: "echo hi",
         read_only: true,
         dry_run: false,
-        launch_mode: SessionLaunchMode::Oneshot, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Oneshot,
+        timeout_secs: None,
     })?;
 
     let pid_path = pid_path(&paths.logs_dir.join("sessions"), &prepared.session.id);
@@ -505,7 +510,8 @@ fn prepare_session_pty_log_path_naming() -> Result<()> {
         prompt: "echo hi",
         read_only: true,
         dry_run: true,
-        launch_mode: SessionLaunchMode::Pty, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Pty,
+        timeout_secs: None,
     })?;
 
     let stdout = prepared
@@ -537,7 +543,8 @@ fn prepare_session_pty_is_unavailable_on_non_unix() -> Result<()> {
         prompt: "echo hi",
         read_only: true,
         dry_run: true,
-        launch_mode: SessionLaunchMode::Pty, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Pty,
+        timeout_secs: None,
     })
     .expect_err("PTY sessions should be unavailable on non-Unix platforms");
 
@@ -561,7 +568,8 @@ fn prepare_session_oneshot_log_path_naming() -> Result<()> {
         prompt: "echo hi",
         read_only: true,
         dry_run: true,
-        launch_mode: SessionLaunchMode::Oneshot, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Oneshot,
+        timeout_secs: None,
     })?;
 
     let stdout = prepared
@@ -771,7 +779,8 @@ fn prepare_session_dry_run_does_not_create_pid_sidecar() -> Result<()> {
         prompt: "echo hi",
         read_only: false,
         dry_run: true,
-        launch_mode: SessionLaunchMode::Oneshot, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Oneshot,
+        timeout_secs: None,
     })?;
 
     assert_eq!(prepared.session.status, SessionStatus::Prepared);
@@ -796,7 +805,8 @@ fn prepare_session_command_line_is_populated() -> Result<()> {
         prompt: "implement feature",
         read_only: false,
         dry_run: true,
-        launch_mode: SessionLaunchMode::Oneshot, timeout_secs: None,
+        launch_mode: SessionLaunchMode::Oneshot,
+        timeout_secs: None,
     })?;
 
     assert!(
