@@ -1,8 +1,8 @@
-# Awo Project Status & Roadmap (March 24, 2026)
+# Awo Project Status & Roadmap (Updated March 24, 2026)
 
 ## 1. Current State
 
-`awo` is a working orchestrator with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 356+ tests. CI is green on macOS/Ubuntu (Windows path canonicalization issue tracked below). The app is ready for its first end-to-end smoke test.
+`awo` is a working orchestrator with a functional CLI, TUI, daemon, and MCP server. The core is hardened with typed errors, typed enums for all state, and 356+ tests. **CI is green on all three platforms** (macOS, Ubuntu, Windows). The app is ready for its first end-to-end smoke test.
 
 ### What's Built
 
@@ -18,6 +18,8 @@
 - Team manifests with task cards, execution modes, member routing (41 tests)
 - Actionable error messages with recovery hints throughout
 - Collision-proof ID generation with atomic sequence counters
+- Team reconciliation logic extracted to `team/reconcile.rs`
+- Cross-platform path canonicalization via `dunce` crate
 
 **Daemon (`awod`)**
 - JSON-RPC 2.0 over Unix Domain Socket
@@ -47,12 +49,26 @@
 - `unsafe_code = "forbid"` workspace-wide
 - Zero `anyhow` in production core code (typed `AwoError` throughout)
 - All error-swallowing patterns replaced with structured tracing logging
-- 356+ tests across all modules; CI green on macOS + Ubuntu
+- 356+ tests across all modules; **CI green on all 3 platforms**
 - `#[derive(Debug)]` on all public structs for debuggability
 
-## 2. Immediate Priority: Smoke Test
+## 2. What Was Just Completed (March 24)
 
-The app has all features needed for end-to-end use. The operator should:
+- **Windows CI fully green**: `dunce::canonicalize` replacing `fs::canonicalize` across all call sites; e2e test isolation via `AWO_DATA_DIR`/`AWO_CONFIG_DIR`; gated unix-only imports; fixed shell/PTY test assertions
+- **Team reconcile extraction**: `reconcile_team_manifest_state`, `build_team_teardown_plan`, `collect_bound_slot_ids` moved to `team/reconcile.rs` (~160 LOC out of app.rs)
+- **Flaky test fix**: PTY timing test uses poll loop instead of fixed sleep
+
+### Items Closed From Previous Roadmap
+
+| Item | Status |
+|------|--------|
+| Windows path canonicalization | **Done** — `dunce` crate |
+| Extract reconcile logic | **Done** — `team/reconcile.rs` |
+| ConPTY completion | **Partially done** — CI green, tests pass, but real-device verification still pending |
+
+## 3. Smoke Test Readiness
+
+The app has all features needed for end-to-end use:
 
 1. `awo repo add .` — register a repository
 2. `awo slot acquire <repo_id> <task>` — get a workspace
@@ -60,84 +76,61 @@ The app has all features needed for end-to-end use. The operator should:
 4. `awo tui` — open the dashboard, observe state, press Enter to view logs
 5. Alternatively: do the entire workflow from within `awo tui`
 
-## 3. Completed Items
+## 4. What's Missing For a Working Daily-Driver App
 
-All of these were on the roadmap and are now done:
+The app is architecturally complete but has two categories of gaps that prevent comfortable daily use:
 
-- **TUI interactivity**: Keyboard-driven slot acquire/release, session start/cancel
-- **Error UX**: Actionable error messages with recovery hints in CLI and core
-- **Log viewing**: Inline session log viewer in TUI (Enter on session, Esc to close, r to refresh)
-- **Team run from TUI**: `t` key starts next todo task for selected team
-- **Hardening (Milestone A)**: Typed enums, error logging, negative-path tests, sidecar edge cases, review engine tests, error module tests, git happy-path tests
-- **CI fixes**: dry_run skips runtime detection, Debug derives for Windows, tracing routed to stderr
-- **Audit fixes**: DRY violation in short-ID extraction, collision-proof ID generation
+### Category A: Blocking for real use
 
-## 4. Next Wave (Post-Smoke-Test)
+| Gap | Impact |
+|-----|--------|
+| TUI blocks on git ops | Slot acquire/release/refresh call git synchronously — TUI freezes for seconds on large repos |
+| No TUI input prompts | `s` acquires with hardcoded "tui-task" name, `Enter` starts with hardcoded `echo` command. No way to enter task name, runtime, prompt from TUI |
+| No session output streaming | Log viewer shows final output only. No live tail during running sessions |
 
-Organized by milestone per external audit recommendations.
+### Category B: Important but not blocking
 
-### Milestone B: Runtime Reliability (High Priority)
+| Gap | Impact |
+|-----|--------|
+| `app.rs` still ~890 LOC | Readable but could be cleaner — team orchestration, slot mgmt, snapshot building mixed |
+| `store.rs` ~1050 LOC | Query builders and migrations interleaved |
+| Git status caching | Every snapshot calls `git status --porcelain` per slot — slow with many slots |
+| No help overlay in TUI | Users must remember keybindings |
 
-| Item | Priority | Description |
-|------|----------|-------------|
-| Async Git ops | High | Long git operations (fetch, clone, worktree add) block TUI. Spawn on background thread with channel notification. `std::thread` + `crossbeam-channel`, no Tokio required. |
-| ConPTY completion | Medium | Untested on real Windows. Need: Windows CI green, integration tests with actual PTY, verify taskkill reliability. |
-| Windows path canonicalization | Medium | `fs::canonicalize` produces `\\?\` UNC paths on Windows, causing test failures. Consider `dunce::canonicalize` or normalize paths at storage boundary. |
-| process_is_running robustness | Low | Windows implementation uses `tasklist` (fragile). Consider `OpenProcess` Win32 API via `windows-sys` crate. |
+## 5. Next Wave: Path to Working App
 
-### Milestone C: Review Intelligence (Medium Priority)
+Focus: **make the app usable for real daily work**, not feature-complete.
 
-| Item | Priority | Description |
-|------|----------|-------------|
-| Git status caching | High | `git status --porcelain` runs per-slot on every review/snapshot build. Cache results with TTL or fingerprint-based invalidation. |
-| Canonical path normalization | Medium | Overlap detection compares raw git-porcelain paths. Currently safe (repo-relative), but add explicit normalization for symlink resilience. |
-| Richer conflict analysis | Medium | Go beyond file/directory overlap: detect semantic conflicts (same function modified), suggest resolution strategies. |
-| Decision-quality review output | Low | Structure review output for MCP consumption: JSON warnings with severity, affected slots, suggested actions. |
+### Phase 1: TUI Usability (Highest Priority)
 
-### Milestone D: Team Execution & Code Organization (Medium Priority)
+| Item | Description | Files |
+|------|-------------|-------|
+| TUI input prompts | Add simple text input for task name (on `s`), prompt/runtime (on `Enter`). Minimal inline input, not a full dialog system. | `tui.rs` |
+| Background git ops | Move slot acquire/release/refresh to `std::thread` with `crossbeam-channel` notification to unblock TUI event loop | `tui.rs`, `app.rs` |
+| Help overlay | `?` key shows keybinding reference | `tui.rs` |
 
-| Item | Priority | Description |
-|------|----------|-------------|
-| Extract reconcile logic | High | `reconcile_team_manifest_state` in app.rs mixes reconciliation with command layer. Extract to dedicated module. |
-| app.rs decomposition | Medium | ~1050 LOC monolith. Split into focused modules: team orchestration, slot management, snapshot building. |
-| store.rs decomposition | Medium | ~870 LOC. Extract query builders, migration logic into sub-modules. |
-| Result consolidation | Medium | Multi-agent task results need aggregation and summary generation. |
-| Multi-agent handoff flows | Low | Agent-to-agent task delegation with context transfer. |
+### Phase 2: Session Experience
 
-### Milestone E: Middleware Mode (Lower Priority)
+| Item | Description | Files |
+|------|-------------|-------|
+| Live log tailing | Tail session log file during running sessions, update on `r` or auto-refresh | `tui.rs` |
+| Session status auto-sync | Periodic oneshot session sync in TUI loop (already polls at 200ms, just needs sync call) | `tui.rs` |
 
-| Item | Priority | Description |
-|------|----------|-------------|
-| Async Store | Medium | Move to `tokio-rusqlite` or `r2d2` connection pool for high-concurrency daemon. Depends on Tokio decision. |
-| Daemon broker | Medium | Route commands between multiple concurrent MCP clients through the daemon. |
-| MCP facade | Low | Expose full orchestration capabilities through MCP resource subscriptions. |
-| Routing policy engine | Low | Externalize routing rules for operator customization. |
+### Phase 3: Code Organization (Can parallelize with Phase 1-2)
 
-## 5. Deferred (Not Now)
+| Item | Description | Files |
+|------|-------------|-------|
+| app.rs decomposition | Extract team orchestration and snapshot building into sub-modules | `app.rs` |
+| store.rs decomposition | Extract migrations and query builders | `store.rs` |
 
-- WASI sandboxing research
+## 6. Deferred (Not Now)
+
+- Async store / Tokio migration
 - MCP resource subscriptions
 - Named Pipe transport for Windows daemon
 - Context pack auto-generation
-- Comprehensive Rust doc comments for public API (~28% coverage currently; improve incrementally)
-- `AwoError` variant refinement (RuntimeLaunch/Supervisor use generic String; consider structured variants)
-
-## 6. External Audit Summary
-
-Two external audits (March 23, 2026) rated the project **Excellent (Production-Ready V1)**. Key findings:
-
-**Strengths identified:**
-- Transport-agnostic Dispatcher + JSON-RPC 2.0 architecture
-- Git worktree isolation as workspace foundation
-- Typed status enums + `thiserror`-based error handling
-- Safety-critical "soft signals" (overlaps, fingerprints)
-- `unsafe_code = "forbid"` + sync core design
-
-**All high-severity findings addressed:**
-- String-backed status comparisons → typed enums
-- Error swallowing → structured logging
-- Thin negative-path tests → 356+ tests with full coverage
-- DRY violations → extracted helpers
-- ID collision risk → atomic sequence counters
-
-**Remaining items tracked in Milestones B-E above.**
+- Comprehensive Rust doc comments
+- Richer conflict analysis (semantic overlaps)
+- Multi-agent handoff flows
+- Routing policy engine externalization
+- WASI sandboxing
