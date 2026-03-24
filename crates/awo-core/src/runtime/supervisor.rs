@@ -115,7 +115,9 @@ impl SessionSupervisor {
     pub(super) fn cancel(self, paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<()> {
         match self {
             Self::Tmux => {
-                let _ = tmux::kill(&session.id);
+                if let Err(err) = tmux::kill(&session.id) {
+                    tracing::debug!(session_id = session.id.as_str(), %err, "tmux kill failed during cancel (process may already be dead)");
+                }
                 if session.exit_code.is_none() {
                     session.exit_code = read_exit_code(paths, &session.id)?;
                 }
@@ -123,7 +125,9 @@ impl SessionSupervisor {
             }
             #[cfg(windows)]
             Self::Conpty => {
-                let _ = conpty::kill(paths, &session.id);
+                if let Err(err) = conpty::kill(paths, &session.id) {
+                    tracing::debug!(session_id = session.id.as_str(), %err, "conpty kill failed during cancel (process may already be dead)");
+                }
                 if session.exit_code.is_none() {
                     session.exit_code = read_exit_code(paths, &session.id)?;
                 }

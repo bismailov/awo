@@ -846,3 +846,112 @@ fn unknown_launch_mode_parse_fails() {
         "expected error parsing unknown SessionLaunchMode"
     );
 }
+
+#[test]
+fn read_exit_code_returns_none_for_missing_file() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let result = supervisor::read_exit_code(&paths, "sess-nonexistent")?;
+    assert_eq!(result, None, "missing exit-code file should return None");
+    Ok(())
+}
+
+#[test]
+fn read_exit_code_returns_none_for_malformed_content() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(exit_path(&sessions_dir, "sess-bad"), "not-a-number\n")?;
+    let result = supervisor::read_exit_code(&paths, "sess-bad")?;
+    assert_eq!(
+        result, None,
+        "malformed exit-code content should parse to None"
+    );
+    Ok(())
+}
+
+#[test]
+fn read_exit_code_parses_valid_code() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(exit_path(&sessions_dir, "sess-ok"), "42\n")?;
+    let result = supervisor::read_exit_code(&paths, "sess-ok")?;
+    assert_eq!(result, Some(42), "valid exit code should parse correctly");
+    Ok(())
+}
+
+#[test]
+fn read_pid_returns_none_for_missing_file() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let result = supervisor::read_pid(&paths, "sess-nonexistent")?;
+    assert_eq!(result, None, "missing PID file should return None");
+    Ok(())
+}
+
+#[test]
+fn read_pid_returns_none_for_malformed_content() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(pid_path(&sessions_dir, "sess-bad"), "garbage")?;
+    let result = supervisor::read_pid(&paths, "sess-bad")?;
+    assert_eq!(result, None, "malformed PID content should parse to None");
+    Ok(())
+}
+
+#[test]
+fn read_pid_parses_valid_pid() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(pid_path(&sessions_dir, "sess-ok"), "12345\n")?;
+    let result = supervisor::read_pid(&paths, "sess-ok")?;
+    assert_eq!(result, Some(12345), "valid PID should parse correctly");
+    Ok(())
+}
+
+#[test]
+fn read_exit_code_negative_value() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(exit_path(&sessions_dir, "sess-neg"), "-1\n")?;
+    let result = supervisor::read_exit_code(&paths, "sess-neg")?;
+    assert_eq!(
+        result,
+        Some(-1),
+        "negative exit code should parse correctly"
+    );
+    Ok(())
+}
+
+#[test]
+fn pid_sidecar_exists_false_when_missing() {
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let paths = sample_paths(tmp.path());
+    assert!(
+        !supervisor::pid_sidecar_exists(&paths, "sess-missing"),
+        "should return false when PID sidecar does not exist"
+    );
+}
+
+#[test]
+fn pid_sidecar_exists_true_when_present() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let paths = sample_paths(tmp.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(pid_path(&sessions_dir, "sess-exists"), "999")?;
+    assert!(
+        supervisor::pid_sidecar_exists(&paths, "sess-exists"),
+        "should return true when PID sidecar exists"
+    );
+    Ok(())
+}

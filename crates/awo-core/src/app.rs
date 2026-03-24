@@ -21,6 +21,7 @@ use crate::team::{
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::str::FromStr;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -477,11 +478,15 @@ impl AppCore {
         let team_id = options.team_id.clone();
         let task_id = options.task_id.clone();
         let recover_failed_start = |core: &mut Self, slot_id: Option<&str>| {
-            let _ = core.set_team_task_state(&team_id, &task_id, TaskCardState::Blocked);
-            if let Some(slot_id) = slot_id {
-                let _ = core.dispatch(Command::SlotRelease {
+            if let Err(err) = core.set_team_task_state(&team_id, &task_id, TaskCardState::Blocked) {
+                warn!(team_id = team_id.as_str(), task_id = task_id.as_str(), %err, "failed to mark task as blocked during recovery");
+            }
+            if let Some(slot_id) = slot_id
+                && let Err(err) = core.dispatch(Command::SlotRelease {
                     slot_id: slot_id.to_string(),
-                });
+                })
+            {
+                warn!(slot_id, %err, "failed to release slot during recovery");
             }
         };
 

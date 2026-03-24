@@ -148,9 +148,12 @@ pub fn sync(paths: &AppPaths, session_id: &str) -> AwoResult<Option<i64>> {
 pub fn kill(paths: &AppPaths, session_id: &str) -> AwoResult<()> {
     if let Some(pid) = super::read_pid(paths, session_id)? {
         if pid > 0 && super::process_is_running(pid) {
-            let _ = std::process::Command::new("taskkill")
+            if let Err(err) = std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/F"])
-                .output();
+                .output()
+            {
+                tracing::debug!(pid, %err, "taskkill failed (process may already be dead)");
+            }
         }
     }
     Ok(())

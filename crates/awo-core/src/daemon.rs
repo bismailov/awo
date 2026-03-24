@@ -58,8 +58,10 @@ impl DaemonServer {
             .map_err(|source| AwoError::file_lock("exclusive", &options.lock_path, source))?;
 
         // Clean up any stale socket file from a previous crash
-        if options.socket_path.exists() {
-            let _ = fs::remove_file(&options.socket_path);
+        if options.socket_path.exists()
+            && let Err(err) = fs::remove_file(&options.socket_path)
+        {
+            tracing::warn!(%err, path = %options.socket_path.display(), "failed to remove stale socket file");
         }
 
         Ok(Self {
@@ -135,8 +137,12 @@ impl DaemonServer {
     }
 
     fn cleanup(&self) {
-        let _ = fs::remove_file(&self.socket_path);
-        let _ = fs::remove_file(&self.lock_path);
+        if let Err(err) = fs::remove_file(&self.socket_path) {
+            tracing::debug!(%err, path = %self.socket_path.display(), "failed to remove socket file during cleanup");
+        }
+        if let Err(err) = fs::remove_file(&self.lock_path) {
+            tracing::debug!(%err, path = %self.lock_path.display(), "failed to remove lock file during cleanup");
+        }
     }
 }
 
