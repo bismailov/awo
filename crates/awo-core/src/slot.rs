@@ -106,15 +106,16 @@ pub fn build_slot_id(repo_id: &str, task_name: &str) -> String {
 }
 
 pub fn build_branch_name(task_name: &str, slot_id: &str) -> String {
-    let short_id = slot_id.chars().rev().take(6).collect::<String>();
-    let short_id = short_id.chars().rev().collect::<String>();
-    format!("awo/{}/{}", slugify(task_name), short_id)
+    format!("awo/{}/{}", slugify(task_name), short_suffix(slot_id))
 }
 
 pub fn build_slot_path(worktree_root: &Path, task_name: &str, slot_id: &str) -> PathBuf {
-    let short_id = slot_id.chars().rev().take(6).collect::<String>();
-    let short_id = short_id.chars().rev().collect::<String>();
-    worktree_root.join(format!("{}-{}", slugify(task_name), short_id))
+    worktree_root.join(format!("{}-{}", slugify(task_name), short_suffix(slot_id)))
+}
+
+fn short_suffix(id: &str) -> &str {
+    let len = id.len();
+    if len > 6 { &id[len - 6..] } else { id }
 }
 
 fn slugify(input: &str) -> String {
