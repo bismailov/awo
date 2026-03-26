@@ -5,6 +5,12 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+authors = ["Bobirkhon Ismailov <4059113+bismailov@users.noreply.github.com>", "AWO Contributors"]
+description = "AWO - Agent Workspace Orchestrator for managing multi-agent software engineering missions."
+repository = "https://github.com/bismailov/awo"
+license = "MIT"
+keywords = ["agent", "orchestration", "cli", "tui", "workspace"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

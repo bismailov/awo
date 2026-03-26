@@ -117,9 +117,7 @@ pub enum ContextCommand {
 #[derive(Debug, Subcommand)]
 pub enum SkillsCommand {
     /// List skills discovered in the repository.
-    List {
-        repo_id: String,
-    },
+    List { repo_id: String },
     /// Check if skills are correctly linked into runtimes.
     Doctor {
         repo_id: String,
@@ -152,9 +150,7 @@ pub enum RuntimeCommand {
     /// List all supported runtimes and their capabilities.
     List,
     /// Show detailed capabilities for a specific runtime.
-    Show {
-        runtime: String,
-    },
+    Show { runtime: String },
     /// Preview routing decisions based on policies and pressure.
     RoutePreview {
         /// Preferred runtime kind.
@@ -200,9 +196,7 @@ pub enum RuntimePressureCommand {
         pressure_level: String,
     },
     /// Clear pressure level for a runtime.
-    Clear {
-        runtime_kind: String,
-    },
+    Clear { runtime_kind: String },
     /// List all active pressure levels.
     List,
 }
@@ -251,9 +245,7 @@ pub enum TeamCommand {
     /// List all active teams.
     List,
     /// Show detailed status and tasks for a team.
-    Show {
-        team_id: String,
-    },
+    Show { team_id: String },
     /// Get routing recommendations for team members.
     Recommend {
         team_id: String,
@@ -278,9 +270,7 @@ pub enum TeamCommand {
         command: TeamTaskCommand,
     },
     /// Archive a team whose tasks have all reached terminal states.
-    Archive {
-        team_id: String,
-    },
+    Archive { team_id: String },
     /// Reset a team to planning state, clearing all task progress and slot bindings.
     Reset {
         team_id: String,
@@ -289,9 +279,7 @@ pub enum TeamCommand {
         force: bool,
     },
     /// Generate a comprehensive report of team activity and outcomes.
-    Report {
-        team_id: String,
-    },
+    Report { team_id: String },
     /// Cancel cancellable sessions, release slots, and reset the team to planning.
     Teardown {
         team_id: String,
@@ -300,19 +288,14 @@ pub enum TeamCommand {
         force: bool,
     },
     /// Delete a team manifest once it no longer references active workspace state.
-    Delete {
-        team_id: String,
-    },
+    Delete { team_id: String },
 }
 
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum TeamMemberCommand {
     /// Show detailed configuration for a team member.
-    Show {
-        team_id: String,
-        member_id: String,
-    },
+    Show { team_id: String, member_id: String },
     /// Add a new member to the team.
     Add {
         team_id: String,
@@ -390,10 +373,7 @@ pub enum TeamMemberCommand {
         clear_routing_defaults: bool,
     },
     /// Remove a member from the team.
-    Remove {
-        team_id: String,
-        member_id: String,
-    },
+    Remove { team_id: String, member_id: String },
     /// Manually assign a worktree slot to a member.
     AssignSlot {
         team_id: String,
@@ -516,13 +496,9 @@ pub enum SlotCommand {
         repo_id: Option<String>,
     },
     /// Release a slot and remove its associated worktree.
-    Release {
-        slot_id: String,
-    },
+    Release { slot_id: String },
     /// Re-evaluate slot state (dirty checks, fingerprints).
-    Refresh {
-        slot_id: String,
-    },
+    Refresh { slot_id: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -557,13 +533,9 @@ pub enum SessionCommand {
         repo_id: Option<String>,
     },
     /// Attempt to cancel a running session.
-    Cancel {
-        session_id: String,
-    },
+    Cancel { session_id: String },
     /// Delete a terminal session record and its logs.
-    Delete {
-        session_id: String,
-    },
+    Delete { session_id: String },
     /// View or stream logs for a session.
     Log {
         session_id: String,

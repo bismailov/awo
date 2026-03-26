@@ -153,7 +153,8 @@ fn run_help(manual: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!(r#"
+    println!(
+        r#"
 AWO — Agent Workspace Orchestrator
 ==================================
 
@@ -213,7 +214,8 @@ COMMAND GROUPS:
 
 Use 'awo <command> --help' for details on specific commands.
 Use 'awo help --manual' to view the full project README and manual.
-"#);
+"#
+    );
 
     Ok(())
 }
