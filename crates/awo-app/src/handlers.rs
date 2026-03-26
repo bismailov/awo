@@ -142,8 +142,80 @@ pub fn execute(command: AppCommand, output: OutputMode) -> Result<()> {
         AppCommand::Slot { command } => run_slot(command, output),
         AppCommand::Session { command } => run_session(command, output),
         AppCommand::Review { command } => run_review(command, output),
+        AppCommand::Help { manual } => run_help(manual),
         AppCommand::Debug { command } => run_debug(command, output),
     }
+}
+
+fn run_help(manual: bool) -> Result<()> {
+    if manual {
+        println!("{}", include_str!("../../../README.md"));
+        return Ok(());
+    }
+
+    println!(r#"
+AWO — Agent Workspace Orchestrator
+==================================
+
+AWO is a high-performance orchestration engine designed for complex multi-agent
+software engineering missions. It manages isolated work environments, enforces
+cost and performance policies via runtime routing, and tracks team progress
+through structured task lifecycles.
+
+CORE CONCEPTS:
+  - Repositories: Git repositories registered with AWO. All agent work happens
+    in isolated worktree "slots" derived from these repositories.
+  - Slots: Ephemeral, isolated Git worktrees. Agents never work directly in
+    your main repository, preventing "dirty" workspace issues.
+  - Sessions: A single execution of an agent (e.g., Claude) or a script (Shell)
+    within a slot. Sessions are logged and can be cancelled.
+  - Teams: Logical groups of agents with defined roles, capabilities, and
+    routing policies. Teams execute "missions" consisting of multiple tasks.
+  - Runtimes: Different ways to execute work. AWO supports AI runtimes (Claude)
+    and local execution (Shell). Routing logic decides which to use based on
+    cost, availability, and task requirements.
+
+COMMON WORKFLOWS:
+
+  1. Solo Task Execution:
+     $ awo repo add .
+     $ awo slot acquire <REPO_ID> refactor-auth
+     $ awo session start <SLOT_ID> claude "Improve error handling in auth.rs"
+     $ awo session log <SESSION_ID> --stream combined
+     $ awo slot release <SLOT_ID>
+
+  2. Managed Team Mission:
+     $ awo team init <REPO_ID> web-migration "Port frontend to Leptos 0.7"
+     $ awo team member add web-migration lead lead --runtime claude --model opus
+     $ awo team member add web-migration dev worker --runtime claude --model sonnet
+     $ awo team task add web-migration port-components dev "Port UI" "..."
+     $ awo team task start web-migration port-components
+     $ awo team report web-migration
+
+RUNTIME ROUTING & POLICIES:
+  AWO uses a sophisticated routing engine. You can configure policies like:
+  - --prefer-local: Always try Shell or local models first.
+  - --avoid-metered: Do not use runtimes with per-token or per-minute costs.
+  - --max-cost-tier: Limit execution to 'standard', 'premium', etc.
+  - Runtime Pressure: Use 'awo runtime pressure set' to signal that a runtime
+    is overloaded, triggering automatic fallback to other options.
+
+COMMAND GROUPS:
+  repo      - Manage registered repositories (add, clone, list, remove, fetch).
+  slot      - Manage isolated worktrees (acquire, release, refresh, list).
+  session   - Manage execution instances (start, cancel, log, delete, list).
+  team      - Manage agent teams, members, tasks, and reports.
+  runtime   - Inspect runtimes, capabilities, and routing policies.
+  context   - Inspect repository context packed for agents.
+  skills    - Manage and link external skills into runtimes.
+  review    - View workspace health and dirty file warnings.
+  daemon    - Control the background orchestration process.
+
+Use 'awo <command> --help' for details on specific commands.
+Use 'awo help --manual' to view the full project README and manual.
+"#);
+
+    Ok(())
 }
 
 fn run_debug(command: DebugCommand, output: OutputMode) -> Result<()> {

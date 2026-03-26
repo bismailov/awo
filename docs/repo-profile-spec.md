@@ -155,8 +155,8 @@ terminal_app = "wezterm"
 ### Paths And Machine Preferences
 ```toml
 repo_id = "rentals-js-abcd1234"
-repo_root = "/Users/name/workspace/rentals-js"
-worktree_root = "/Users/name/workspace/rentals-js.worktrees"
+repo_root = "/path/to/workspace/rentals-js"
+worktree_root = "/path/to/workspace/rentals-js.worktrees"
 terminal_app = "wezterm"
 preferred_machine = "local"
 ```
@@ -179,7 +179,7 @@ fallback = "codex"
 ```toml
 [env]
 base_port = 4300
-extra_env = { AWO_USER = "bismailov" }
+extra_env = { AWO_OPERATOR = "local-dev" }
 ```
 
 ## Merge Rules

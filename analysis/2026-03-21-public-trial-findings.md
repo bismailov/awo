@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate `awo` against disposable public GitHub repositories instead of the live `sales-erp` product.
+Validate `awo` against disposable public GitHub repositories instead of a live product repository.
 
 ## Repos Used
 

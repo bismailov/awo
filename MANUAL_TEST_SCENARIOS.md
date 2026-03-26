@@ -801,7 +801,7 @@ cd <REPO_ROOT> && git reset --hard HEAD~1 && cd -
 ./target/debug/awo slot release <SLOT_ID>
 ```
 
-**Note:** Replace `<REPO_ROOT>` with the repo's working directory (e.g. `/Users/you/Documents/chaban`).
+**Note:** Replace `<REPO_ROOT>` with the repo's working directory (for example, `/path/to/your/repo`).
 
 ---
 

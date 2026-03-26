@@ -36,7 +36,7 @@ Those were lifecycle and state-model problems, not "the runtime is synchronous" 
 Keep the core synchronous for now.
 
 Reasons:
-- the main operator paths are already fast enough for a private alpha
+- the main operator paths are already fast enough at the current product stage
 - detached PTY work is already delegated to `tmux`
 - one-shot launches are intentionally short-lived and persist enough metadata for later sync
 - the supervisor seam now exists, so a future async transition has a cleaner place to land

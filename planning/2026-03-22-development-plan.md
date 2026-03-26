@@ -106,6 +106,15 @@ Any future implementation should preserve these rules.
 - pending sessions block release.
 - tasks only reach `Review` if `verification_command` passes.
 
+## Open Source Readiness Rules
+
+As the project moves toward public development, keep these repository rules in place:
+
+- tracked docs and examples should use generic, portable placeholders instead of personal machine paths
+- private research, transcript dumps, and scratch planning artifacts should stay out of the public repo unless intentionally curated
+- contributor-facing docs should not assume private infrastructure or private repositories
+- community-health files (`LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`) should remain accurate as the project evolves
+
 ## What Is Still Missing
 
 The most important remaining work falls into four buckets.

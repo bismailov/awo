@@ -21,6 +21,14 @@ Rust workspace: `awo-core` (orchestration logic) and `awo-app` (CLI/TUI shell).
 - Safety before convenience; bounded slices over broad rewrites
 - If the user starts a prompt with `?`, treat it as planning/discussion only -- no code changes
 
+## Open Source Safety
+
+- Keep tracked files free of secrets, credentials, private repository names, and personal machine-specific paths
+- Use generic placeholders in public docs and examples such as `/path/to/repo`, `org/repo`, and `local-dev`
+- Do not commit transcript dumps, local planning scratch files, editor state, or one-off research artifacts unless they are intentionally curated for public documentation
+- Prefer contributor-facing docs that can be understood without access to private services, private repos, or a specific local machine setup
+- When in doubt, bias toward public-safe wording and reproducible examples
+
 ## Project layout
 
 ```

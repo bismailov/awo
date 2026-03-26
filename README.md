@@ -2,218 +2,378 @@
 
 `awo` is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repositories.
 
-The working interaction model is a single-window controller: `awo` owns the repo, team, slot, session, and review state in one place, while the actual agents run in background sessions or attached terminals.
+It sits between "run an AI coding agent" and "manually manage Git worktrees." Instead of treating the problem as chat orchestration alone, `awo` treats the workspace itself as the unit of control: acquire a safe slot, attach the right runtime, inject repo context and skills, track the session, review overlap risk, and recycle the workspace safely.
 
-**Welcome Private-Alpha Testers!**
-As we stabilize `awo`, we rely on your feedback to refine the agent orchestration lifecycle. We are currently focusing heavily on improving our machine-readable interfaces to let other tools coordinate via `awo`.
+`awo` is currently a pre-1.0 Rust workspace with three binaries:
 
-It currently manages:
-- repository registration
-- managed remote cloning and fetching
-- isolated Git worktree slots
-- fresh and warm slot reuse
-- dependency fingerprint readiness
-- repo context discovery from entrypoint docs, standards docs, and `analysis/`
-- shared-skill discovery from `.agents/skills/` and `skills-lock.json`
-- runtime-specific skills doctor, link, and sync flows for Codex, Claude, and Gemini
-- automatic launch-context injection for agent runtimes on session start
-- platform-aware defaults for session launch mode and skill projection mode
-- tmux-backed PTY session supervision
-- crash-recoverable oneshot sessions via PID/exit sidecars
-- repo-scoped review summaries in the CLI
-- one-shot session visibility while sessions are still running
-- review warnings around stale, dirty, blocked, or failed work
-- executable team orchestration: runtime capability registry, durable team manifests, task cards, and task-driven session launch
-- team archive, reset, teardown, and delete lifecycle controls
-- machine-readable JSON output across the main operator commands
+- `awo`: the main CLI and TUI
+- `awod`: a background daemon for headless JSON-RPC brokerage
+- `awo-mcp`: an MCP server that exposes `awo` as tools and resources to external LLM clients
 
-## Architecture Direction: "JSON inside, MCP outside"
+## Why This Exists
 
-To support building `awo` out into a true middleware layer (see [docs/middleware-mode.md](docs/middleware-mode.md)), we are standardizing on a **"JSON inside, MCP outside"** pattern:
-- **JSON Inside:** The core CLI outputs predictable, structured JSON envelopes for all state changes, errors, and events. This makes it a robust, token-efficient controller for local automation, testbeds, and direct invocation by nearby scripts.
-- **MCP Outside:** The Model Context Protocol (MCP) acts as our facade. External virtual agents or orchestrated systems connect to `awo` through MCP to safely acquire slots, discover context, and execute sessions without needing to know the low-level CLI structure.
+Parallel AI coding usually breaks in one of four places:
 
-## Current Status
+- multiple agents write in the same checkout or branch
+- a fresh worktree is cheap, but a ready worktree is not
+- every AI runtime has different launch behavior and constraints
+- context, standards, and prior decisions drift across sessions
 
-This repo currently ships a working V1 slice with:
-- Rust workspace split into `awo-core` and `awo-app`
-- SQLite-backed operational state
-- repository registration with local overlay generation
-- remote repo clone and fetch flows
-- fresh and warm slot acquisition/release
-- warm slot refresh from base branch
-- Codex, Claude, Gemini, and shell session launch support
-- context pack and context doctor commands
-- shared skill catalog and install-state diagnostics
-- runtime-aware skill policy with repo-local preference for Gemini
-- distinct `skills sync` repair semantics for drifted or mode-mismatched installs
-- detached tmux-backed PTY supervision with status sync
-- persisted supervisor metadata on sessions so PTY backend identity survives restarts and schema evolution
-- session cancellation and terminal-session deletion
-- review summary and warnings in both CLI and TUI
-- repo-filtered `review status` output in the CLI
-- TUI repo selection with per-repo context-pack and skill-health detail
-- runtime capability inspection in both CLI and TUI
-- starter team manifest creation plus CLI/TUI team visibility
-- executable team member/task workflows and `team task start`
-- regression tests for the trickiest lifecycle edges
+`awo` is meant to be the operational layer that fixes those problems.
 
-What is not done yet:
-- embedded terminal sessions
-- structured agent output parsing
-- true interruption or timeout control for running one-shot sessions
-- runtime-agnostic subagent orchestration above vendor-native team features
-- repo overlap detection by changed-file classes
-- remote machine targets
-- Windows-native PTY supervision backend
-- richer multi-turn runtime adapters beyond one-shot task execution
+## The Core Concept
 
-See also:
-- [docs/middleware-mode.md](docs/middleware-mode.md)
-- [docs/interface-strategy.md](docs/interface-strategy.md)
-- [docs/subagent-orchestration.md](docs/subagent-orchestration.md)
-- [docs/team-manifest-spec.md](docs/team-manifest-spec.md)
-- [docs/tokio-decision.md](docs/tokio-decision.md)
-- [analysis/2026-03-21-public-trial-findings.md](analysis/2026-03-21-public-trial-findings.md)
+`awo` is built around a few durable concepts:
+
+- Repository: a registered Git repo plus local metadata and settings
+- Slot: an isolated worktree workspace, either fresh or warm
+- Session: a runtime invocation in a slot, such as Codex, Claude, Gemini, or shell
+- Context pack: the repo guidance and docs that should travel with each session
+- Skill catalog: portable `SKILL.md` workflows discovered from shared repo locations
+- Team manifest: a durable record of members, tasks, ownership, and verification
+- Review state: warnings about dirty slots, overlap risk, blocked cleanup, and failed work
+
+The important design choice is that `awo` does not make the UI the source of truth. All mutations flow through the orchestration core.
+
+## How It Works
+
+Typical flow:
+
+1. Register or clone a repository.
+2. Discover context from files like `AGENTS.md`, `CLAUDE.md`, `docs/`, `analysis/`, and optional MCP config.
+3. Discover shared repo skills from locations such as `.agents/skills/`.
+4. Acquire a worktree slot for a task.
+5. Start a runtime session in that slot.
+6. Track logs, status, review warnings, and team/task state.
+7. Release or refresh the slot when the work is complete.
+
+Under the hood, the workspace is split into:
+
+- `crates/awo-core`: orchestration logic, persistence, Git/worktree lifecycle, runtime handling, review, team workflows
+- `crates/awo-app`: the human-facing shell for CLI and TUI usage
+- `crates/awo-mcp`: the MCP facade for external tool interoperability
+
+## Interface Model
+
+The architectural direction is:
+
+**JSON inside, MCP outside**
+
+That means:
+
+- the canonical local control plane is a structured command model
+- the TUI and CLI are both clients of the same core
+- the daemon can expose the same command model over JSON-RPC
+- MCP is the outer integration layer for agent clients and IDEs
+
+This keeps the local contract predictable and scriptable without giving up interoperability with tool-based LLM systems.
+
+## CLI Vs TUI
+
+`awo` is TUI-first, but not TUI-only. The CLI and TUI serve different jobs.
+
+| Surface | Best for | Pros | Cons |
+| --- | --- | --- | --- |
+| TUI | human operator control, live oversight, reviewing active work | fast situational awareness, easier slot/session browsing, team dashboard, log viewing | less scriptable, more manual, not ideal for automation |
+| CLI | scripts, repeatable workflows, shell usage, automation, testing | machine-readable output, composable, easy to automate, good fit for CI-like flows | less visual, easier to lose big-picture state, requires more command knowledge |
+
+In practice:
+
+- use the TUI when you want to supervise a repo, inspect warnings, watch sessions, or operate several parallel tasks by hand
+- use the CLI when you want deterministic commands, JSON output, wrappers, scripts, or external automation
+
+## Why MCP
+
+MCP matters when `awo` needs to be consumed by another agent system instead of directly by a human.
+
+Reasons to use MCP:
+
+- it gives external LLM clients a standard tool protocol instead of a bespoke shell contract
+- tool and resource discovery are built in
+- it lets `awo` appear as one orchestration backend even if it is managing many slots and sessions internally
+- it is the cleanest path toward the future "virtual coding agent" middleware shape
+
+Reasons not to reach for MCP first:
+
+- if you are a human operator, the TUI is usually better
+- if you are writing local scripts, the CLI is usually simpler and more token-efficient
+- MCP adds protocol overhead that is unnecessary for basic shell automation
+
+Short version:
+
+- CLI is the best inside contract
+- TUI is the best operator console
+- MCP is the best outside integration surface
+
+## How To Use MCP
+
+`awo-mcp` is a stdio MCP server. A compatible client starts the binary, sends newline-delimited JSON-RPC messages on stdin, and receives responses on stdout.
+
+At a high level, the flow is:
+
+1. start `awo-mcp`
+2. send `initialize`
+3. send `tools/list` or `resources/list`
+4. call tools like `acquire_slot`, `start_session`, or `get_review_status`
+
+Current MCP tool coverage includes:
+
+- repositories: list and remove
+- slots: acquire, release, list
+- sessions: start, cancel, list, read logs
+- review: status
+- teams: list, show, init, add member, add task, reset, report, archive, delete, delegate
+- events: poll domain events
+
+Current MCP resources include:
+
+- `awo://repos`
+- `awo://slots`
+- `awo://sessions`
+- `awo://review`
+- `awo://teams`
+
+This is most useful when you want a model client to ask `awo` for safe workspaces and orchestration operations without teaching that client the full CLI surface.
+
+Minimal manual smoke test:
+
+```bash
+cargo run --bin awo-mcp
+```
+
+Then send newline-delimited JSON-RPC messages such as:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+```
+
+In a real MCP client, you normally point the client at the `awo-mcp` binary as a stdio server and let the client handle the protocol details.
+
+## Install From Source
+
+```bash
+cargo install --path crates/awo-app --bin awo --bin awod
+cargo install --path crates/awo-mcp --bin awo-mcp
+```
+
+Or run directly with Cargo while developing:
+
+```bash
+cargo run --bin awo
+```
+
+## Configuration And Storage
+
+By default, `awo` uses platform-specific config and data directories via the Rust `directories` crate.
+
+You can override them with:
+
+- `AWO_CONFIG_DIR`
+- `AWO_DATA_DIR`
+
+`awod` also accepts `--config-dir` and `--data-dir`.
+
+Operational state is stored in SQLite, while larger logs stay file-based.
 
 ## Quick Start
 
-Build and run:
+Launch the TUI:
 
 ```bash
-cargo run
+cargo run --bin awo
 ```
 
-Useful CLI commands:
+Register a repository and inspect its agent readiness:
 
 ```bash
-cargo run -- repo add /path/to/repo
-cargo run -- repo clone git@github.com:org/repo.git
-cargo run -- repo clone https://bitbucket.org/team/repo.git --destination /path/to/clone
-cargo run -- repo fetch <repo-id>
-cargo run -- repo list
-
-cargo run -- context pack <repo-id>
-cargo run -- context doctor <repo-id>
-
-cargo run -- skills list <repo-id>
-cargo run -- skills doctor <repo-id>
-cargo run -- skills doctor <repo-id> --runtime codex
-cargo run -- skills link <repo-id> gemini
-cargo run -- skills sync <repo-id> claude --mode copy
-
-cargo run -- runtime list
-cargo run -- runtime show claude
-cargo run -- --json runtime list
-
-cargo run -- team init <repo-id> team-alpha "Coordinate a safe parallel task"
-cargo run -- team list
-cargo run -- team show team-alpha
-cargo run -- team member add team-alpha reviewer-a reviewer --runtime gemini --read-only
-cargo run -- team task add team-alpha audit reviewer-a "Audit docs" "Review the docs" --deliverable "A concise review"
-cargo run -- team task start team-alpha audit --launch-mode oneshot
-cargo run -- team teardown team-alpha
-cargo run -- team teardown team-alpha --force
-cargo run -- team delete team-alpha
-cargo run -- --json team show team-alpha
-
-cargo run -- slot acquire <repo-id> my-task
-cargo run -- slot acquire <repo-id> my-task --strategy warm
-cargo run -- slot list --repo-id <repo-id>
-cargo run -- slot refresh <slot-id>
-cargo run -- slot release <slot-id>
-
-cargo run -- session start <slot-id> codex "Investigate this bug" --read-only
-cargo run -- session start <slot-id> claude "Prepare a plan" --launch-mode oneshot
-cargo run -- session start <slot-id> gemini "Review architecture" --read-only
-cargo run -- session start <slot-id> shell "printf ok; sleep 1; printf done" --read-only
-cargo run -- session list
-cargo run -- session cancel <session-id>
-cargo run -- session delete <session-id>
-
-cargo run -- review status
-cargo run -- review status --repo-id <repo-id>
-cargo run -- --json session list --repo-id <repo-id>
+cargo run --bin awo -- repo add /path/to/repo
+cargo run --bin awo -- repo list
+cargo run --bin awo -- context doctor <repo-id>
+cargo run --bin awo -- skills doctor <repo-id>
 ```
 
-## TUI Keys
+Acquire a workspace and start a session:
 
-The current TUI is intentionally small and operational:
-- `q` quit
-- `j` / `k` select repo
-- `a` register the current working directory as a repo
-- `c` run `context doctor` for the selected repo
-- `d` run `skills doctor` for the selected repo
-- `n` send a no-op command through the core
-- `r` refresh review state
-- `T` toggle team dashboard
+```bash
+cargo run --bin awo -- slot acquire <repo-id> fix-login
+cargo run --bin awo -- session start <slot-id> codex "Fix the login race condition"
+cargo run --bin awo -- review status --repo-id <repo-id>
+cargo run --bin awo -- slot release <slot-id>
+```
 
-The TUI now also surfaces:
-- repo-scoped team manifests
-- runtime capability summaries
+Machine-readable output is available with `--json`:
 
-## Safety Rules Implemented
+```bash
+cargo run --bin awo -- --json repo list
+cargo run --bin awo -- --json session list --repo-id <repo-id>
+```
 
-- dirty slots cannot be released
-- pending sessions block release
-- only one pending write-capable session may be attached to a slot
-- stale slots block new write-capable sessions
-- released fresh slots are treated as intentionally gone, not broken
-- released warm slots refuse refresh while the base repo has uncommitted changes
-- tmux-backed PTY sessions get unique hashed supervisor refs to avoid name collisions
-- team-manifest mutations are protected with cross-process file locks
-- long-running team-task launches release manifest locks between reservation, slot binding, and runtime execution phases
-- oneshot sessions can be reconciled after an interrupted launcher process via PID and exit-code sidecars
-- session supervisor backend identity is stored explicitly in session records instead of being inferred from log layout
+## Common Commands
+
+Repository lifecycle:
+
+```bash
+awo repo add /path/to/repo
+awo repo clone git@github.com:org/repo.git
+awo repo fetch <repo-id>
+awo repo list
+awo repo remove <repo-id>
+```
+
+Context and skills:
+
+```bash
+awo context pack <repo-id>
+awo context doctor <repo-id>
+awo skills list <repo-id>
+awo skills doctor <repo-id>
+awo skills doctor <repo-id> --runtime codex
+awo skills link <repo-id> claude
+awo skills sync <repo-id> gemini --mode copy
+```
+
+Slots and sessions:
+
+```bash
+awo slot acquire <repo-id> my-task
+awo slot acquire <repo-id> my-task --strategy warm
+awo slot list --repo-id <repo-id>
+awo slot refresh <slot-id>
+awo slot release <slot-id>
+
+awo session start <slot-id> codex "Investigate this bug"
+awo session start <slot-id> claude "Prepare a plan" --launch-mode oneshot
+awo session start <slot-id> gemini "Review architecture" --read-only
+awo session list
+awo session cancel <session-id>
+awo session delete <session-id>
+```
+
+Teams:
+
+```bash
+awo team init <repo-id> team-alpha "Coordinate a safe parallel task"
+awo team member add team-alpha reviewer-a reviewer --runtime gemini --read-only
+awo team task add team-alpha audit reviewer-a "Audit docs" "Review the docs" --deliverable "A concise review"
+awo team task start team-alpha audit --launch-mode oneshot
+awo team show team-alpha
+awo team report team-alpha
+awo team teardown team-alpha
+```
+
+Daemon:
+
+```bash
+awo daemon start
+awo daemon status
+awo daemon stop
+```
+
+## TUI Controls
+
+The TUI is intentionally operational rather than decorative.
+
+- `q`: quit
+- `?`: toggle help
+- `/`: filter repos, teams, slots, and sessions
+- `Tab` / `Shift+Tab`: cycle focus
+- `j` / `k`: move selection
+- `s`: acquire a slot or start a selected team task
+- `Enter`: start a session on a selected slot or open a session log
+- `x`: cancel the selected session
+- `X`: release the selected slot
+- `c`: run `context doctor` for the selected repo
+- `d`: run `skills doctor` for the selected repo
+- `r`: refresh review state or refresh the current log panel
+- `R`: generate a report for the selected team
+- `T`: toggle the team dashboard
+- `t`: start the next team task
+- `Esc`: close panels or clear the current filter
 
 ## Session Modes
 
-`session start` supports:
-- `--launch-mode pty`
-  Runs the command inside a detached tmux session, syncs status back into the app, and writes a combined PTY log.
-- `--launch-mode oneshot`
-  Runs the command directly and waits for completion in the calling process.
-  If the launcher process is interrupted after spawn, later `session list`, `slot list`, and `review status` runs can still reconcile the session via PID/exit sidecars.
+`session start` supports two launch modes:
 
-The default is environment-aware: `pty` when the configured PTY supervisor is available, otherwise `oneshot`.
+- `pty`: launch in a detached supervised terminal session
+- `oneshot`: run directly and wait for completion in the calling process
 
-## Team Lifecycle
+The default depends on the environment. On Unix-like systems, `awo` prefers PTY-backed supervision when available. On platforms where PTY support is incomplete, it falls back to `oneshot`.
 
-- `team archive` shelves a team once all tasks are terminal and no active slot/session bindings remain.
-- `team reset` clears task progress and bindings but intentionally does not touch live sessions or slots.
-- `team teardown` is the operational cleanup path: it cancels cancellable sessions, releases bound slots, and then resets the team back to planning.
-- `team delete` removes the manifest once no slot or session bindings remain.
+## Daemon Mode
 
-`team teardown` refuses to hide blockers. Dirty slots and running one-shot sessions still require operator attention before the manifest can be cleaned up.
+`awod` is the headless broker layer. On Unix it serves JSON-RPC over a Unix domain socket and holds an exclusive lock so only one daemon instance owns the local store at a time.
 
-## Context And Skills
+The daemon is useful when you want:
 
-`context pack` discovers repo entrypoints such as `AGENTS.md`, `PROJECT.md`, and `CLAUDE.md`, standards docs under `docs/`, optional `.mcp.json`, and task-heavy material under `analysis/`. `context doctor` turns that discovery into a concise readiness report.
+- a long-lived local broker
+- headless orchestration from other tools
+- a stable RPC surface around the same command model
 
-`skills list` inspects shared repo skills under `.agents/skills/` and correlates them with `skills-lock.json` when present. `skills doctor` compares those shared skills against the current user-level runtime directories for Codex, Claude, and Gemini.
+## What `awo` Is Good At Today
 
-`skills link` adds missing shared repo skills into a runtime-specific skills directory using symlinks or copies. It intentionally refuses to overwrite conflicting local content.
+- safe slot acquisition and release for local Git repos
+- runtime-aware session launching for Codex, Claude, Gemini, and shell
+- repo-context discovery and context health checks
+- shared skill discovery and runtime skill projection
+- review warnings for dirty, stale, blocked, or overlapping work
+- team manifests, task tracking, and task-driven session launch
+- a usable operator TUI plus scriptable CLI and early MCP surface
 
-`skills sync` is stronger: it repairs drifted copied skills, fixes mode mismatches such as “linked but should be copied”, and prunes stale symlink projections that point back into the repo-managed shared skill root.
+## Current Limitations
 
-`session start` now auto-attaches a launch context for AI runtimes unless `--no-auto-context` is passed. The injected context includes entrypoint files, standards docs, and heuristically selected `analysis/` packs based on the task prompt.
+`awo` is promising, but still early.
 
-## Platform Notes
+Known gaps and active areas:
 
-- macOS and Linux currently get the strongest experience: worktrees, repo context, skills reconciliation, and tmux-backed PTY supervision.
-- Windows is already a viable controller environment for repo, slot, skills, and one-shot session flows.
-- Windows PTY supervision is not implemented yet; `awo` falls back to `oneshot` behavior there.
-- The default skill projection mode is platform-aware: symlinks on Unix-like systems, copies on Windows.
+- embedded terminals in the TUI are not finished
+- Windows PTY supervision is not complete yet
+- daemon lifecycle UX is still maturing
+- richer output normalization and higher-level middleware behavior are still in progress
+- the product is not yet a fully mature "virtual super-agent" layer
 
-## Verification
+## Community
 
-Current automated verification:
+- Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Project participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+- Security-sensitive issues should follow [`SECURITY.md`](SECURITY.md).
+- Maintainers can use [`docs/open-source-release-checklist.md`](docs/open-source-release-checklist.md) before wider public releases.
+
+## Development
+
+Project onboarding starts with [`CLAUDE.md`](CLAUDE.md).
+
+Useful follow-up docs:
+
+- [`planning/2026-03-22-development-plan.md`](planning/2026-03-22-development-plan.md)
+- [`docs/core-architecture.md`](docs/core-architecture.md)
+- [`docs/product-spec.md`](docs/product-spec.md)
+- [`docs/interface-strategy.md`](docs/interface-strategy.md)
+- [`docs/middleware-mode.md`](docs/middleware-mode.md)
+- [`docs/subagent-orchestration.md`](docs/subagent-orchestration.md)
+- [`docs/open-source-release-checklist.md`](docs/open-source-release-checklist.md)
+
+Verification:
 
 ```bash
-cargo fmt
-cargo check
-cargo test
+cargo fmt --all
 cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-GitHub Actions now runs the core Rust validation matrix on Linux, macOS, and Windows for pushes to `main` and pull requests.
+## License
+
+`awo` is available under the terms of the [`MIT License`](LICENSE).
+
+## Philosophy
+
+`awo` is not trying to be "yet another chat shell."
+
+The real bet is that safe parallel AI coding needs a workspace control plane:
+
+- one slot per write-capable task
+- one orchestration core that owns state transitions
+- one place to attach context, skills, and runtime policy
+- one review layer that warns before parallel work turns into cleanup work
+
+If that layer is solid, the UI surface can change over time. The core value remains the same.

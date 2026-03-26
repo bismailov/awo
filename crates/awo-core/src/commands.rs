@@ -48,6 +48,8 @@ pub(super) struct SessionStartOptions {
 pub enum Command {
     #[serde(rename = "noop")]
     NoOp { label: String },
+    #[serde(rename = "help")]
+    Help { manual: bool },
     #[serde(rename = "repo.add")]
     RepoAdd { path: PathBuf },
     #[serde(rename = "repo.clone")]
@@ -168,6 +170,7 @@ impl Command {
     pub fn method_name(&self) -> &'static str {
         match self {
             Self::NoOp { .. } => "noop",
+            Self::Help { .. } => "help",
             Self::RepoAdd { .. } => "repo.add",
             Self::RepoClone { .. } => "repo.clone",
             Self::RepoRemove { .. } => "repo.remove",
@@ -356,6 +359,7 @@ impl<'a> CommandRunner<'a> {
     pub fn run(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         match command {
             Command::NoOp { label } => self.run_noop(label),
+            Command::Help { .. } => Ok(CommandOutcome::new("Help command executed.")),
             Command::RepoAdd { path } => self.run_repo_add(path),
             Command::RepoClone {
                 remote_url,

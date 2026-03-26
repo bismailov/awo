@@ -1229,6 +1229,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             Line::from("  r       Refresh review / Refresh log"),
             Line::from("  c       Context doctor"),
             Line::from("  d       Skills doctor"),
+            Line::from("  T       Team Dashboard"),
             Line::from("  Tab     Next panel"),
             Line::from("  Esc     Close panel / Cancel input"),
             Line::from("  q       Quit"),
