@@ -1,7 +1,7 @@
-# Product Spec: Agent Workspace Orchestrator
+# Product Spec: Awo Console
 
 ## 1. Summary
-The product is a macOS-centric orchestration tool for parallel AI coding. Its purpose is to make multi-agent work safe and cheap by managing isolated worktrees, warm workspace pools, and AI CLI sessions behind one repository-aware control plane.
+Awo Console is a macOS-centric orchestration tool for parallel AI coding. Its purpose is to make multi-agent work safe and cheap by managing isolated worktrees, warm workspace pools, and AI CLI sessions behind one repository-aware control plane.
 
 This is not primarily a chatbot shell or IDE. It is a workspace operations product for AI-assisted development.
 

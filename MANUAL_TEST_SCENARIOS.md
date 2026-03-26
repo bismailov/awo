@@ -1,4 +1,4 @@
-# Manual Test Scenarios for awo
+# Manual Test Scenarios for Awo Console
 
 Hands-on scenarios to exercise the full feature set. Each scenario builds on the previous.
 
@@ -12,7 +12,7 @@ cargo build
 
 ## Scenario 1: First Contact — Register a Repo and Explore
 
-**Goal:** Register a real Git repo and explore what awo sees.
+**Goal:** Register a real Git repo and explore what Awo Console sees.
 
 ```bash
 # 1. Register this repo itself
@@ -21,7 +21,7 @@ cargo build
 # 2. List registered repos (should show chaban)
 ./target/debug/awo repo list
 
-# 3. Inspect context — what files does awo consider important?
+# 3. Inspect context — what files does Awo Console consider important?
 ./target/debug/awo context pack <REPO_ID>
 
 # 4. Run the context doctor — any warnings?
@@ -87,7 +87,7 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 ./target/debug/awo slot acquire <REPO_ID> ai-review
 
 # 2. Start a shell session (safest — works without API keys)
-./target/debug/awo session start <SLOT_ID> shell "echo 'Hello from awo slot' && ls -la"
+./target/debug/awo session start <SLOT_ID> shell "echo 'Hello from Awo Console slot' && ls -la"
 
 # 3. List sessions
 ./target/debug/awo session list

@@ -1,6 +1,6 @@
 # Awo Manual Testing Guide
 
-Welcome back! The system has been hardened and verified with an end-to-end smoke test. You can now reliably use `awo` manually.
+Welcome back! The system has been hardened and verified with an end-to-end smoke test. You can now reliably use Awo Console manually through the `awo` binary.
 
 ## 1. Quick Start (Smoke Test)
 Run the automated smoke test to see everything in action (repo registration, daemon auto-start, team creation, and task execution):

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This document is the shortest reliable way for a new agent or collaborator to continue `awo` development without reconstructing the entire project history from chat logs.
+This document is the shortest reliable way for a new agent or collaborator to continue Awo Console development without reconstructing the entire project history from chat logs.
 
 It answers four questions:
 
-1. What `awo` is trying to become
+1. What Awo Console is trying to become
 2. What has already been built
 3. What is still missing
 4. What the next implementation waves should prioritize
@@ -17,7 +17,7 @@ Current baseline for this document:
 
 ## Product Vision
 
-`awo` is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repositories.
+Awo Console is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repositories.
 
 Its wedge is not "chat with one model" and not "manually create worktrees." Its wedge is the operational layer between them:
 
@@ -27,7 +27,7 @@ Its wedge is not "chat with one model" and not "manually create worktrees." Its 
 - preserve team and review state
 - recycle the workspace safely
 
-Longer term, `awo` should evolve from a local operator console into a middleware layer that can present itself as one virtual coding agent while internally orchestrating slots, runtimes, team policies, and review flows.
+Longer term, Awo Console should evolve from a local operator console into a middleware layer that can present itself as one virtual coding agent while internally orchestrating slots, runtimes, team policies, and review flows.
 
 See also:
 - [docs/product-spec.md](../docs/product-spec.md)
@@ -49,7 +49,7 @@ The project started with a clear V1 goal:
 
 ## What We Achieved
 
-`awo` is now a robust orchestration substrate with a stable V1 slice.
+Awo Console is now a robust orchestration substrate with a stable V1 slice.
 
 ### Core Orchestration & Hardening
 - Rust workspace split into `awo-core`, `awo-app`, and `awo-mcp`.
@@ -83,7 +83,7 @@ The project started with a clear V1 goal:
 
 ## Current Product Shape
 
-Today `awo` is best described as:
+Today Awo Console is best described as:
 
 - a working local operator console
 - a repository-aware orchestration core
@@ -164,4 +164,4 @@ Goal: achieve full platform parity.
 
 ## Summary
 
-`awo` has moved from concept to a hardened orchestration substrate. The focus now shifts from "making it work" to "making it scale" as a headless broker for AI agents.
+Awo Console has moved from concept to a hardened orchestration substrate. The focus now shifts from "making it work" to "making it scale" as a headless broker for AI agents.

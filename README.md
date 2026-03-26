@@ -1,10 +1,10 @@
-# awo
+# Awo Console
 
-`awo` is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repositories.
+`Awo Console` is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repositories.
 
-It sits between "run an AI coding agent" and "manually manage Git worktrees." Instead of treating the problem as chat orchestration alone, `awo` treats the workspace itself as the unit of control: acquire a safe slot, attach the right runtime, inject repo context and skills, track the session, review overlap risk, and recycle the workspace safely.
+It sits between "run an AI coding agent" and "manually manage Git worktrees." Instead of treating the problem as chat orchestration alone, Awo Console treats the workspace itself as the unit of control: acquire a safe slot, attach the right runtime, inject repo context and skills, track the session, review overlap risk, and recycle the workspace safely.
 
-`awo` is currently a pre-1.0 Rust workspace with three binaries:
+The project currently ships from a pre-1.0 Rust workspace with three binaries:
 
 - `awo`: the main CLI and TUI
 - `awod`: a background daemon for headless JSON-RPC brokerage
@@ -19,11 +19,11 @@ Parallel AI coding usually breaks in one of four places:
 - every AI runtime has different launch behavior and constraints
 - context, standards, and prior decisions drift across sessions
 
-`awo` is meant to be the operational layer that fixes those problems.
+Awo Console is meant to be the operational layer that fixes those problems.
 
 ## The Core Concept
 
-`awo` is built around a few durable concepts:
+Awo Console is built around a few durable concepts:
 
 - Repository: a registered Git repo plus local metadata and settings
 - Slot: an isolated worktree workspace, either fresh or warm
@@ -33,7 +33,23 @@ Parallel AI coding usually breaks in one of four places:
 - Team manifest: a durable record of members, tasks, ownership, and verification
 - Review state: warnings about dirty slots, overlap risk, blocked cleanup, and failed work
 
-The important design choice is that `awo` does not make the UI the source of truth. All mutations flow through the orchestration core.
+The important design choice is that Awo Console does not make the UI the source of truth. All mutations flow through the orchestration core.
+
+## How Slots, Sessions, and Teams Fit Together
+
+Think of it like renting desks in a coworking space.
+
+A **slot** is the desk — an isolated git worktree with its own branch and working copy. Each agent gets its own slot, so no two agents can overwrite each other's files. Acquiring a slot creates the worktree; releasing it removes it from disk.
+
+A **session** is the person sitting at the desk — a running AI process (Claude, Codex, Gemini, or a plain shell) attached to a specific slot. The session gets the slot's worktree as its working directory, plus injected context docs and repo skills. Starting a session launches the process; cancelling it kills it.
+
+A **team** is the project coordinator above individual desks. A team has members (named agents with roles and permissions) and tasks (units of work with owners, dependencies, and deliverables). When you start a team task, Awo Console automatically acquires a slot and starts a session for the task owner, so you don't have to manage the plumbing yourself.
+
+The layering is: **repo → slot → session**, with teams as an optional orchestration layer on top.
+
+Without teams (solo workflow): register a repo, acquire a slot, start a session, review the work, release the slot.
+
+With teams: define a team with members and tasks, then let Awo Console handle slot acquisition and session launching as tasks become ready.
 
 ## How It Works
 
@@ -70,7 +86,7 @@ This keeps the local contract predictable and scriptable without giving up inter
 
 ## CLI Vs TUI
 
-`awo` is TUI-first, but not TUI-only. The CLI and TUI serve different jobs.
+Awo Console is TUI-first, but not TUI-only. The CLI and TUI serve different jobs.
 
 | Surface | Best for | Pros | Cons |
 | --- | --- | --- | --- |
@@ -84,13 +100,13 @@ In practice:
 
 ## Why MCP
 
-MCP matters when `awo` needs to be consumed by another agent system instead of directly by a human.
+MCP matters when Awo Console needs to be consumed by another agent system instead of directly by a human.
 
 Reasons to use MCP:
 
 - it gives external LLM clients a standard tool protocol instead of a bespoke shell contract
 - tool and resource discovery are built in
-- it lets `awo` appear as one orchestration backend even if it is managing many slots and sessions internally
+- it lets Awo Console appear as one orchestration backend even if it is managing many slots and sessions internally
 - it is the cleanest path toward the future "virtual coding agent" middleware shape
 
 Reasons not to reach for MCP first:
@@ -133,7 +149,7 @@ Current MCP resources include:
 - `awo://review`
 - `awo://teams`
 
-This is most useful when you want a model client to ask `awo` for safe workspaces and orchestration operations without teaching that client the full CLI surface.
+This is most useful when you want a model client to ask Awo Console for safe workspaces and orchestration operations without teaching that client the full CLI surface.
 
 Minimal manual smoke test:
 
@@ -165,7 +181,7 @@ cargo run --bin awo
 
 ## Configuration And Storage
 
-By default, `awo` uses platform-specific config and data directories via the Rust `directories` crate.
+By default, Awo Console uses platform-specific config and data directories via the Rust `directories` crate.
 
 You can override them with:
 
@@ -298,7 +314,7 @@ The TUI is intentionally operational rather than decorative.
 - `pty`: launch in a detached supervised terminal session
 - `oneshot`: run directly and wait for completion in the calling process
 
-The default depends on the environment. On Unix-like systems, `awo` prefers PTY-backed supervision when available. On platforms where PTY support is incomplete, it falls back to `oneshot`.
+The default depends on the environment. On Unix-like systems, Awo Console prefers PTY-backed supervision when available. On platforms where PTY support is incomplete, it falls back to `oneshot`.
 
 ## Daemon Mode
 
@@ -310,7 +326,7 @@ The daemon is useful when you want:
 - headless orchestration from other tools
 - a stable RPC surface around the same command model
 
-## What `awo` Is Good At Today
+## What Awo Console Is Good At Today
 
 - safe slot acquisition and release for local Git repos
 - runtime-aware session launching for Codex, Claude, Gemini, and shell
@@ -322,7 +338,7 @@ The daemon is useful when you want:
 
 ## Current Limitations
 
-`awo` is promising, but still early.
+Awo Console is promising, but still early.
 
 Known gaps and active areas:
 
@@ -363,11 +379,11 @@ cargo test
 
 ## License
 
-`awo` is available under the terms of the [`MIT License`](LICENSE).
+Awo Console is available under the terms of the [`MIT License`](LICENSE).
 
 ## Philosophy
 
-`awo` is not trying to be "yet another chat shell."
+Awo Console is not trying to be "yet another chat shell."
 
 The real bet is that safe parallel AI coding needs a workspace control plane:
 

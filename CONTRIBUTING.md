@@ -1,6 +1,8 @@
 # Contributing
 
-Thanks for helping improve `awo`.
+Thanks for helping improve Awo Console.
+
+The public product name is `Awo Console`. Internal code, crate, and binary names such as `awo`, `awod`, and `awo-core` remain current technical identifiers.
 
 ## Before You Start
 

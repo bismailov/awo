@@ -1,37 +1,26 @@
 # Naming Direction
 
-## Current State
+## Decision
 
-`awo` is a good internal codename because it is descriptive:
+The project will use `Awo Console` as the public product name.
+
+## Internal Naming
+
+`awo` remains a good internal codename because it is descriptive:
 
 - Agent
 - Workspace
 - Orchestrator
 
-It works well for the crate and binary during the build-out phase.
-
-## External Product Name Recommendation
-
-## Switchyard
-
-Why it fits:
-
-- it evokes routing and dispatch rather than chat UI
-- it has a natural connection to branches, tracks, and parallel flows
-- it suggests hidden infrastructure that makes complex movement safe
-- it still fits the future middleware vision, where one facade agent quietly routes work across several model backends
+It still works well for the repository, crate, and binary names during the build-out phase.
 
 ## Positioning
 
-- `awo`: internal codename and binary for now
-- `Switchyard`: recommended external product name
-
-## Alternative Names Worth Keeping In Reserve
-
-- Dispatch
-- Truss
-- Yardmaster
+- `Awo Console`: public product name
+- `awo`: CLI and internal codename
+- `awod`: daemon binary
+- `awo-mcp`: MCP server binary
 
 ## Recommendation
 
-Keep the code and CLI as `awo` for now. Start using “Switchyard” in product-thinking and middleware-facing materials so the naming transition stays low-risk.
+Use `Awo Console` in public-facing documentation, release notes, and product discussions. Keep the existing technical identifiers until there is a strong reason to rename crates or binaries.

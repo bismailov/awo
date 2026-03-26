@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-`awo` is still pre-1.0. Security fixes should be assumed to target the latest state of the `main` branch unless a maintainer states otherwise.
+Awo Console is still pre-1.0. Security fixes should be assumed to target the latest state of the `main` branch unless a maintainer states otherwise.
 
 ## Reporting A Vulnerability
 

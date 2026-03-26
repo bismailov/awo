@@ -1,6 +1,8 @@
-# awo
+# Awo Console
 
-TUI-first agent workspace orchestrator for safe parallel AI work on local Git repos.
+Awo Console is a TUI-first agent workspace orchestrator for safe parallel AI work on local Git repos.
+
+Internal codename and binary names remain `awo`, `awod`, and `awo-mcp`.
 
 Rust workspace: `awo-core` (orchestration logic) and `awo-app` (CLI/TUI shell).
 
