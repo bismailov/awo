@@ -6,7 +6,7 @@ The public product name is `Awo Console`. Internal code, crate, and binary names
 
 ## Before You Start
 
-- Read [`CLAUDE.md`](CLAUDE.md) first for project context and architectural rules.
+- Read [`project.md`](project.md) first for project context and architectural rules.
 - Skim [`planning/2026-03-22-development-plan.md`](planning/2026-03-22-development-plan.md) for current priorities.
 - Prefer small, bounded changes over broad rewrites.
 - If you are exploring or proposing a change, open an issue or discussion first when the direction is unclear.
@@ -75,7 +75,7 @@ If a change affects operator workflows, include the exact commands or screens th
 If you change public behavior, update the relevant docs:
 
 - [`README.md`](README.md) for user-facing setup and usage
-- [`CLAUDE.md`](CLAUDE.md) for contributor onboarding and key project rules
+- [`project.md`](project.md) for contributor onboarding and key project rules
 - [`docs/`](docs) for durable design and architecture decisions
 
 ## Questions And Proposals

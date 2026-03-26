@@ -56,7 +56,7 @@ With teams: define a team with members and tasks, then let Awo Console handle sl
 Typical flow:
 
 1. Register or clone a repository.
-2. Discover context from files like `AGENTS.md`, `CLAUDE.md`, `docs/`, `analysis/`, and optional MCP config.
+2. Discover context from files like `project.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`, `analysis/`, and optional MCP config.
 3. Discover shared repo skills from locations such as `.agents/skills/`.
 4. Acquire a worktree slot for a task.
 5. Start a runtime session in that slot.
@@ -357,7 +357,12 @@ Known gaps and active areas:
 
 ## Development
 
-Project onboarding starts with [`CLAUDE.md`](CLAUDE.md).
+Project onboarding starts with [`project.md`](project.md).
+
+Compatibility handles:
+
+- [`AGENTS.md`](AGENTS.md)
+- [`CLAUDE.md`](CLAUDE.md)
 
 Useful follow-up docs:
 

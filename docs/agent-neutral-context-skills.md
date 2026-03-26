@@ -19,12 +19,12 @@ Use a repo-level agent entry point as the predictable starting file.
 
 Recommended shape:
 - `AGENTS.md` as the ecosystem-facing entry point
-- `PROJECT.md` as the detailed project brain when the repo already uses that pattern
+- `project.md` as the detailed project brain
 - thin vendor wrappers only where a client requires them, such as `CLAUDE.md` or `GEMINI.md`
 
 Practical recommendation for repos that already centralize project instructions:
-- keep `PROJECT.md` as the long-form project brain
-- keep `AGENTS.md` thin and explicit: "read `PROJECT.md` first"
+- keep `project.md` as the long-form project brain
+- keep `AGENTS.md` thin and explicit: "read `project.md` first"
 - keep `CLAUDE.md` and `GEMINI.md` as thin compatibility files when needed
 
 ## 2. Portable Skills
@@ -50,7 +50,7 @@ Recommended shared path:
 Treat durable analysis and architecture material as a discoverable library, not as always-on prompt text.
 
 Recommended classes:
-- repo brain: `PROJECT.md`, `AGENTS.md`, `README.md`
+- repo brain: `project.md`, `AGENTS.md`, `README.md`
 - standards: design system, coding guides, testing guides
 - domain docs: architecture, deployment, product docs
 - analysis library: audits, remediation reports, refactor proposals, investigation notes
@@ -63,7 +63,7 @@ This matters because `analysis/` is often valuable but too heavy to preload blin
 ### Discovery
 `awo` should discover:
 - `AGENTS.md`
-- `PROJECT.md`
+- `project.md`
 - `CLAUDE.md`
 - `GEMINI.md`
 - `.agents/skills/*/SKILL.md`
@@ -101,7 +101,7 @@ Ask:
 "Which content belongs in which neutral layer?"
 
 The durable answer is:
-- instructions and repo rules -> `AGENTS.md` and `PROJECT.md`
+- instructions and repo rules -> `AGENTS.md` and `project.md`
 - reusable workflows -> `.agents/skills/`
 - live tools and data -> `.mcp.json` and MCP servers
 - historical analysis and audits -> discoverable context packs
@@ -109,7 +109,7 @@ The durable answer is:
 ## Proposed `awo` Features
 
 ### V1.5
-- detect `AGENTS.md`, `PROJECT.md`, `CLAUDE.md`, `GEMINI.md`
+- detect `AGENTS.md`, `project.md` or `PROJECT.md`, `CLAUDE.md`, `GEMINI.md`
 - detect `.agents/skills/` and show a skill catalog
 - detect `.mcp.json`
 - let the user choose a context pack before launch
@@ -128,7 +128,7 @@ The durable answer is:
 
 ## Example Repo Fit
 A well-structured multi-agent repo already follows this strategy well:
-- `PROJECT.md` is the real project brain
+- `project.md` is the real project brain
 - `AGENTS.md` and `CLAUDE.md` are thin wrappers
 - `.agents/skills/` contains portable skill content
 - `skills-lock.json` records provenance and hashes

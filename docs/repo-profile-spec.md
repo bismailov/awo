@@ -76,9 +76,9 @@ Multiple fingerprint groups should be allowed so polyglot repos can track more t
 ### Context Pack
 ```toml
 [context]
-entrypoints = ["AGENTS.md", "PROJECT.md", "CLAUDE.md", "GEMINI.md"]
+entrypoints = ["AGENTS.md", "project.md", "CLAUDE.md", "GEMINI.md"]
 required_files = [
-  "PROJECT.md",
+  "project.md",
   "CONVENTIONS.md"
 ]
 optional_files = [

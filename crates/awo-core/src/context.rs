@@ -108,11 +108,16 @@ pub fn doctor_repo_context(context: &RepoContext) -> ContextDoctorReport {
         .iter()
         .map(|file| file.label.as_str())
         .collect::<BTreeSet<_>>();
+    let has_entrypoint = |expected: &str| {
+        entrypoint_names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(expected))
+    };
 
     if context.entrypoints.is_empty() {
         diagnostics.push(Diagnostic::error(
             "context.entrypoints.missing",
-            "No repo entrypoint files were detected. Add `AGENTS.md` or `PROJECT.md` at the repo root.",
+            "No repo entrypoint files were detected. Add `AGENTS.md` or `project.md` at the repo root.",
         ));
     } else {
         diagnostics.push(Diagnostic::info(
@@ -124,19 +129,18 @@ pub fn doctor_repo_context(context: &RepoContext) -> ContextDoctorReport {
         ));
     }
 
-    if entrypoint_names.contains("PROJECT.md") && !entrypoint_names.contains("AGENTS.md") {
+    if has_entrypoint("project.md") && !has_entrypoint("AGENTS.md") {
         diagnostics.push(Diagnostic::warning(
             "context.agents-wrapper.missing",
-            "Detected `PROJECT.md` without `AGENTS.md`. A thin `AGENTS.md` wrapper improves cross-agent compatibility.",
+            "Detected `project.md` without `AGENTS.md`. A thin `AGENTS.md` wrapper improves cross-agent compatibility.",
         ));
     }
 
-    if (entrypoint_names.contains("CLAUDE.md") || entrypoint_names.contains("GEMINI.md"))
-        && !entrypoint_names.contains("PROJECT.md")
+    if (has_entrypoint("CLAUDE.md") || has_entrypoint("GEMINI.md")) && !has_entrypoint("project.md")
     {
         diagnostics.push(Diagnostic::warning(
             "context.neutral-brain.missing",
-            "Vendor-specific wrappers were detected without `PROJECT.md`. Consider adding a neutral project-brain file.",
+            "Vendor-specific wrappers were detected without `project.md`. Consider adding a neutral project-brain file.",
         ));
     }
 
@@ -268,16 +272,33 @@ pub fn render_session_context_prompt(
 }
 
 fn discover_entrypoints(repo_root: &Path) -> Vec<ContextFile> {
+    let Ok(entries) = fs::read_dir(repo_root) else {
+        return Vec::new();
+    };
+    let available = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|file_type| file_type.is_file())?;
+            Some((
+                entry.file_name().to_string_lossy().to_string(),
+                entry.path(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+
     [
         "AGENTS.md",
+        "project.md",
         "PROJECT.md",
         "CLAUDE.md",
         "GEMINI.md",
         "README.md",
     ]
     .into_iter()
-    .map(|name| repo_root.join(name))
-    .filter(|path| path.exists())
+    .filter_map(|name| available.get(name).cloned())
     .map(|path| to_context_file(path, "entrypoint"))
     .collect()
 }
@@ -430,8 +451,8 @@ mod tests {
         let repo = tempfile::tempdir()?;
         fs::create_dir_all(repo.path().join("docs"))?;
         fs::create_dir_all(repo.path().join("analysis"))?;
-        fs::write(repo.path().join("PROJECT.md"), "# Project\n")?;
-        fs::write(repo.path().join("AGENTS.md"), "Read PROJECT.md\n")?;
+        fs::write(repo.path().join("project.md"), "# Project\n")?;
+        fs::write(repo.path().join("AGENTS.md"), "Read project.md\n")?;
         fs::write(repo.path().join("docs/agentic-coding.md"), "# Guide\n")?;
         fs::write(repo.path().join("analysis/code_audit.md"), "# Audit\n")?;
         fs::write(
@@ -453,7 +474,7 @@ mod tests {
     #[test]
     fn doctor_warns_when_agents_wrapper_is_missing() -> Result<()> {
         let repo = tempfile::tempdir()?;
-        fs::write(repo.path().join("PROJECT.md"), "# Project\n")?;
+        fs::write(repo.path().join("project.md"), "# Project\n")?;
 
         let context = discover_repo_context(repo.path())?;
         let report = doctor_repo_context(&context);
@@ -463,6 +484,18 @@ mod tests {
                 .iter()
                 .any(|diag| diag.code == "context.agents-wrapper.missing")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn discovers_uppercase_project_md_for_compatibility() -> Result<()> {
+        let repo = tempfile::tempdir()?;
+        fs::write(repo.path().join("PROJECT.md"), "# Project\n")?;
+
+        let context = discover_repo_context(repo.path())?;
+        assert_eq!(context.entrypoints.len(), 1);
+        assert_eq!(context.entrypoints[0].label, "PROJECT.md");
 
         Ok(())
     }

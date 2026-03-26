@@ -90,13 +90,13 @@ A runtime instance attached to a slot, including:
 
 ### Context Pack
 The durable project memory and standards shared with every session. At minimum:
-- `PROJECT.md`
+- `project.md`
 - `CONVENTIONS.md`
 - task-specific brief
 
 ### Context Library
 A discoverable set of repo knowledge sources, grouped by type:
-- entrypoint files such as `AGENTS.md`, `PROJECT.md`, `CLAUDE.md`, `GEMINI.md`
+- entrypoint files such as `AGENTS.md`, `project.md`, `CLAUDE.md`, `GEMINI.md`
 - standards docs
 - architecture and deployment docs
 - optional analysis reports and remediation history
