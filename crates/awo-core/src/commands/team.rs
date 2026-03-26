@@ -1,9 +1,7 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
-use crate::team::{
-    TaskCard, TeamExecutionMode, TeamManifestGuard, TeamMember, TeamTaskStartOptions,
-};
+use crate::team::{TaskCard, TeamManifestGuard, TeamMember, TeamTaskStartOptions};
 
 impl CommandRunner<'_> {
     pub(super) fn run_team_list(&self, repo_id: Option<String>) -> AwoResult<CommandOutcome> {
@@ -24,32 +22,36 @@ impl CommandRunner<'_> {
                 .collect::<Vec<_>>()
         };
 
-        Ok(CommandOutcome {
-            summary: format!("Found {} team manifest(s).", manifests.len()),
-            events: vec![DomainEvent::TeamListLoaded {
-                repo_id,
-                count: manifests.len(),
-            }],
-        })
+        Ok(CommandOutcome::with_data(
+            format!("Found {} team manifest(s).", manifests.len()),
+            serde_json::to_value(&manifests).unwrap_or(serde_json::Value::Null),
+        ))
     }
 
     pub(super) fn run_team_show(&self, team_id: String) -> AwoResult<CommandOutcome> {
-        let _manifest = crate::team::load_team_manifest(&crate::team::default_team_manifest_path(
+        let manifest = crate::team::load_team_manifest(&crate::team::default_team_manifest_path(
             &self.config.paths,
             &team_id,
         ))?;
 
-        Ok(CommandOutcome {
-            summary: format!("Loaded team `{}`.", team_id),
-            events: vec![DomainEvent::TeamLoaded { team_id }],
-        })
+        Ok(CommandOutcome::with_data(
+            format!("Loaded team `{}`.", team_id),
+            serde_json::to_value(&manifest).unwrap_or(serde_json::Value::Null),
+        ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_team_init(
         &self,
         team_id: String,
         repo_id: String,
         objective: String,
+        lead_runtime: Option<String>,
+        lead_model: Option<String>,
+        execution_mode: String,
+        fallback_runtime: Option<String>,
+        fallback_model: Option<String>,
+        routing_preferences: Option<crate::routing::RoutingPreferences>,
         force: bool,
     ) -> AwoResult<CommandOutcome> {
         let _repo = self
@@ -65,22 +67,41 @@ impl CommandRunner<'_> {
             )));
         }
 
-        let manifest = crate::team::starter_team_manifest(
+        let execution_mode = execution_mode
+            .parse::<crate::team::TeamExecutionMode>()
+            .map_err(|e| AwoError::validation(format!("invalid execution mode: {e}")))?;
+
+        if let Some(ref r) = lead_runtime {
+            r.parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("lead runtime", r))?;
+        }
+        if let Some(ref r) = fallback_runtime {
+            r.parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("fallback runtime", r))?;
+        }
+
+        let mut manifest = crate::team::starter_team_manifest(
             &repo_id,
             &team_id,
             &objective,
-            None,
-            None,
-            TeamExecutionMode::ExternalSlots,
-            None,
-            None,
+            lead_runtime.as_deref(),
+            lead_model.as_deref(),
+            execution_mode,
+            fallback_runtime.as_deref(),
+            fallback_model.as_deref(),
         );
+        manifest.routing_preferences = routing_preferences;
+
         crate::team::save_team_manifest(&self.config.paths, &manifest)?;
 
-        Ok(CommandOutcome {
-            summary: format!("Initialized team `{}` for repo `{}`.", team_id, repo_id),
-            events: vec![DomainEvent::TeamCreated { team_id, repo_id }],
-        })
+        Ok(CommandOutcome::with_all(
+            format!("Initialized team `{}` at {}.", team_id, path.display()),
+            vec![DomainEvent::TeamCreated { team_id, repo_id }],
+            serde_json::json!({
+                "manifest": manifest,
+                "manifest_path": path.display().to_string(),
+            }),
+        ))
     }
 
     pub(super) fn run_team_member_add(
@@ -88,15 +109,25 @@ impl CommandRunner<'_> {
         team_id: String,
         member: TeamMember,
     ) -> AwoResult<CommandOutcome> {
+        if let Some(ref r) = member.runtime {
+            r.parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("runtime", r))?;
+        }
+        if let Some(ref r) = member.fallback_runtime {
+            r.parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("fallback runtime", r))?;
+        }
+
         let member_id = member.member_id.clone();
         let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
         guard.manifest_mut().add_member(member)?;
         guard.save()?;
 
-        Ok(CommandOutcome {
-            summary: format!("Added member `{}` to team `{}`.", member_id, team_id),
-            events: vec![DomainEvent::TeamMemberAdded { team_id, member_id }],
-        })
+        Ok(CommandOutcome::with_all(
+            format!("Added member `{}` to team `{}`.", member_id, team_id),
+            vec![DomainEvent::TeamMemberAdded { team_id, member_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
     }
 
     pub(super) fn run_team_task_add(
@@ -109,10 +140,11 @@ impl CommandRunner<'_> {
         guard.manifest_mut().add_task(task)?;
         guard.save()?;
 
-        Ok(CommandOutcome {
-            summary: format!("Added task `{}` to team `{}`.", task_id, team_id),
-            events: vec![DomainEvent::TeamTaskAdded { team_id, task_id }],
-        })
+        Ok(CommandOutcome::with_all(
+            format!("Added task `{}` to team `{}`.", task_id, team_id),
+            vec![DomainEvent::TeamTaskAdded { team_id, task_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
     }
 
     pub(super) fn run_team_task_start(
@@ -122,6 +154,16 @@ impl CommandRunner<'_> {
         Err(AwoError::unsupported(
             "team.task.start",
             "use AppCore::start_team_task directly for now",
+        ))
+    }
+
+    pub(super) fn run_team_task_delegate(
+        &self,
+        _options: crate::team::TeamTaskDelegateOptions,
+    ) -> AwoResult<CommandOutcome> {
+        Err(AwoError::unsupported(
+            "team.task.delegate",
+            "use AppCore::delegate_team_task directly for now",
         ))
     }
 
@@ -135,14 +177,14 @@ impl CommandRunner<'_> {
         guard.manifest_mut().reset();
         guard.save()?;
 
-        Ok(CommandOutcome {
-            summary: format!("Reset team `{}` to planning state.", team_id),
-            events: vec![DomainEvent::TeamReset {
+        Ok(CommandOutcome::with_events(
+            format!("Reset team `{}` to planning state.", team_id),
+            vec![DomainEvent::TeamReset {
                 team_id,
                 tasks_reset: summary.non_todo_tasks.len(),
                 slots_unbound: summary.bound_members.len(),
             }],
-        })
+        ))
     }
 
     pub(super) fn run_team_report(&self, team_id: String) -> AwoResult<CommandOutcome> {
@@ -184,17 +226,17 @@ impl CommandRunner<'_> {
         std::fs::write(&report_path, report)
             .map_err(|e| AwoError::io("write team report", &report_path, e))?;
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Generated report for team `{}` at `{}`.",
                 team_id,
                 report_path.display()
             ),
-            events: vec![DomainEvent::TeamReportGenerated {
+            vec![DomainEvent::TeamReportGenerated {
                 team_id,
                 report_path: report_path.display().to_string(),
             }],
-        })
+        ))
     }
 
     pub(super) fn run_team_archive(
@@ -206,10 +248,10 @@ impl CommandRunner<'_> {
         guard.manifest_mut().archive()?;
         guard.save()?;
 
-        Ok(CommandOutcome {
-            summary: format!("Archived team `{}`.", team_id),
-            events: vec![DomainEvent::TeamArchived { team_id }],
-        })
+        Ok(CommandOutcome::with_events(
+            format!("Archived team `{}`.", team_id),
+            vec![DomainEvent::TeamArchived { team_id }],
+        ))
     }
 
     pub(super) fn run_team_teardown(
@@ -230,9 +272,9 @@ impl CommandRunner<'_> {
                 .map_err(|e| AwoError::io("delete team manifest", &path, e))?;
         }
 
-        Ok(CommandOutcome {
-            summary: format!("Deleted team `{}` manifest.", team_id),
-            events: vec![DomainEvent::TeamDeleted { team_id }],
-        })
+        Ok(CommandOutcome::with_events(
+            format!("Deleted team `{}` manifest.", team_id),
+            vec![DomainEvent::TeamDeleted { team_id }],
+        ))
     }
 }

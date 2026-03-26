@@ -35,6 +35,11 @@ impl AppConfig {
         } else {
             project_dirs.data_dir().to_path_buf()
         };
+
+        Self::with_dirs(config_dir, data_dir)
+    }
+
+    pub fn with_dirs(config_dir: PathBuf, data_dir: PathBuf) -> AwoResult<Self> {
         let logs_dir = data_dir.join("logs");
         let clones_dir = data_dir.join("clones");
         let repos_dir = config_dir.join("repos");

@@ -269,6 +269,21 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "remove_repo".to_string(),
+            description: "Remove a registered repository. Fails if active slots still reference it."
+                .to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "repo_id": {
+                        "type": "string",
+                        "description": "The repository identifier to remove."
+                    }
+                },
+                "required": ["repo_id"],
+            }),
+        },
+        ToolDefinition {
             name: "acquire_slot".to_string(),
             description: "Acquire a Git worktree slot for isolated work on a repository."
                 .to_string(),
@@ -639,6 +654,42 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "delegate_team_task".to_string(),
+            description: "Delegate a task to a specific team member with lead notes and focus files.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "team_id": {
+                        "type": "string",
+                        "description": "The team identifier."
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The task identifier."
+                    },
+                    "target_member_id": {
+                        "type": "string",
+                        "description": "The member_id being delegated to."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Lead notes to prepend to the task prompt."
+                    },
+                    "focus_files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Files the worker should focus on."
+                    },
+                    "auto_start": {
+                        "type": "boolean",
+                        "description": "Whether to auto-start the task session.",
+                        "default": true
+                    }
+                },
+                "required": ["team_id", "task_id", "target_member_id"],
+            }),
+        },
+        ToolDefinition {
             name: "poll_events".to_string(),
             description: "Poll the event bus for new domain events. Returns events newer than since_seq. Use head_seq from the response as since_seq for the next poll.".to_string(),
             input_schema: serde_json::json!({
@@ -709,6 +760,10 @@ fn map_tool_to_command(
 ) -> Result<awo_core::Command, String> {
     match tool_name {
         "list_repos" => Ok(awo_core::Command::RepoList),
+        "remove_repo" => {
+            let repo_id = require_string(args, "repo_id")?;
+            Ok(awo_core::Command::RepoRemove { repo_id })
+        }
         "acquire_slot" => {
             let repo_id = require_string(args, "repo_id")?;
             let task_name = require_string(args, "task_name")?;
@@ -806,6 +861,12 @@ fn map_tool_to_command(
                 team_id,
                 repo_id,
                 objective,
+                lead_runtime: None,
+                lead_model: None,
+                execution_mode: "external_slots".to_string(),
+                fallback_runtime: None,
+                fallback_model: None,
+                routing_preferences: None,
                 force,
             })
         }
@@ -882,6 +943,35 @@ fn map_tool_to_command(
             let team_id = require_string(args, "team_id")?;
             Ok(awo_core::Command::TeamDelete { team_id })
         }
+        "delegate_team_task" => {
+            let team_id = require_string(args, "team_id")?;
+            let task_id = require_string(args, "task_id")?;
+            let target_member_id = require_string(args, "target_member_id")?;
+            let lead_notes = optional_string(args, "notes");
+            let focus_files = optional_string_array(args, "focus_files");
+            let auto_start = args
+                .get("auto_start")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            Ok(awo_core::Command::TeamTaskDelegate {
+                options: awo_core::TeamTaskDelegateOptions {
+                    team_id,
+                    task_id,
+                    delegation: awo_core::DelegationContext {
+                        target_member_id,
+                        lead_notes,
+                        focus_files,
+                        auto_start,
+                    },
+                    strategy: "fresh".to_string(),
+                    dry_run: false,
+                    launch_mode: awo_core::SessionLaunchMode::default_for_environment()
+                        .as_str()
+                        .to_string(),
+                    attach_context: true,
+                },
+            })
+        }
         "poll_events" => {
             let since_seq = args.get("since_seq").and_then(|v| v.as_u64());
             let limit = args
@@ -932,10 +1022,10 @@ mod tests {
     struct EchoDispatcher;
     impl Dispatcher for EchoDispatcher {
         fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
-            Ok(CommandOutcome {
-                summary: format!("executed: {}", command.method_name()),
-                events: vec![],
-            })
+            Ok(CommandOutcome::new(format!(
+                "executed: {}",
+                command.method_name()
+            )))
         }
     }
 
@@ -1033,6 +1123,30 @@ mod tests {
         assert!(names.contains(&"team_report"));
         assert!(names.contains(&"team_archive"));
         assert!(names.contains(&"team_delete"));
+        assert!(names.contains(&"delegate_team_task"));
+    }
+
+    #[test]
+    fn map_tool_delegate_team_task_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "delegate_team_task",
+                "arguments": {
+                    "team_id": "alpha",
+                    "task_id": "task-1",
+                    "target_member_id": "agent-1",
+                    "notes": "Lead notes",
+                    "focus_files": ["src/main.rs"],
+                    "auto_start": true
+                }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: team.task.delegate"));
     }
 
     #[test]

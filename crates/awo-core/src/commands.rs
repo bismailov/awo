@@ -5,7 +5,7 @@ use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::{SlotStatus, SlotStrategy};
 use crate::store::Store;
-use crate::team::{TaskCard, TeamMember, TeamTaskStartOptions};
+use crate::team::{TaskCard, TeamMember, TeamTaskDelegateOptions, TeamTaskStartOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -55,6 +55,8 @@ pub enum Command {
         remote_url: String,
         destination: Option<PathBuf>,
     },
+    #[serde(rename = "repo.remove")]
+    RepoRemove { repo_id: String },
     #[serde(rename = "repo.fetch")]
     RepoFetch { repo_id: String },
     #[serde(rename = "repo.list")]
@@ -128,6 +130,12 @@ pub enum Command {
         team_id: String,
         repo_id: String,
         objective: String,
+        lead_runtime: Option<String>,
+        lead_model: Option<String>,
+        execution_mode: String,
+        fallback_runtime: Option<String>,
+        fallback_model: Option<String>,
+        routing_preferences: Option<crate::routing::RoutingPreferences>,
         force: bool,
     },
     #[serde(rename = "team.member.add")]
@@ -136,6 +144,8 @@ pub enum Command {
     TeamTaskAdd { team_id: String, task: TaskCard },
     #[serde(rename = "team.task.start")]
     TeamTaskStart { options: TeamTaskStartOptions },
+    #[serde(rename = "team.task.delegate")]
+    TeamTaskDelegate { options: TeamTaskDelegateOptions },
     #[serde(rename = "team.reset")]
     TeamReset { team_id: String, force: bool },
     #[serde(rename = "team.report")]
@@ -160,6 +170,7 @@ impl Command {
             Self::NoOp { .. } => "noop",
             Self::RepoAdd { .. } => "repo.add",
             Self::RepoClone { .. } => "repo.clone",
+            Self::RepoRemove { .. } => "repo.remove",
             Self::RepoFetch { .. } => "repo.fetch",
             Self::RepoList => "repo.list",
             Self::ContextPack { .. } => "context.pack",
@@ -184,6 +195,7 @@ impl Command {
             Self::TeamMemberAdd { .. } => "team.member.add",
             Self::TeamTaskAdd { .. } => "team.task.add",
             Self::TeamTaskStart { .. } => "team.task.start",
+            Self::TeamTaskDelegate { .. } => "team.task.delegate",
             Self::TeamReset { .. } => "team.reset",
             Self::TeamReport { .. } => "team.report",
             Self::TeamArchive { .. } => "team.archive",
@@ -213,6 +225,45 @@ impl Command {
 pub struct CommandOutcome {
     pub summary: String,
     pub events: Vec<DomainEvent>,
+    pub data: Option<serde_json::Value>,
+}
+
+impl CommandOutcome {
+    pub fn new(summary: impl Into<String>) -> Self {
+        Self {
+            summary: summary.into(),
+            events: vec![],
+            data: None,
+        }
+    }
+
+    pub fn with_events(summary: impl Into<String>, events: Vec<DomainEvent>) -> Self {
+        Self {
+            summary: summary.into(),
+            events,
+            data: None,
+        }
+    }
+
+    pub fn with_data(summary: impl Into<String>, data: serde_json::Value) -> Self {
+        Self {
+            summary: summary.into(),
+            events: vec![],
+            data: Some(data),
+        }
+    }
+
+    pub fn with_all(
+        summary: impl Into<String>,
+        events: Vec<DomainEvent>,
+        data: serde_json::Value,
+    ) -> Self {
+        Self {
+            summary: summary.into(),
+            events,
+            data: Some(data),
+        }
+    }
 }
 
 pub struct CommandRunner<'a> {
@@ -310,6 +361,7 @@ impl<'a> CommandRunner<'a> {
                 remote_url,
                 destination,
             } => self.run_repo_clone(remote_url, destination),
+            Command::RepoRemove { repo_id } => self.run_repo_remove(repo_id),
             Command::RepoFetch { repo_id } => self.run_repo_fetch(repo_id),
             Command::RepoList => self.run_repo_list(),
             Command::ContextPack { repo_id } => self.run_context_pack(repo_id),
@@ -368,11 +420,29 @@ impl<'a> CommandRunner<'a> {
                 team_id,
                 repo_id,
                 objective,
+                lead_runtime,
+                lead_model,
+                execution_mode,
+                fallback_runtime,
+                fallback_model,
+                routing_preferences,
                 force,
-            } => self.run_team_init(team_id, repo_id, objective, force),
+            } => self.run_team_init(
+                team_id,
+                repo_id,
+                objective,
+                lead_runtime,
+                lead_model,
+                execution_mode,
+                fallback_runtime,
+                fallback_model,
+                routing_preferences,
+                force,
+            ),
             Command::TeamMemberAdd { team_id, member } => self.run_team_member_add(team_id, member),
             Command::TeamTaskAdd { team_id, task } => self.run_team_task_add(team_id, task),
             Command::TeamTaskStart { options } => self.run_team_task_start(options),
+            Command::TeamTaskDelegate { options } => self.run_team_task_delegate(options),
             Command::TeamReset { team_id, force } => self.run_team_reset(team_id, force),
             Command::TeamReport { team_id } => self.run_team_report(team_id),
             Command::TeamArchive { team_id, force } => self.run_team_archive(team_id, force),
@@ -380,10 +450,9 @@ impl<'a> CommandRunner<'a> {
             Command::TeamDelete { team_id } => self.run_team_delete(team_id),
             Command::EventsPoll { .. } => {
                 // Handled at the AppCore level (requires EventBus access).
-                Ok(CommandOutcome {
-                    summary: "events.poll requires event bus context".to_string(),
-                    events: vec![],
-                })
+                Ok(CommandOutcome::new(
+                    "events.poll requires event bus context",
+                ))
             }
         }
     }
@@ -404,10 +473,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Executed no-op command for `{label}`."),
+        Ok(CommandOutcome::with_events(
+            format!("Executed no-op command for `{label}`."),
             events,
-        })
+        ))
     }
 }
 

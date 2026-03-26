@@ -90,12 +90,15 @@ pub fn reconcile_team_manifest_state(
         let slot_id = task.slot_id.clone().unwrap_or_default();
         let slot = store.get_slot(&slot_id)?;
         let sessions = store.list_sessions_for_slot(&slot_id)?;
-        let has_running_session = sessions.iter().any(|session| !session.is_terminal());
+        let has_active_session = sessions
+            .iter()
+            .any(|session| session.status == SessionStatus::Running);
+        let has_non_terminal_session = sessions.iter().any(|session| !session.is_terminal());
         let slot_missing_or_released = slot
             .as_ref()
             .is_none_or(|slot| slot.status == SlotStatus::Released);
 
-        if has_running_session {
+        if has_active_session {
             if task.state != TaskCardState::InProgress {
                 task.state = TaskCardState::InProgress;
                 changed = true;
@@ -164,7 +167,7 @@ pub fn reconcile_team_manifest_state(
             changed = true;
         }
 
-        if slot_missing_or_released && !has_running_session {
+        if slot_missing_or_released && !has_non_terminal_session {
             if task.slot_id.take().is_some() {
                 changed = true;
             }

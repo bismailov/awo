@@ -50,6 +50,8 @@ pub struct RpcResult {
     pub ok: bool,
     pub summary: String,
     pub events: Vec<crate::events::DomainEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// A JSON-RPC 2.0 error object.
@@ -108,6 +110,7 @@ impl RpcResponse {
                 ok: true,
                 summary: outcome.summary,
                 events: outcome.events,
+                data: outcome.data,
             }),
             error: None,
             id,
@@ -309,10 +312,8 @@ mod tests {
 
     #[test]
     fn rpc_response_success_shape() {
-        let outcome = CommandOutcome {
-            summary: "done".to_string(),
-            events: vec![],
-        };
+        let outcome = CommandOutcome::with_events("summary".to_string(), vec![]);
+
         let response = RpcResponse::success(outcome, Some(serde_json::json!(1)));
         assert!(response.result.is_some());
         assert!(response.error.is_none());
@@ -402,6 +403,202 @@ mod tests {
             error_code_for(&AwoError::supervisor("boom")),
             INTERNAL_ERROR
         );
+    }
+
+    #[test]
+    fn exhaustive_command_roundtrip_serialization() {
+        use crate::runtime::{RuntimeKind, SessionLaunchMode};
+        use crate::slot::SlotStrategy;
+        use crate::team::{
+            DelegationContext, TaskCard, TeamExecutionMode, TeamMember, TeamTaskDelegateOptions,
+            TeamTaskStartOptions,
+        };
+        use std::path::PathBuf;
+
+        let variants = vec![
+            Command::NoOp {
+                label: "test".to_string(),
+            },
+            Command::RepoAdd {
+                path: PathBuf::from("/tmp"),
+            },
+            Command::RepoClone {
+                remote_url: "url".to_string(),
+                destination: None,
+            },
+            Command::RepoRemove {
+                repo_id: "repo".to_string(),
+            },
+            Command::RepoFetch {
+                repo_id: "repo".to_string(),
+            },
+            Command::RepoList,
+            Command::ContextPack {
+                repo_id: "repo".to_string(),
+            },
+            Command::ContextDoctor {
+                repo_id: "repo".to_string(),
+            },
+            Command::SkillsList {
+                repo_id: "repo".to_string(),
+            },
+            Command::SkillsDoctor {
+                repo_id: "repo".to_string(),
+                runtime: None,
+            },
+            Command::SlotAcquire {
+                repo_id: "repo".to_string(),
+                task_name: "task".to_string(),
+                strategy: SlotStrategy::Fresh,
+            },
+            Command::SlotList { repo_id: None },
+            Command::SlotRelease {
+                slot_id: "slot".to_string(),
+            },
+            Command::SlotRefresh {
+                slot_id: "slot".to_string(),
+            },
+            Command::SessionStart {
+                slot_id: "slot".to_string(),
+                runtime: RuntimeKind::Shell,
+                prompt: "prompt".to_string(),
+                read_only: true,
+                dry_run: false,
+                launch_mode: SessionLaunchMode::Oneshot,
+                attach_context: true,
+                timeout_secs: Some(60),
+            },
+            Command::SessionList { repo_id: None },
+            Command::SessionCancel {
+                session_id: "sess".to_string(),
+            },
+            Command::SessionDelete {
+                session_id: "sess".to_string(),
+            },
+            Command::SessionLog {
+                session_id: "sess".to_string(),
+                lines: None,
+                stream: None,
+            },
+            Command::ReviewStatus { repo_id: None },
+            Command::TeamList { repo_id: None },
+            Command::TeamShow {
+                team_id: "team".to_string(),
+            },
+            Command::TeamInit {
+                team_id: "team".to_string(),
+                repo_id: "repo".to_string(),
+                objective: "obj".to_string(),
+                lead_runtime: None,
+                lead_model: None,
+                execution_mode: "external_slots".to_string(),
+                fallback_runtime: None,
+                fallback_model: None,
+                routing_preferences: None,
+                force: false,
+            },
+            Command::TeamMemberAdd {
+                team_id: "team".to_string(),
+                member: TeamMember {
+                    member_id: "m".to_string(),
+                    role: "r".to_string(),
+                    runtime: None,
+                    model: None,
+                    execution_mode: TeamExecutionMode::ExternalSlots,
+                    slot_id: None,
+                    branch_name: None,
+                    read_only: false,
+                    write_scope: vec![],
+                    context_packs: vec![],
+                    skills: vec![],
+                    notes: None,
+                    fallback_runtime: None,
+                    fallback_model: None,
+                    routing_preferences: None,
+                },
+            },
+            Command::TeamTaskAdd {
+                team_id: "team".to_string(),
+                task: TaskCard {
+                    task_id: "t".to_string(),
+                    title: "t".to_string(),
+                    summary: "s".to_string(),
+                    owner_id: "o".to_string(),
+                    runtime: None,
+                    slot_id: None,
+                    branch_name: None,
+                    read_only: false,
+                    write_scope: vec![],
+                    deliverable: "d".to_string(),
+                    verification: vec![],
+                    depends_on: vec![],
+                    state: crate::team::TaskCardState::Todo,
+                    verification_command: None,
+                    result_summary: None,
+                    output_log_path: None,
+                },
+            },
+            Command::TeamTaskStart {
+                options: TeamTaskStartOptions {
+                    team_id: "team".to_string(),
+                    task_id: "task".to_string(),
+                    strategy: "fresh".to_string(),
+                    dry_run: false,
+                    launch_mode: "oneshot".to_string(),
+                    attach_context: true,
+                    routing_preferences: None,
+                },
+            },
+            Command::TeamTaskDelegate {
+                options: TeamTaskDelegateOptions {
+                    team_id: "team".to_string(),
+                    task_id: "task".to_string(),
+                    delegation: DelegationContext {
+                        target_member_id: "m".to_string(),
+                        lead_notes: None,
+                        focus_files: vec![],
+                        auto_start: true,
+                    },
+                    strategy: "fresh".to_string(),
+                    dry_run: false,
+                    launch_mode: "oneshot".to_string(),
+                    attach_context: true,
+                },
+            },
+            Command::TeamReset {
+                team_id: "team".to_string(),
+                force: false,
+            },
+            Command::TeamReport {
+                team_id: "team".to_string(),
+            },
+            Command::TeamArchive {
+                team_id: "team".to_string(),
+                force: false,
+            },
+            Command::TeamTeardown {
+                team_id: "team".to_string(),
+                force: false,
+            },
+            Command::TeamDelete {
+                team_id: "team".to_string(),
+            },
+            Command::EventsPoll {
+                since_seq: None,
+                limit: None,
+            },
+        ];
+
+        for cmd in variants {
+            let json = serde_json::to_string(&cmd).expect("failed to serialize");
+            let restored: Command = serde_json::from_str(&json).expect("failed to deserialize");
+            assert_eq!(
+                cmd.method_name(),
+                restored.method_name(),
+                "method name mismatch for {:?}",
+                cmd
+            );
+        }
     }
 
     #[test]

@@ -371,6 +371,10 @@ pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
     }
 
     let mut child = std::process::Command::new(&awod_exe)
+        .arg("--config-dir")
+        .arg(&paths.config_dir)
+        .arg("--data-dir")
+        .arg(&paths.data_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -498,6 +502,7 @@ impl crate::dispatch::Dispatcher for DaemonClient {
             Some(result) => Ok(crate::commands::CommandOutcome {
                 summary: result.summary,
                 events: result.events,
+                data: result.data,
             }),
             None => Err(AwoError::supervisor("empty daemon response")),
         }
@@ -570,10 +575,10 @@ mod tests {
         struct EchoDispatcher;
         impl Dispatcher for EchoDispatcher {
             fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
-                Ok(CommandOutcome {
-                    summary: format!("echoed: {}", command.method_name()),
-                    events: vec![],
-                })
+                Ok(CommandOutcome::new(format!(
+                    "echoed: {}",
+                    command.method_name()
+                )))
             }
         }
 

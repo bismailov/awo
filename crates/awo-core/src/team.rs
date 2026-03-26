@@ -21,8 +21,11 @@ pub use storage::{
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum TeamExecutionMode {
+    #[serde(alias = "ExternalSlots")]
     ExternalSlots,
+    #[serde(alias = "InlineSubagents")]
     InlineSubagents,
+    #[serde(alias = "MultiSessionTeam")]
     MultiSessionTeam,
 }
 
@@ -38,10 +41,15 @@ impl TeamExecutionMode {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum TeamStatus {
+    #[serde(alias = "Planning")]
     Planning,
+    #[serde(alias = "Running")]
     Running,
+    #[serde(alias = "Blocked")]
     Blocked,
+    #[serde(alias = "Complete")]
     Complete,
+    #[serde(alias = "Archived")]
     Archived,
 }
 
@@ -57,10 +65,15 @@ impl TeamStatus {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum TaskCardState {
+    #[serde(alias = "Todo")]
     Todo,
+    #[serde(alias = "InProgress")]
     InProgress,
+    #[serde(alias = "Review")]
     Review,
+    #[serde(alias = "Blocked")]
     Blocked,
+    #[serde(alias = "Done")]
     Done,
 }
 
@@ -122,6 +135,29 @@ pub struct TeamTaskStartOptions {
     pub launch_mode: String,
     pub attach_context: bool,
     pub routing_preferences: Option<crate::routing::RoutingPreferences>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationContext {
+    /// The member_id of the worker being delegated to.
+    pub target_member_id: String,
+    /// Free-form notes from the lead to prepend to the worker's prompt.
+    pub lead_notes: Option<String>,
+    /// Specific files the lead wants the worker to focus on.
+    pub focus_files: Vec<String>,
+    /// Whether to auto-start a session after delegation.
+    pub auto_start: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamTaskDelegateOptions {
+    pub team_id: String,
+    pub task_id: String,
+    pub delegation: DelegationContext,
+    pub strategy: String,
+    pub dry_run: bool,
+    pub launch_mode: String,
+    pub attach_context: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,13 +320,16 @@ impl TeamManifest {
             awo_bail!("cannot remove the team lead");
         }
         if self.tasks.iter().any(|task| task.owner_id == member_id) {
-            awo_bail!("cannot remove member `{member_id}` while tasks are still assigned");
+            awo_bail!(
+                "cannot remove member `{}` while tasks are still assigned",
+                member_id
+            );
         }
 
         let original_len = self.members.len();
         self.members.retain(|member| member.member_id != member_id);
         if self.members.len() == original_len {
-            awo_bail!("unknown team member `{member_id}`");
+            awo_bail!("unknown team member `{}`", member_id);
         }
 
         self.validate()
@@ -434,6 +473,30 @@ impl TeamManifest {
         lines.push("When done, summarize what changed, how you verified it, and any blockers or follow-up risk.".to_string());
 
         Ok(lines.join("\n"))
+    }
+
+    pub fn render_delegated_prompt(
+        &self,
+        task_id: &str,
+        delegation: &DelegationContext,
+    ) -> AwoResult<String> {
+        let mut prompt = self.render_task_prompt(task_id)?;
+
+        if let Some(notes) = &delegation.lead_notes {
+            prompt = format!("### Lead Notes\n{}\n\n{}", notes, prompt);
+        }
+
+        if !delegation.focus_files.is_empty() {
+            let files = delegation
+                .focus_files
+                .iter()
+                .map(|f| format!("- {}", f))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prompt = format!("{}\n\n### Focus Files\n{}", prompt, files);
+        }
+
+        Ok(prompt)
     }
 
     /// Returns a list of reasons why this team cannot be archived, or an empty

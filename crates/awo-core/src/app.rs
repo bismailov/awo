@@ -62,6 +62,14 @@ impl AppCore {
         Self::from_config(config)
     }
 
+    pub fn with_dirs(
+        config_dir: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+    ) -> AwoResult<Self> {
+        let config = AppConfig::with_dirs(config_dir, data_dir)?;
+        Self::from_config(config)
+    }
+
     pub fn from_config(config: AppConfig) -> AwoResult<Self> {
         let store = Store::open(&config.paths.state_db_path)?;
         store.initialize_schema()?;
@@ -187,10 +195,56 @@ impl Dispatcher for AppCore {
             let result = self
                 .event_bus
                 .poll(since_seq.unwrap_or(0), limit.unwrap_or(100));
-            return Ok(CommandOutcome {
-                summary: serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()),
-                events: vec![],
-            });
+            return Ok(CommandOutcome::with_data(
+                "Events polled.",
+                serde_json::to_value(&result).map_err(|e| {
+                    crate::error::AwoError::unsupported("event poll serialization", e.to_string())
+                })?,
+            ));
+        }
+
+        // Intercept TeamTaskStart and TeamTaskDelegate — they need full AppCore access
+        // and return complex payloads.
+        match command {
+            Command::TeamTaskStart { options } => {
+                let (manifest, slot_outcome, session_outcome, execution) =
+                    self.start_team_task(options)?;
+                let mut events = vec![];
+                if let Some(out) = slot_outcome {
+                    events.extend(out.events);
+                }
+                events.extend(session_outcome.events);
+                let mut outcome = CommandOutcome::with_data(
+                    session_outcome.summary,
+                    serde_json::json!({
+                        "manifest": manifest,
+                        "execution": execution,
+                    }),
+                );
+                outcome.events = events;
+                self.event_bus.publish(&outcome.events);
+                return Ok(outcome);
+            }
+            Command::TeamTaskDelegate { options } => {
+                let (manifest, slot_outcome, session_outcome, execution) =
+                    self.delegate_team_task(options)?;
+                let mut events = vec![];
+                if let Some(out) = slot_outcome {
+                    events.extend(out.events);
+                }
+                events.extend(session_outcome.events);
+                let mut outcome = CommandOutcome::with_data(
+                    session_outcome.summary,
+                    serde_json::json!({
+                        "manifest": manifest,
+                        "execution": execution,
+                    }),
+                );
+                outcome.events = events;
+                self.event_bus.publish(&outcome.events);
+                return Ok(outcome);
+            }
+            _ => {}
         }
 
         let mut runner = CommandRunner::new(&self.config, &self.store);

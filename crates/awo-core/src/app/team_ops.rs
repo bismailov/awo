@@ -3,10 +3,11 @@ use crate::error::{AwoError, AwoResult};
 use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus};
 use crate::slot::SlotStatus;
 use crate::team::{
-    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamManifestGuard, TeamMember,
-    TeamResetSummary, TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan,
-    TeamTeardownResult, build_team_teardown_plan, collect_bound_slot_ids, list_team_manifest_paths,
-    reconcile_team_manifest_state, remove_team_manifest, save_team_manifest,
+    DelegationContext, TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamManifestGuard,
+    TeamMember, TeamResetSummary, TeamTaskDelegateOptions, TeamTaskExecution, TeamTaskStartOptions,
+    TeamTeardownPlan, TeamTeardownResult, build_team_teardown_plan, collect_bound_slot_ids,
+    list_team_manifest_paths, reconcile_team_manifest_state, remove_team_manifest,
+    save_team_manifest,
 };
 use std::str::FromStr;
 use tracing::warn;
@@ -334,16 +335,63 @@ impl AppCore {
         CommandOutcome,
         TeamTaskExecution,
     )> {
-        let launch_mode: SessionLaunchMode = options
-            .launch_mode
+        self.execute_team_task(
+            options.team_id,
+            options.task_id,
+            options.strategy,
+            options.dry_run,
+            options.launch_mode,
+            options.attach_context,
+            options.routing_preferences,
+            None,
+        )
+    }
+
+    pub fn delegate_team_task(
+        &mut self,
+        options: TeamTaskDelegateOptions,
+    ) -> AwoResult<(
+        TeamManifest,
+        Option<CommandOutcome>,
+        CommandOutcome,
+        TeamTaskExecution,
+    )> {
+        self.execute_team_task(
+            options.team_id,
+            options.task_id,
+            options.strategy,
+            options.dry_run,
+            options.launch_mode,
+            options.attach_context,
+            None,
+            Some(options.delegation),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_team_task(
+        &mut self,
+        team_id: String,
+        task_id: String,
+        strategy_name: String,
+        dry_run: bool,
+        launch_mode_name: String,
+        attach_context: bool,
+        routing_preferences: Option<crate::routing::RoutingPreferences>,
+        delegation: Option<DelegationContext>,
+    ) -> AwoResult<(
+        TeamManifest,
+        Option<CommandOutcome>,
+        CommandOutcome,
+        TeamTaskExecution,
+    )> {
+        let launch_mode: SessionLaunchMode = launch_mode_name
             .parse()
-            .map_err(|_| AwoError::unsupported("launch mode", &options.launch_mode))?;
-        let strategy: crate::slot::SlotStrategy = options
-            .strategy
+            .map_err(|_| AwoError::unsupported("launch mode", &launch_mode_name))?;
+        let strategy: crate::slot::SlotStrategy = strategy_name
             .parse()
-            .map_err(|_| AwoError::unsupported("slot strategy", &options.strategy))?;
-        let team_id = options.team_id.clone();
-        let task_id = options.task_id.clone();
+            .map_err(|_| AwoError::unsupported("slot strategy", &strategy_name))?;
+
         let recover_failed_start = |core: &mut Self, slot_id: Option<&str>| {
             if let Err(err) = core.set_team_task_state(&team_id, &task_id, TaskCardState::Blocked) {
                 warn!(team_id = team_id.as_str(), task_id = task_id.as_str(), %err, "failed to mark task as blocked during recovery");
@@ -359,8 +407,7 @@ impl AppCore {
 
         let (
             repo_id,
-            task,
-            owner,
+            owner_id,
             runtime_name,
             runtime,
             selected_model,
@@ -368,24 +415,57 @@ impl AppCore {
             routing_reason,
             prompt,
             read_only,
+            auto_start,
+            task_slot_id,
+            owner_slot_id,
         ) = {
-            let mut manifest = TeamManifestGuard::load(&self.config.paths, &options.team_id)?;
+            let mut manifest = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+
+            if let Some(ref delegation) = delegation {
+                if !manifest
+                    .manifest()
+                    .members
+                    .iter()
+                    .any(|m| m.member_id == delegation.target_member_id)
+                    && manifest.manifest().lead.member_id != delegation.target_member_id
+                {
+                    return Err(AwoError::validation(format!(
+                        "unknown target member `{}`",
+                        delegation.target_member_id
+                    )));
+                }
+
+                let task = manifest
+                    .manifest_mut()
+                    .task_mut(&task_id)
+                    .ok_or_else(|| AwoError::unknown_task(&task_id))?;
+
+                if task.state != TaskCardState::Todo {
+                    return Err(AwoError::invalid_state(format!(
+                        "cannot delegate task `{task_id}` in state `{}`; expected `todo`",
+                        task.state
+                    )));
+                }
+
+                task.owner_id = delegation.target_member_id.clone();
+            }
+
             let task = manifest
                 .manifest()
-                .task(&options.task_id)
-                .cloned()
-                .ok_or_else(|| AwoError::unknown_task(&options.task_id))?;
+                .task(&task_id)
+                .ok_or_else(|| AwoError::unknown_task(&task_id))?;
             let owner = manifest
                 .manifest()
                 .member(&task.owner_id)
-                .cloned()
                 .ok_or_else(|| AwoError::unknown_owner(&task.owner_id))?;
+
             if owner.execution_mode != TeamExecutionMode::ExternalSlots {
                 return Err(AwoError::invalid_state(format!(
                     "team task execution currently supports only `external_slots`; owner `{}` uses `{}`",
                     owner.member_id, owner.execution_mode
                 )));
             }
+
             if task.state == TaskCardState::InProgress {
                 return Err(AwoError::invalid_state(format!(
                     "task `{}` is already in progress",
@@ -420,9 +500,10 @@ impl AppCore {
             } else {
                 None
             };
+
             let routing_preferences = resolve_effective_routing_preferences(
-                options.routing_preferences.clone(),
-                &owner,
+                routing_preferences,
+                owner,
                 manifest.manifest(),
             );
             let routing_decision = crate::routing::route_runtime(
@@ -433,21 +514,31 @@ impl AppCore {
             );
             let runtime = routing_decision.selected_runtime;
             let runtime_name = runtime.as_str().to_string();
-            let prompt = if runtime == RuntimeKind::Shell {
+
+            let auto_start = delegation.as_ref().map(|d| d.auto_start).unwrap_or(true);
+
+            let prompt = if let Some(ref delegation) = delegation {
+                manifest
+                    .manifest()
+                    .render_delegated_prompt(&task.task_id, delegation)?
+            } else if runtime == RuntimeKind::Shell {
                 task.summary.clone()
             } else {
                 manifest.manifest().render_task_prompt(&task.task_id)?
             };
+
             let read_only = task.read_only || owner.read_only;
-            manifest
-                .manifest_mut()
-                .set_task_state(&task.task_id, TaskCardState::InProgress)?;
+
+            let repo_id = manifest.manifest().repo_id.clone();
+            let owner_id = task.owner_id.clone();
+            let task_slot_id = task.slot_id.clone();
+            let owner_slot_id = owner.slot_id.clone();
+
             manifest.save()?;
 
             (
-                manifest.manifest().repo_id.clone(),
-                task,
-                owner,
+                repo_id,
+                owner_id,
                 runtime_name,
                 runtime,
                 routing_decision.selected_model,
@@ -455,75 +546,106 @@ impl AppCore {
                 routing_decision.reason,
                 prompt,
                 read_only,
+                auto_start,
+                task_slot_id,
+                owner_slot_id,
             )
         };
 
-        let mut slot_outcome = None;
-        let (slot_id, branch_name, acquired_slot) =
-            match task.slot_id.clone().or(owner.slot_id.clone()) {
-                Some(slot_id) => {
-                    let slot = match self.store.get_slot(&slot_id)? {
-                        Some(slot) => slot,
-                        None => {
-                            recover_failed_start(self, None);
-                            return Err(AwoError::unknown_slot(slot_id));
-                        }
-                    };
-                    if slot.repo_id != repo_id {
-                        recover_failed_start(self, None);
-                        return Err(AwoError::invalid_state(format!(
-                            "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
-                            slot.repo_id, repo_id
-                        )));
-                    }
-                    (slot.id, slot.branch_name, false)
-                }
-                None => {
-                    let outcome = match self.dispatch(Command::SlotAcquire {
-                        repo_id: repo_id.clone(),
-                        task_name: task.task_id.clone(),
-                        strategy,
-                    }) {
-                        Ok(outcome) => outcome,
-                        Err(error) => {
-                            recover_failed_start(self, None);
-                            return Err(error);
-                        }
-                    };
-                    let slot_id = match outcome.events.iter().find_map(|event| match event {
-                        crate::events::DomainEvent::SlotAcquired { slot_id, .. } => {
-                            Some(slot_id.clone())
-                        }
-                        _ => None,
-                    }) {
-                        Some(slot_id) => slot_id,
-                        None => {
-                            recover_failed_start(self, None);
-                            return Err(AwoError::invalid_state(
-                                "slot acquire did not yield a slot id",
-                            ));
-                        }
-                    };
-                    let slot = match self.store.get_slot(&slot_id)? {
-                        Some(slot) => slot,
-                        None => {
-                            recover_failed_start(self, None);
-                            return Err(AwoError::unknown_slot(slot_id));
-                        }
-                    };
-                    slot_outcome = Some(outcome);
-                    (slot.id, slot.branch_name, true)
-                }
+        if !auto_start {
+            let manifest = self.load_team_manifest(&team_id)?;
+            let execution = TeamTaskExecution {
+                team_id: manifest.team_id.clone(),
+                task_id,
+                owner_id,
+                runtime: runtime_name,
+                model: selected_model,
+                routing_source,
+                routing_reason,
+                slot_id: String::new(),
+                branch_name: String::new(),
+                session_id: None,
+                session_status: SessionStatus::Prepared,
+                acquired_slot: false,
+                prompt,
             };
+            return Ok((manifest, None, CommandOutcome::new("Delegated."), execution));
+        }
+
+        // Only mark as in-progress if we are actually starting and not in dry-run
+        if !dry_run {
+            let mut manifest = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+            manifest
+                .manifest_mut()
+                .set_task_state(&task_id, TaskCardState::InProgress)?;
+            manifest.save()?;
+        }
+
+        let mut slot_outcome = None;
+        let (slot_id, branch_name, acquired_slot) = match task_slot_id.or(owner_slot_id) {
+            Some(slot_id) => {
+                let slot = match self.store.get_slot(&slot_id)? {
+                    Some(slot) => slot,
+                    None => {
+                        recover_failed_start(self, None);
+                        return Err(AwoError::unknown_slot(slot_id));
+                    }
+                };
+                if slot.repo_id != repo_id {
+                    recover_failed_start(self, None);
+                    return Err(AwoError::invalid_state(format!(
+                        "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
+                        slot.repo_id, repo_id
+                    )));
+                }
+                (slot.id, slot.branch_name, false)
+            }
+            None => {
+                let outcome = match self.dispatch(Command::SlotAcquire {
+                    repo_id: repo_id.clone(),
+                    task_name: task_id.clone(),
+                    strategy,
+                }) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        recover_failed_start(self, None);
+                        return Err(error);
+                    }
+                };
+                let slot_id = match outcome.events.iter().find_map(|event| match event {
+                    crate::events::DomainEvent::SlotAcquired { slot_id, .. } => {
+                        Some(slot_id.clone())
+                    }
+                    _ => None,
+                }) {
+                    Some(slot_id) => slot_id,
+                    None => {
+                        recover_failed_start(self, None);
+                        return Err(AwoError::invalid_state(
+                            "slot acquire did not yield a slot id",
+                        ));
+                    }
+                };
+                let slot = match self.store.get_slot(&slot_id)? {
+                    Some(slot) => slot,
+                    None => {
+                        recover_failed_start(self, None);
+                        return Err(AwoError::unknown_slot(slot_id));
+                    }
+                };
+                slot_outcome = Some(outcome);
+                (slot.id, slot.branch_name, true)
+            }
+        };
 
         if let Err(error) = (|| -> AwoResult<()> {
-            let mut manifest = TeamManifestGuard::load(&self.config.paths, &options.team_id)?;
+            let mut manifest = TeamManifestGuard::load(&self.config.paths, &team_id)?;
             manifest
                 .manifest_mut()
-                .assign_member_slot(&task.owner_id, &slot_id, &branch_name)?;
+                .assign_member_slot(&owner_id, &slot_id, &branch_name)?;
             manifest
                 .manifest_mut()
-                .bind_task_slot(&task.task_id, &slot_id, &branch_name)?;
+                .bind_task_slot(&task_id, &slot_id, &branch_name)?;
             manifest.save()
         })() {
             recover_failed_start(self, acquired_slot.then_some(slot_id.as_str()));
@@ -535,9 +657,9 @@ impl AppCore {
             runtime,
             prompt: prompt.clone(),
             read_only,
-            dry_run: options.dry_run,
+            dry_run,
             launch_mode,
-            attach_context: options.attach_context,
+            attach_context,
             timeout_secs: None,
         }) {
             Ok(outcome) => outcome,
@@ -565,27 +687,33 @@ impl AppCore {
             SessionStatus::Completed => TaskCardState::Review,
             SessionStatus::Failed => TaskCardState::Blocked,
             SessionStatus::Running => TaskCardState::InProgress,
-            _ => task.state,
+            _ => {
+                if dry_run {
+                    TaskCardState::Todo
+                } else {
+                    TaskCardState::InProgress
+                }
+            }
         };
-        let manifest = self.set_team_task_state(&options.team_id, &task.task_id, next_state)?;
-        self.store.insert_action(
-            "team_task_start",
-            &format!(
-                "team_id={} task_id={} slot_id={} runtime={} session_status={} acquired_slot={}",
-                manifest.team_id,
-                task.task_id,
-                slot_id,
-                runtime_name,
-                session_status.as_str(),
-                acquired_slot
-            ),
-        )?;
+
+        tracing::debug!(
+            ?session_status,
+            ?next_state,
+            dry_run,
+            "determined next task state"
+        );
+
+        let manifest = if !dry_run || next_state != TaskCardState::Todo {
+            self.set_team_task_state(&team_id, &task_id, next_state)?
+        } else {
+            self.load_team_manifest(&team_id)?
+        };
 
         let execution = TeamTaskExecution {
-            team_id: manifest.team_id.clone(),
-            task_id: task.task_id.clone(),
-            owner_id: task.owner_id.clone(),
-            runtime: runtime_name.to_string(),
+            team_id,
+            task_id,
+            owner_id,
+            runtime: runtime_name,
             model: selected_model,
             routing_source,
             routing_reason,

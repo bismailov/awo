@@ -45,6 +45,62 @@ fn initialize_schema_enables_wal_and_records_current_version() -> Result<()> {
 }
 
 #[test]
+fn initialize_schema_migrates_pascal_enums() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("v5.sqlite3");
+    let connection = SqliteConnection::open(&db_path)?;
+
+    // Setup V5-like schema (or at least slots table with PascalCase enums)
+    connection.execute_batch(
+        r#"
+            CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO app_meta (key, value) VALUES ('schema_version', '5');
+
+            CREATE TABLE slots (
+                id TEXT PRIMARY KEY,
+                repo_id TEXT NOT NULL,
+                task_name TEXT NOT NULL,
+                slot_path TEXT NOT NULL,
+                branch_name TEXT NOT NULL,
+                base_branch TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                status TEXT NOT NULL,
+                fingerprint_hash TEXT,
+                fingerprint_status TEXT NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO slots (
+                id, repo_id, task_name, slot_path, branch_name, base_branch, strategy,
+                status, fingerprint_status
+            ) VALUES (
+                'slot-1', 'repo-1', 'task', '/tmp/slot', 'main', 'main', 'Warm',
+                'Released', 'Ready'
+            );
+        "#,
+    )?;
+    drop(connection);
+
+    let store = Store::open(&db_path)?;
+    store.initialize_schema()?;
+
+    let connection = SqliteConnection::open(&db_path)?;
+    let mut statement = connection
+        .prepare("SELECT status, strategy, fingerprint_status FROM slots WHERE id = 'slot-1'")?;
+    let (status, strategy, fingerprint_status): (String, String, String) =
+        statement.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+
+    assert_eq!(status, "released");
+    assert_eq!(strategy, "warm");
+    assert_eq!(fingerprint_status, "ready");
+    assert_eq!(schema_version_at(&db_path)?, 6);
+
+    Ok(())
+}
+
+#[test]
 fn initialize_schema_migrates_legacy_sessions_table() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let db_path = temp_dir.path().join("legacy.sqlite3");

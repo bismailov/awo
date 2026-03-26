@@ -17,7 +17,7 @@ use crate::team::{
     TaskCardState, TeamManifest, TeamStatus, list_team_manifest_paths, load_team_manifest,
 };
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::warn;
@@ -649,9 +649,7 @@ fn build_review_summary_impl<'a>(
     let slots: Vec<SlotReviewView<'a>> = slots.collect();
     let sessions: Vec<SessionReviewView<'a>> = sessions.collect();
     let mut summary = ReviewSummary::default();
-    summary
-        .warnings
-        .extend(overlap::detect_file_overlaps(&slots));
+    summary.warnings.extend(overlap::detect_overlaps(&slots));
     let mut pending_sessions_by_slot: HashMap<&str, usize> = HashMap::new();
 
     for session in &sessions {
@@ -673,95 +671,6 @@ fn build_review_summary_impl<'a>(
         if !session.is_terminal {
             summary.pending_sessions += 1;
             *pending_sessions_by_slot.entry(session.slot_id).or_insert(0) += 1;
-        }
-    }
-
-    let mut dirty_slot_map: HashMap<&str, (Vec<String>, HashSet<String>)> = HashMap::new();
-    for slot in &slots {
-        if slot.dirty {
-            let mut dirs = HashSet::new();
-            for file in &slot.dirty_files {
-                if let Some(parent) = Path::new(file).parent()
-                    && let Some(parent_str) = parent.to_str()
-                    && !parent_str.is_empty()
-                {
-                    dirs.insert(parent_str.to_string());
-                }
-            }
-            dirty_slot_map.insert(slot.id, (slot.dirty_files.clone(), dirs));
-        }
-    }
-    let mut dirty_ids: Vec<&str> = dirty_slot_map.keys().copied().collect();
-    dirty_ids.sort();
-    for i in 0..dirty_ids.len() {
-        for j in i + 1..dirty_ids.len() {
-            let id_a = dirty_ids[i];
-            let id_b = dirty_ids[j];
-            let (files_a, dirs_a) = &dirty_slot_map[id_a];
-            let (files_b, dirs_b) = &dirty_slot_map[id_b];
-
-            // Direct file overlap (risky-overlap)
-            let common: Vec<_> = files_a
-                .iter()
-                .filter(|f| files_b.contains(f))
-                .cloned()
-                .collect();
-            if !common.is_empty() {
-                let mut common_sorted = common;
-                common_sorted.sort();
-                let file_list = common_sorted.join(", ");
-                summary.warnings.push(ReviewWarning {
-                    kind: "risky-overlap".to_string(),
-                    slot_id: None,
-                    session_id: None,
-                    message: format!(
-                        "Slots '{}' and '{}' both modified: {}",
-                        id_a, id_b, file_list
-                    ),
-                });
-            }
-
-            // Directory-level overlap (soft-overlap)
-            let mut common_dirs: Vec<_> = dirs_a.intersection(dirs_b).cloned().collect();
-            common_dirs.sort();
-
-            for dir in common_dirs {
-                // Check if they modified DIFFERENT files in this directory
-                // to avoid redundant reporting when the files are identical.
-                let mut files_in_dir_a: Vec<_> = files_a
-                    .iter()
-                    .filter(|f| {
-                        Path::new(f)
-                            .parent()
-                            .and_then(|p| p.to_str())
-                            .is_some_and(|p| p == dir)
-                    })
-                    .collect();
-                let mut files_in_dir_b: Vec<_> = files_b
-                    .iter()
-                    .filter(|f| {
-                        Path::new(f)
-                            .parent()
-                            .and_then(|p| p.to_str())
-                            .is_some_and(|p| p == dir)
-                    })
-                    .collect();
-
-                files_in_dir_a.sort();
-                files_in_dir_b.sort();
-
-                if files_in_dir_a != files_in_dir_b {
-                    summary.warnings.push(ReviewWarning {
-                        kind: "soft-overlap".to_string(),
-                        slot_id: None,
-                        session_id: None,
-                        message: format!(
-                            "Slots '{}' and '{}' both modified files in module: {}",
-                            id_a, id_b, dir
-                        ),
-                    });
-                }
-            }
         }
     }
 
@@ -863,142 +772,6 @@ fn build_review_summary_impl<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_risky_overlap_between_dirty_slots() {
-        let slot1 = SlotReviewView {
-            id: "slot1",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/lib.rs".to_string(), "src/error.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let slot2 = SlotReviewView {
-            id: "slot2",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/main.rs".to_string(), "src/error.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
-        assert!(summary.warnings.iter().any(|w| w.kind == "risky-overlap"));
-    }
-
-    #[test]
-    fn detects_soft_overlap_between_modules() {
-        let slot1 = SlotReviewView {
-            id: "slot1",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/runtime/executor.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let slot2 = SlotReviewView {
-            id: "slot2",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/runtime/supervisor.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
-        let warnings: Vec<_> = summary
-            .warnings
-            .iter()
-            .filter(|w| w.kind == "soft-overlap")
-            .collect();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(
-            warnings[0].message,
-            "Slots 'slot1' and 'slot2' both modified files in module: src/runtime"
-        );
-    }
-
-    #[test]
-    fn reports_both_risky_and_soft_overlap_if_different_files_exist_in_same_module() {
-        let slot1 = SlotReviewView {
-            id: "slot1",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/lib.rs".to_string(), "src/error.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let slot2 = SlotReviewView {
-            id: "slot2",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/lib.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
-        assert!(summary.warnings.iter().any(|w| w.kind == "risky-overlap"));
-        assert!(summary.warnings.iter().any(|w| w.kind == "soft-overlap"));
-    }
-
-    #[test]
-    fn no_overlap_when_slots_touch_different_files() {
-        let slot1 = SlotReviewView {
-            id: "slot1",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["src/foo.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let slot2 = SlotReviewView {
-            id: "slot2",
-            repo_id: "repo1",
-            is_active: true,
-            is_released: false,
-            is_missing: false,
-            dirty: true,
-            dirty_files: vec!["tests/bar.rs".to_string()],
-            uses_warm_strategy: false,
-            fingerprint_is_ready: true,
-            fingerprint_is_stale: false,
-        };
-        let summary = build_review_summary_impl(vec![slot1, slot2].into_iter(), vec![].into_iter());
-        assert!(
-            !summary
-                .warnings
-                .iter()
-                .any(|w| w.kind == "risky-overlap" || w.kind == "soft-overlap"),
-            "no overlap expected for disjoint files/modules"
-        );
-    }
 
     #[test]
     fn dirty_slot_warning_emitted() {

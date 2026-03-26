@@ -30,10 +30,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Discovered {} shared skill(s).", catalog.skills.len()),
+        Ok(CommandOutcome::with_events(
+            format!("Discovered {} shared skill(s).", catalog.skills.len()),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_skills_doctor(
@@ -81,14 +81,14 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Skills doctor finished across {} runtime(s) with {} warning(s).",
                 reports.len(),
                 warning_count
             ),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_skills_link(
@@ -127,13 +127,13 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Linked {} shared skill(s) into `{runtime}` using {mode}.",
                 report.linked.len()
             ),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_skills_sync(
@@ -174,8 +174,8 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Synced shared skills into `{runtime}`: {} added, {} repaired, {} pruned, {} already current.",
                 report.linked.len(),
                 report.updated.len(),
@@ -183,6 +183,6 @@ impl<'a> CommandRunner<'a> {
                 report.skipped.len()
             ),
             events,
-        })
+        ))
     }
 }

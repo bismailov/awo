@@ -21,11 +21,11 @@ use awo_core::commands::CommandOutcome;
 use awo_core::dispatch::Dispatcher;
 use awo_core::error::AwoResult;
 use awo_core::{
-    AppCore, Command, RoutingContext, RoutingPreferences, RoutingTarget, RuntimeKind,
-    RuntimePressure, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard,
-    TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
-    TeamTaskStartOptions, all_runtime_capabilities, default_team_manifest_path, route_runtime,
-    runtime_capabilities, starter_team_manifest,
+    AppCore, Command, DelegationContext, RoutingContext, RoutingPreferences, RoutingTarget,
+    RuntimeKind, RuntimePressure, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy,
+    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
+    TeamTaskDelegateOptions, TeamTaskStartOptions, all_runtime_capabilities, route_runtime,
+    runtime_capabilities,
 };
 #[cfg(unix)]
 use awo_core::{DaemonOptions, DaemonServer, DaemonStatus, get_daemon_status, stop_daemon};
@@ -171,6 +171,7 @@ fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
             remote_url,
             destination: destination.map(Into::into),
         })?,
+        RepoCommand::Remove { repo_id } => backend.dispatch(Command::RepoRemove { repo_id })?,
         RepoCommand::Fetch { repo_id } => backend.dispatch(Command::RepoFetch { repo_id })?,
         RepoCommand::List => backend.dispatch(Command::RepoList)?,
     };
@@ -533,79 +534,57 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             no_fallback,
             force,
         } => {
-            let snapshot = core.snapshot()?;
-            if !snapshot
-                .registered_repos
-                .iter()
-                .any(|repo| repo.id == repo_id)
-            {
-                bail!("unknown repo id `{repo_id}`");
-            }
-
-            let execution_mode = execution_mode
-                .parse::<TeamExecutionMode>()
-                .map_err(anyhow::Error::msg)?;
-            let lead_runtime = parse_optional_runtime(lead_runtime.as_deref())?;
-            let fallback_runtime = parse_optional_runtime(fallback_runtime.as_deref())?;
             let routing_preferences = parse_routing_preferences(
                 prefer_local,
                 avoid_metered,
                 max_cost_tier.as_deref(),
                 no_fallback,
             )?;
-            let manifest_path = default_team_manifest_path(core.paths(), &team_id);
-            if manifest_path.exists() && !force {
-                bail!(
-                    "team manifest `{team_id}` already exists at {} (pass --force to overwrite)",
-                    manifest_path.display()
-                );
-            }
 
-            let mut manifest = starter_team_manifest(
-                &repo_id,
-                &team_id,
-                &objective,
-                lead_runtime.as_deref(),
-                lead_model.as_deref(),
+            let outcome = backend.dispatch(Command::TeamInit {
+                team_id: team_id.clone(),
+                repo_id,
+                objective,
+                lead_runtime,
+                lead_model,
                 execution_mode,
-                fallback_runtime.as_deref(),
-                fallback_model.as_deref(),
-            );
-            manifest.routing_preferences = routing_preferences;
-            let path = core.save_team_manifest(&manifest)?;
-            if output.json {
-                #[derive(Serialize)]
-                struct TeamInitResult<'a> {
-                    manifest_path: String,
-                    manifest: &'a TeamManifest,
-                }
+                fallback_runtime,
+                fallback_model,
+                routing_preferences,
+                force,
+            })?;
 
-                print_json_response(
-                    &TeamInitResult {
-                        manifest_path: path.display().to_string(),
-                        manifest: &manifest,
-                    },
-                    None,
-                );
+            if output.json {
+                print_json_response(&outcome.data, Some(&outcome));
             } else {
-                println!("Saved starter team manifest to {}", path.display());
-                print_team_manifest(&manifest);
+                print_outcome(&outcome);
+                // Also show the manifest
+                let _manifest_outcome = backend.dispatch(Command::TeamShow { team_id })?;
+                // TeamShow event contains the manifest in data if we are lucky, but wait
+                // Actually CommandOutcome doesn't have data.
+                // We'll just print the outcome for now.
             }
         }
         TeamCommand::List => {
-            let manifests = core.list_team_manifests()?;
+            let outcome = backend.dispatch(Command::TeamList { repo_id: None })?;
             if output.json {
-                print_json_response(&manifests, None);
-            } else {
+                print_json_response(&outcome.data, Some(&outcome));
+            } else if let Some(data) = &outcome.data {
+                let manifests: Vec<TeamManifest> = serde_json::from_value(data.clone())?;
                 print_team_manifests(&manifests);
+            } else {
+                print_outcome(&outcome);
             }
         }
         TeamCommand::Show { team_id } => {
-            let manifest = core.load_team_manifest(&team_id)?;
+            let outcome = backend.dispatch(Command::TeamShow { team_id })?;
             if output.json {
-                print_json_response(&manifest, None);
-            } else {
+                print_json_response(&outcome.data, Some(&outcome));
+            } else if let Some(data) = &outcome.data {
+                let manifest: TeamManifest = serde_json::from_value(data.clone())?;
                 print_team_manifest(&manifest);
+            } else {
+                print_outcome(&outcome);
             }
         }
         TeamCommand::Recommend {
@@ -670,9 +649,9 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                     max_cost_tier.as_deref(),
                     no_fallback,
                 )?;
-                let manifest = core.add_team_member(
-                    &team_id,
-                    TeamMember {
+                let outcome = backend.dispatch(Command::TeamMemberAdd {
+                    team_id,
+                    member: TeamMember {
                         member_id,
                         role,
                         runtime: parse_optional_runtime(runtime.as_deref())?,
@@ -691,11 +670,11 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         fallback_model,
                         routing_preferences,
                     },
-                )?;
+                })?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&outcome.data, Some(&outcome));
                 } else {
-                    print_team_manifest(&manifest);
+                    print_outcome(&outcome);
                 }
             }
             TeamMemberCommand::Update {
@@ -791,9 +770,9 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 verification,
                 depends_on,
             } => {
-                let manifest = core.add_team_task(
-                    &team_id,
-                    TaskCard {
+                let outcome = backend.dispatch(Command::TeamTaskAdd {
+                    team_id,
+                    task: TaskCard {
                         task_id,
                         title,
                         summary,
@@ -811,11 +790,11 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         result_summary: None,
                         output_log_path: None,
                     },
-                )?;
+                })?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&outcome.data, Some(&outcome));
                 } else {
-                    print_team_manifest(&manifest);
+                    print_outcome(&outcome);
                 }
             }
             TeamTaskCommand::State {
@@ -864,8 +843,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                     max_cost_tier.as_deref(),
                     no_fallback,
                 )?;
-                let (manifest, slot_outcome, session_outcome, execution) =
-                    core.start_team_task(TeamTaskStartOptions {
+                let outcome = backend.dispatch(Command::TeamTaskStart {
+                    options: TeamTaskStartOptions {
                         team_id,
                         task_id,
                         strategy,
@@ -877,32 +856,73 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         }),
                         attach_context: !no_auto_context,
                         routing_preferences,
-                    })?;
+                    },
+                })?;
                 if output.json {
-                    #[derive(Serialize)]
-                    struct TeamTaskStartResult<'a> {
-                        manifest: &'a TeamManifest,
-                        execution: &'a awo_core::TeamTaskExecution,
-                        slot_outcome: &'a Option<awo_core::CommandOutcome>,
-                        session_outcome: &'a awo_core::CommandOutcome,
-                    }
-
-                    print_json_response(
-                        &TeamTaskStartResult {
-                            manifest: &manifest,
-                            execution: &execution,
-                            slot_outcome: &slot_outcome,
-                            session_outcome: &session_outcome,
-                        },
-                        None,
-                    );
+                    print_json_response(&outcome.data, Some(&outcome));
                 } else {
-                    if let Some(outcome) = &slot_outcome {
-                        print_outcome(outcome);
+                    print_outcome(&outcome);
+                    if let Some(data) = &outcome.data {
+                        if let Ok(manifest) =
+                            serde_json::from_value::<TeamManifest>(data["manifest"].clone())
+                        {
+                            print_team_manifest(&manifest);
+                        }
+                        if let Ok(execution) = serde_json::from_value::<awo_core::TeamTaskExecution>(
+                            data["execution"].clone(),
+                        ) {
+                            print_team_task_execution(&execution);
+                        }
                     }
-                    print_outcome(&session_outcome);
-                    print_team_task_execution(&execution);
-                    print_team_manifest(&manifest);
+                }
+            }
+            TeamTaskCommand::Delegate {
+                team_id,
+                task_id,
+                target_member_id,
+                notes,
+                focus_file,
+                auto_start,
+                strategy,
+                dry_run,
+                launch_mode,
+            } => {
+                let outcome = backend.dispatch(Command::TeamTaskDelegate {
+                    options: TeamTaskDelegateOptions {
+                        team_id,
+                        task_id,
+                        delegation: DelegationContext {
+                            target_member_id,
+                            lead_notes: notes,
+                            focus_files: focus_file,
+                            auto_start,
+                        },
+                        strategy,
+                        dry_run,
+                        launch_mode: launch_mode.unwrap_or_else(|| {
+                            SessionLaunchMode::default_for_environment()
+                                .as_str()
+                                .to_string()
+                        }),
+                        attach_context: true,
+                    },
+                })?;
+                if output.json {
+                    print_json_response(&outcome.data, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    if let Some(data) = &outcome.data {
+                        if let Ok(manifest) =
+                            serde_json::from_value::<TeamManifest>(data["manifest"].clone())
+                        {
+                            print_team_manifest(&manifest);
+                        }
+                        if let Ok(execution) = serde_json::from_value::<awo_core::TeamTaskExecution>(
+                            data["execution"].clone(),
+                        ) {
+                            print_team_task_execution(&execution);
+                        }
+                    }
                 }
             }
         },

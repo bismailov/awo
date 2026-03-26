@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,10 @@ pub enum DomainEvent {
         repo_root: String,
         default_base_branch: String,
         worktree_root: String,
+    },
+    RepoRemoved {
+        id: String,
+        name: String,
     },
     RepoListLoaded {
         count: usize,
@@ -116,6 +121,12 @@ pub enum DomainEvent {
         task_id: String,
         routing_reason: String,
     },
+    TeamTaskDelegated {
+        team_id: String,
+        task_id: String,
+        target_member_id: String,
+        auto_started: bool,
+    },
     TeamListLoaded {
         repo_id: Option<String>,
         count: usize,
@@ -164,6 +175,9 @@ impl DomainEvent {
             } => format!(
                 "Registered repo `{name}` ({id}) at {repo_root}. Base branch: {default_base_branch}. Worktrees: {worktree_root}"
             ),
+            Self::RepoRemoved { id, name } => {
+                format!("Removed repo `{name}` ({id}).")
+            }
             Self::RepoListLoaded { count } => format!("Loaded {count} registered repo(s)."),
             Self::ContextLoaded {
                 repo_id,
@@ -284,6 +298,16 @@ impl DomainEvent {
             } => {
                 format!("Team task `{task_id}` started on team `{team_id}`: {routing_reason}")
             }
+            Self::TeamTaskDelegated {
+                team_id,
+                task_id,
+                target_member_id,
+                auto_started,
+            } => {
+                format!(
+                    "Team task `{task_id}` delegated to `{target_member_id}` on team `{team_id}` (auto_start={auto_started})"
+                )
+            }
             Self::TeamListLoaded { repo_id, count } => {
                 format!(
                     "Loaded {count} team manifest(s){}",
@@ -342,7 +366,7 @@ pub struct EventPollResult {
 const DEFAULT_RING_CAPACITY: usize = 1024;
 
 struct EventBusInner {
-    ring: Vec<EventEntry>,
+    ring: VecDeque<EventEntry>,
     next_seq: u64,
     capacity: usize,
 }
@@ -350,7 +374,7 @@ struct EventBusInner {
 impl EventBusInner {
     fn new(capacity: usize) -> Self {
         Self {
-            ring: Vec::with_capacity(capacity.min(256)),
+            ring: VecDeque::with_capacity(capacity.min(256)),
             next_seq: 1,
             capacity,
         }
@@ -367,9 +391,9 @@ impl EventBusInner {
             self.next_seq += 1;
 
             if self.ring.len() >= self.capacity {
-                self.ring.remove(0);
+                self.ring.pop_front(); // O(1) instead of Vec::remove(0) which is O(n)
             }
-            self.ring.push(entry);
+            self.ring.push_back(entry);
         }
     }
 

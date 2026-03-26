@@ -94,10 +94,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Acquired slot `{}` for task `{}`.", slot.id, slot.task_name),
+        Ok(CommandOutcome::with_events(
+            format!("Acquired slot `{}` for task `{}`.", slot.id, slot.task_name),
             events,
-        })
+        ))
     }
 
     pub(super) fn create_fresh_slot(&self, options: FreshSlotOptions<'_>) -> AwoResult<SlotRecord> {
@@ -148,10 +148,10 @@ impl<'a> CommandRunner<'a> {
             DomainEvent::SlotListLoaded { count: slots.len() },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Loaded {} slot(s).", slots.len()),
+        Ok(CommandOutcome::with_events(
+            format!("Found {} slot(s).", slots.len()),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_slot_release(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
@@ -211,10 +211,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Released slot `{}`.", slot.id),
+        Ok(CommandOutcome::with_events(
+            format!("Released slot `{}`.", slot_id),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_slot_refresh(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
@@ -270,8 +270,8 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: if resynced && slot.fingerprint_status == FingerprintStatus::Stale {
+        Ok(CommandOutcome::with_events(
+            if resynced && slot.fingerprint_status == FingerprintStatus::Stale {
                 format!(
                     "Refreshed slot `{}` but it remains stale relative to the repo fingerprint.",
                     slot.id
@@ -282,14 +282,21 @@ impl<'a> CommandRunner<'a> {
                 format!("Refreshed slot `{}`.", slot.id)
             },
             events,
-        })
+        ))
     }
 
     pub(super) fn refresh_slot_state(&self, slot: &mut SlotRecord) -> AwoResult<()> {
-        let repo = self
-            .store
-            .get_repository(&slot.repo_id)?
-            .ok_or_else(|| self.repo_not_found_error(&slot.repo_id))?;
+        let repo = match self.store.get_repository(&slot.repo_id)? {
+            Some(repo) => repo,
+            None => {
+                // Orphan slot — its repo was removed. Mark as missing.
+                slot.status = SlotStatus::Missing;
+                slot.dirty = false;
+                slot.fingerprint_hash = None;
+                slot.fingerprint_status = FingerprintStatus::Missing;
+                return Ok(());
+            }
+        };
 
         let slot_path = Path::new(&slot.slot_path);
         if !slot_path.exists() {

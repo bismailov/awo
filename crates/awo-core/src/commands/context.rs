@@ -34,15 +34,15 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Discovered {} entrypoint(s), {} standards doc(s), and {} context pack(s).",
                 context.entrypoints.len(),
                 context.standards.len(),
                 context.packs.len()
             ),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_context_doctor(&mut self, repo_id: String) -> AwoResult<CommandOutcome> {
@@ -81,12 +81,12 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Context doctor finished with {} error(s) and {} warning(s).",
                 error_count, warning_count
             ),
             events,
-        })
+        ))
     }
 }

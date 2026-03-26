@@ -157,13 +157,13 @@ impl<'a> CommandRunner<'a> {
             status: session.status.as_str().to_string(),
         });
 
-        Ok(CommandOutcome {
-            summary: format!(
+        Ok(CommandOutcome::with_events(
+            format!(
                 "Session `{}` for slot `{}` is {}.",
                 session.id, session.slot_id, session.status
             ),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_session_list(
@@ -183,10 +183,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Loaded {} session(s).", sessions.len()),
+        Ok(CommandOutcome::with_events(
+            format!("Found {} session(s).", sessions.len()),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_session_cancel(&mut self, session_id: String) -> AwoResult<CommandOutcome> {
@@ -225,10 +225,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Cancelled session `{}`.", session.id),
+        Ok(CommandOutcome::with_events(
+            format!("Cancelled session `{}`.", session_id),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_session_log(
@@ -293,12 +293,10 @@ impl<'a> CommandRunner<'a> {
             },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!(
-                "Loaded {lines_returned} line(s) of {stream_name} for session `{session_id}`."
-            ),
+        Ok(CommandOutcome::with_events(
+            format!("Loaded {lines_returned} line(s) of {stream_name} for session `{session_id}`."),
             events,
-        })
+        ))
     }
 
     pub(super) fn run_session_delete(&mut self, session_id: String) -> AwoResult<CommandOutcome> {
@@ -323,9 +321,9 @@ impl<'a> CommandRunner<'a> {
             DomainEvent::SessionDeleted { session_id },
         ];
 
-        Ok(CommandOutcome {
-            summary: "Deleted session from local state.".to_string(),
+        Ok(CommandOutcome::with_events(
+            "Deleted session from local state.".to_string(),
             events,
-        })
+        ))
     }
 }

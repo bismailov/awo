@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::str::FromStr;
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const BASE_SCHEMA_VERSION: i64 = 3;
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -77,6 +77,18 @@ const MIGRATION_V4_ADD_SESSION_SUPERVISOR_SQL: &str =
     "ALTER TABLE sessions ADD COLUMN supervisor TEXT";
 
 const MIGRATION_V5_ADD_SESSION_TIMEOUT_SQL: &str = "ALTER TABLE sessions ADD COLUMN timeout_secs INTEGER; ALTER TABLE sessions ADD COLUMN started_at TEXT;";
+
+const MIGRATION_V6_NORMALIZE_SLOT_ENUMS_SQL: &str = r#"
+    UPDATE slots SET status = 'active' WHERE status = 'Active';
+    UPDATE slots SET status = 'released' WHERE status = 'Released';
+    UPDATE slots SET status = 'missing' WHERE status = 'Missing';
+    UPDATE slots SET strategy = 'fresh' WHERE strategy = 'Fresh';
+    UPDATE slots SET strategy = 'warm' WHERE strategy = 'Warm';
+    UPDATE slots SET fingerprint_status = 'unknown' WHERE fingerprint_status = 'Unknown';
+    UPDATE slots SET fingerprint_status = 'ready' WHERE fingerprint_status = 'Ready';
+    UPDATE slots SET fingerprint_status = 'stale' WHERE fingerprint_status = 'Stale';
+    UPDATE slots SET fingerprint_status = 'missing' WHERE fingerprint_status = 'Missing';
+"#;
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -236,6 +248,17 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| AwoError::store("failed to collect repository rows", e))?;
         Ok(repos)
+    }
+
+    pub fn delete_repository(&self, repo_id: &str) -> AwoResult<()> {
+        let conn = self.connection()?;
+        conn.execute("DELETE FROM sessions WHERE repo_id = ?1", [repo_id])
+            .map_err(|e| AwoError::store("delete associated sessions", e))?;
+        conn.execute("DELETE FROM slots WHERE repo_id = ?1", [repo_id])
+            .map_err(|e| AwoError::store("delete associated slots", e))?;
+        conn.execute("DELETE FROM repositories WHERE id = ?1", [repo_id])
+            .map_err(|e| AwoError::store("delete repository", e))?;
+        Ok(())
     }
 
     pub fn get_repository(&self, repo_id: &str) -> AwoResult<Option<RegisteredRepo>> {
@@ -656,6 +679,12 @@ fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoR
                     e,
                 )
             })?;
+    }
+
+    if schema_version < 6 {
+        connection
+            .execute_batch(MIGRATION_V6_NORMALIZE_SLOT_ENUMS_SQL)
+            .map_err(|e| AwoError::store("failed to normalize slot enum values", e))?;
     }
 
     Ok(())

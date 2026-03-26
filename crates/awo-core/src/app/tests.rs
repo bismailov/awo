@@ -4,8 +4,8 @@ use crate::config::{AppConfig, AppSettings};
 use crate::runtime::{SessionLaunchMode, SessionRecord, SessionStatus};
 use crate::slot::SlotStatus;
 use crate::team::{
-    TaskCard, TaskCardState, TeamExecutionMode, TeamMember, TeamTaskStartOptions,
-    starter_team_manifest,
+    DelegationContext, TaskCard, TaskCardState, TeamExecutionMode, TeamMember,
+    TeamTaskDelegateOptions, TeamTaskStartOptions, starter_team_manifest,
 };
 use anyhow::{Context, Result};
 use std::fs;
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
+    let _ = tracing_subscriber::fmt::try_init();
     let temp_dir = tempfile::tempdir()?;
     let config_dir = temp_dir.path().join("config");
     let data_dir = temp_dir.path().join("data");
@@ -1363,5 +1364,525 @@ fn update_team_member_policy_persists_through_load() -> Result<()> {
     assert_eq!(member.runtime.as_deref(), Some("claude"));
     assert_eq!(member.model.as_deref(), Some("sonnet"));
     assert_eq!(member.role, "implementer");
+    Ok(())
+}
+
+#[test]
+fn delegate_team_task_updates_owner_state_and_prompt() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-delegate")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-delegate",
+        "Test delegation",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-delegate",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-delegate",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Delegate me".to_string(),
+            summary: "printf ok > DELEGATED.txt".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["DELEGATED.txt".to_string()],
+            deliverable: "A file".to_string(),
+            verification: vec!["test -f DELEGATED.txt".to_string()],
+            depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    let (manifest, _, _, execution) = core.delegate_team_task(TeamTaskDelegateOptions {
+        team_id: "team-delegate".to_string(),
+        task_id: "task-1".to_string(),
+        delegation: DelegationContext {
+            target_member_id: "worker-a".to_string(),
+            lead_notes: Some("Please do this carefully.".to_string()),
+            focus_files: vec!["README.md".to_string()],
+            auto_start: true,
+        },
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+        attach_context: false,
+    })?;
+
+    assert_eq!(execution.owner_id, "worker-a");
+    assert!(execution.prompt.contains("Please do this carefully."));
+    assert!(execution.prompt.contains("### Focus Files\n- README.md"));
+
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.owner_id, "worker-a");
+    assert_ne!(task.state, TaskCardState::Todo);
+
+    Ok(())
+}
+
+#[test]
+fn delegate_team_task_with_auto_start_false_only_updates_manifest() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-delegate-no-start")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-delegate-no-start",
+        "Test delegation without start",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-delegate-no-start",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["README.md".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-delegate-no-start",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Delegate me".to_string(),
+            summary: "printf ok > DELEGATED.txt".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["DELEGATED.txt".to_string()],
+            deliverable: "A file".to_string(),
+            verification: vec!["test -f DELEGATED.txt".to_string()],
+            depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    let (manifest, slot_outcome, session_outcome, execution) =
+        core.delegate_team_task(TeamTaskDelegateOptions {
+            team_id: "team-delegate-no-start".to_string(),
+            task_id: "task-1".to_string(),
+            delegation: DelegationContext {
+                target_member_id: "worker-a".to_string(),
+                lead_notes: None,
+                focus_files: vec![],
+                auto_start: false,
+            },
+            strategy: "fresh".to_string(),
+            dry_run: false,
+            launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            attach_context: false,
+        })?;
+
+    assert!(slot_outcome.is_none());
+    assert!(session_outcome.summary.contains("Delegated"));
+    assert_eq!(execution.owner_id, "worker-a");
+    assert_eq!(execution.session_status, SessionStatus::Prepared);
+    assert!(!execution.acquired_slot);
+
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.owner_id, "worker-a");
+    assert_eq!(task.state, TaskCardState::Todo);
+
+    Ok(())
+}
+
+#[test]
+fn delegate_team_task_fails_for_unknown_member() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let manifest = starter_team_manifest(
+        "repo-1",
+        "team-delegate-err",
+        "Test delegation errors",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_task(
+        "team-delegate-err",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Delegate me".to_string(),
+            summary: "summary".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec![],
+            deliverable: "A file".to_string(),
+            verification: vec![],
+            depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    let result = core.delegate_team_task(TeamTaskDelegateOptions {
+        team_id: "team-delegate-err".to_string(),
+        task_id: "task-1".to_string(),
+        delegation: DelegationContext {
+            target_member_id: "unknown-worker".to_string(),
+            lead_notes: None,
+            focus_files: vec![],
+            auto_start: true,
+        },
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+        attach_context: false,
+    });
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown target member")
+    );
+    Ok(())
+}
+
+#[test]
+fn delegate_team_task_fails_for_non_todo_task() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let manifest = starter_team_manifest(
+        "repo-1",
+        "team-delegate-state-err",
+        "Test delegation errors",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-delegate-state-err",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec![],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+    core.add_team_task(
+        "team-delegate-state-err",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Delegate me".to_string(),
+            summary: "summary".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec![],
+            deliverable: "A file".to_string(),
+            verification: vec![],
+            depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::InProgress,
+        },
+    )?;
+
+    let result = core.delegate_team_task(TeamTaskDelegateOptions {
+        team_id: "team-delegate-state-err".to_string(),
+        task_id: "task-1".to_string(),
+        delegation: DelegationContext {
+            target_member_id: "worker-a".to_string(),
+            lead_notes: None,
+            focus_files: vec![],
+            auto_start: true,
+        },
+        strategy: "fresh".to_string(),
+        dry_run: false,
+        launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+        attach_context: false,
+    });
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("expected `todo`"));
+    Ok(())
+}
+
+#[test]
+fn team_task_delegation_flow() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let team_id = "delegate-team";
+    let task_id = "task-1";
+    let member_a = "worker-a";
+    let member_b = "worker-b";
+
+    let repo_dir = create_repo(&core.paths().data_dir, "delegate-repo")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        team_id,
+        "Delegation test",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+
+    core.add_team_member(
+        team_id,
+        TeamMember {
+            member_id: member_a.to_string(),
+            role: "lead".to_string(),
+            runtime: Some("claude".to_string()),
+            model: Some("sonnet".to_string()),
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+    core.add_team_member(
+        team_id,
+        TeamMember {
+            member_id: member_b.to_string(),
+            role: "worker".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+
+    core.add_team_task(
+        team_id,
+        TaskCard {
+            task_id: task_id.to_string(),
+            title: "Original task".to_string(),
+            summary: "Work on it".to_string(),
+            owner_id: member_a.to_string(),
+            runtime: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "code".to_string(),
+            verification: vec!["test".to_string()],
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            output_log_path: None,
+        },
+    )?;
+
+    // Delegate task-1 from worker-a to worker-b
+    let (manifest, _slot, _session, execution) =
+        core.delegate_team_task(TeamTaskDelegateOptions {
+            team_id: team_id.to_string(),
+            task_id: task_id.to_string(),
+            delegation: DelegationContext {
+                target_member_id: member_b.to_string(),
+                lead_notes: Some("Please handle this".to_string()),
+                focus_files: Vec::new(),
+                auto_start: false,
+            },
+            strategy: "fresh".to_string(),
+            dry_run: false,
+            launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
+            attach_context: false,
+        })?;
+
+    assert_eq!(execution.owner_id, member_b);
+    assert_eq!(execution.session_status, SessionStatus::Prepared);
+    assert!(execution.prompt.contains("Please handle this"));
+
+    let updated_task = manifest.task(task_id).context("task missing")?;
+    assert_eq!(updated_task.owner_id, member_b);
+
+    Ok(())
+}
+
+#[test]
+fn team_task_state_transitions() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let team_id = "state-team";
+    let task_id = "task-1";
+
+    let repo_dir = create_repo(&core.paths().data_dir, "state-repo")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        team_id,
+        "State test",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+
+    core.add_team_task(
+        team_id,
+        TaskCard {
+            task_id: task_id.to_string(),
+            title: "Task".to_string(),
+            summary: "Work".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "code".to_string(),
+            verification: vec!["test".to_string()],
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            output_log_path: None,
+        },
+    )?;
+
+    // Transition to InProgress
+    let manifest = core.set_team_task_state(team_id, task_id, TaskCardState::InProgress)?;
+    assert_eq!(
+        manifest.task(task_id).unwrap().state,
+        TaskCardState::InProgress
+    );
+
+    // Transition to Review
+    let manifest = core.set_team_task_state(team_id, task_id, TaskCardState::Review)?;
+    assert_eq!(manifest.task(task_id).unwrap().state, TaskCardState::Review);
+
+    // Transition to Done
+    let manifest = core.set_team_task_state(team_id, task_id, TaskCardState::Done)?;
+    assert_eq!(manifest.task(task_id).unwrap().state, TaskCardState::Done);
+
     Ok(())
 }

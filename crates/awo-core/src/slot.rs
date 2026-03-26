@@ -50,10 +50,13 @@ impl SlotRecord {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 pub enum SlotStatus {
+    #[serde(alias = "Active")]
     Active,
+    #[serde(alias = "Released")]
     Released,
+    #[serde(alias = "Missing")]
     Missing,
 }
 
@@ -67,11 +70,15 @@ impl SlotStatus {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 pub enum FingerprintStatus {
+    #[serde(alias = "Unknown")]
     Unknown,
+    #[serde(alias = "Ready")]
     Ready,
+    #[serde(alias = "Stale")]
     Stale,
+    #[serde(alias = "Missing")]
     Missing,
 }
 
@@ -85,9 +92,11 @@ impl FingerprintStatus {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 pub enum SlotStrategy {
+    #[serde(alias = "Fresh")]
     Fresh,
+    #[serde(alias = "Warm")]
     Warm,
 }
 

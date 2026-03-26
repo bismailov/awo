@@ -146,6 +146,7 @@ The current TUI is intentionally small and operational:
 - `d` run `skills doctor` for the selected repo
 - `n` send a no-op command through the core
 - `r` refresh review state
+- `T` toggle team dashboard
 
 The TUI now also surfaces:
 - repo-scoped team manifests

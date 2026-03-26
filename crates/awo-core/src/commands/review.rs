@@ -36,9 +36,9 @@ impl<'a> CommandRunner<'a> {
             DomainEvent::ReviewStatusLoaded { dirty, stale },
         ];
 
-        Ok(CommandOutcome {
-            summary: format!("Review status updated: {dirty} dirty, {stale} stale."),
+        Ok(CommandOutcome::with_events(
+            format!("Review status updated: {dirty} dirty, {stale} stale."),
             events,
-        })
+        ))
     }
 }

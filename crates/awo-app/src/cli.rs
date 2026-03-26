@@ -66,6 +66,9 @@ pub enum RepoCommand {
         remote_url: String,
         destination: Option<String>,
     },
+    Remove {
+        repo_id: String,
+    },
     Fetch {
         repo_id: String,
     },
@@ -347,6 +350,23 @@ pub enum TeamTaskCommand {
         max_cost_tier: Option<String>,
         #[arg(long)]
         no_fallback: bool,
+    },
+    Delegate {
+        team_id: String,
+        task_id: String,
+        target_member_id: String,
+        #[arg(long)]
+        notes: Option<String>,
+        #[arg(long)]
+        focus_file: Vec<String>,
+        #[arg(long, default_value = "true")]
+        auto_start: bool,
+        #[arg(long, default_value = "fresh")]
+        strategy: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        launch_mode: Option<String>,
     },
 }
 

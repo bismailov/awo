@@ -977,3 +977,95 @@ state = "todo"
     );
     Ok(())
 }
+
+#[test]
+fn legacy_pascal_case_enums_are_accepted() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("legacy.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "legacy-team"
+repo_id = "repo-1"
+objective = "Test backward compatibility"
+status = "Running"
+members = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "ExternalSlots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[tasks]]
+task_id = "task-1"
+title = "Legacy task"
+summary = "Uses PascalCase enums"
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "Code"
+verification = []
+depends_on = []
+state = "InProgress"
+"#,
+    )?;
+
+    let manifest = load_team_manifest(&path)?;
+    assert_eq!(manifest.status, TeamStatus::Running);
+    assert_eq!(
+        manifest.lead.execution_mode,
+        TeamExecutionMode::ExternalSlots
+    );
+    assert_eq!(manifest.tasks[0].state, TaskCardState::InProgress);
+    Ok(())
+}
+
+#[test]
+fn snake_case_enums_are_canonical() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path().join("canonical.toml");
+    std::fs::write(
+        &path,
+        r#"version = 1
+team_id = "canonical-team"
+repo_id = "repo-1"
+objective = "Test canonical format"
+status = "running"
+members = []
+
+[lead]
+member_id = "lead"
+role = "lead"
+execution_mode = "external_slots"
+read_only = true
+write_scope = []
+context_packs = []
+skills = []
+
+[[tasks]]
+task_id = "task-1"
+title = "Canonical task"
+summary = "Uses snake_case enums"
+owner_id = "lead"
+read_only = false
+write_scope = []
+deliverable = "Code"
+verification = []
+depends_on = []
+state = "in_progress"
+"#,
+    )?;
+
+    let manifest = load_team_manifest(&path)?;
+    assert_eq!(manifest.status, TeamStatus::Running);
+    assert_eq!(
+        manifest.lead.execution_mode,
+        TeamExecutionMode::ExternalSlots
+    );
+    assert_eq!(manifest.tasks[0].state, TaskCardState::InProgress);
+    Ok(())
+}
