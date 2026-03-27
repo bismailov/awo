@@ -974,6 +974,7 @@ fn map_tool_to_command(
                 result_session_id: None,
                 handoff_note: None,
                 output_log_path: None,
+                superseded_by_task_id: None,
             };
             Ok(awo_core::Command::TeamTaskAdd { team_id, task })
         }

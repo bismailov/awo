@@ -48,6 +48,7 @@ The manifest stores:
 - shared objective
 - durable lead profile
 - current lead session/member state
+- plan items
 - member roster
 - task cards
 - status
@@ -73,6 +74,20 @@ context_packs = ["architecture"]
 skills = ["planning-with-files"]
 
 current_lead_member_id = "lead"
+
+[[plan_items]]
+plan_id = "plan-1"
+title = "Break out runtime persistence work"
+summary = "Convert the high-level implementation idea into one executable task card."
+owner_id = "worker-a"
+runtime = "codex"
+model = "gpt-5.4-mini"
+read_only = false
+write_scope = ["crates/awo-core/src/runtime.rs"]
+deliverable = "A concrete task card ready for execution"
+verification = ["cargo test"]
+depends_on = []
+state = "approved"
 
 [[members]]
 member_id = "worker-a"
@@ -116,6 +131,30 @@ state = "todo"
 
 ## Task Card Rules
 
+## Plan Item Rules
+
+Plan items sit one step above task cards. They are the durable planning layer a lead uses before committing to executable work.
+
+Every plan item should define:
+- title
+- summary
+- optional owner intent
+- optional runtime/model intent
+- write scope
+- verification intent
+- optional notes
+
+Plan-item states:
+- `draft`
+- `approved`
+- `generated`
+
+Generation rules:
+- plan items are immutable records; they are not edited into task cards
+- a plan item must be `approved` before generation
+- generation creates a new task card and stores `generated_task_id` on the plan item
+- a generated plan item preserves planning history even after the task card changes state later
+
 Every task card should define:
 - owner
 - runtime/model intent when it differs from the owner's default
@@ -129,6 +168,20 @@ Task cards may also retain bounded review data after execution:
 - result session id
 - handoff note
 - output log path
+- superseded-by task id when the card is retired in favor of a replacement
+
+Task-card states:
+- `todo`
+- `in_progress`
+- `review`
+- `done`
+- `blocked`
+- `cancelled`
+- `superseded`
+
+Immutable recovery uses explicit state transitions instead of edit/delete:
+- `cancelled` means the task card is intentionally retired without a replacement
+- `superseded` means the task card is intentionally retired in favor of another task card
 
 That keeps parallel work explicit and makes merge/review safer.
 
@@ -147,7 +200,7 @@ That keeps parallel work explicit and makes merge/review safer.
 `awo team archive <team_id>` transitions a team to the `archived` status.
 
 **Safety requirements:**
-- All tasks must be in a terminal state (`done` or `blocked`).
+- All tasks must be in a terminal state (`done`, `blocked`, `cancelled`, or `superseded`).
 - Tasks in `todo`, `in_progress`, or `review` block archival.
 - A team that is already archived cannot be archived again.
 - Bound slots that are still active block archival.
@@ -206,7 +259,7 @@ Reset makes alpha-stage cleanup practical: when a team run goes sideways the ope
 | `planning` | No tasks started (initial or post-reset)          |
 | `running`  | Some tasks in progress                            |
 | `blocked`  | Some tasks blocked                                |
-| `complete` | All tasks done                                    |
+| `complete` | All remaining task cards are closed               |
 | `archived` | Operator has explicitly archived the team         |
 
 ## Recommendation

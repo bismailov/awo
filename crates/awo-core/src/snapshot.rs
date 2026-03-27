@@ -1,4 +1,7 @@
-use crate::capabilities::{CostTier, RuntimeCapabilityDescriptor, all_runtime_capabilities};
+use crate::capabilities::{
+    CostTier, RuntimeCapabilityDescriptor, all_runtime_capabilities, session_recovery_guidance,
+    usage_note_for_runtime,
+};
 use crate::config::AppConfig;
 use crate::context::discover_repo_context;
 use crate::diagnostics::DiagnosticSeverity;
@@ -13,9 +16,7 @@ use crate::skills::{
 };
 use crate::slot::{FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy};
 use crate::store::Store;
-use crate::team::{
-    TaskCardState, TeamManifest, TeamStatus, list_team_manifest_paths, load_team_manifest,
-};
+use crate::team::{TeamManifest, TeamStatus, list_team_manifest_paths, load_team_manifest};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -210,6 +211,8 @@ pub struct SessionSummary {
     pub exit_code: Option<i64>,
     pub end_reason: Option<SessionEndReason>,
     pub capacity_status: SessionCapacityStatus,
+    pub usage_note: Option<String>,
+    pub recovery_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -442,6 +445,11 @@ fn build_repo_summary(value: RegisteredRepo) -> RepoSummary {
 impl From<SessionRecord> for SessionSummary {
     fn from(value: SessionRecord) -> Self {
         let capacity_status = value.capacity_status();
+        let runtime_kind = value.runtime.parse().ok();
+        let usage_note = runtime_kind.map(usage_note_for_runtime);
+        let recovery_hint = runtime_kind.and_then(|runtime| {
+            session_recovery_guidance(runtime, value.status, value.end_reason, capacity_status)
+        });
         Self {
             id: value.id,
             repo_id: value.repo_id,
@@ -455,6 +463,8 @@ impl From<SessionRecord> for SessionSummary {
             exit_code: value.exit_code,
             end_reason: value.end_reason,
             capacity_status,
+            usage_note,
+            recovery_hint,
         }
     }
 }
@@ -482,7 +492,7 @@ fn build_team_summary(
     let open_task_count = value
         .tasks
         .iter()
-        .filter(|task| task.state != TaskCardState::Done)
+        .filter(|task| !task.state.is_closed())
         .count();
     let routing_preferences = value
         .routing_preferences
@@ -545,30 +555,31 @@ fn build_current_lead_attention(
     current_lead_session: Option<&SessionRecord>,
 ) -> Option<String> {
     match current_lead_session {
-        Some(session) => match session.status {
-            SessionStatus::Running => None,
-            SessionStatus::Prepared => {
-                Some("Current lead session is prepared but not yet running.".to_string())
-            }
-            SessionStatus::Completed => Some(
-                "Current lead session completed. Start a new lead task or promote another member if coordination should continue.".to_string(),
-            ),
-            SessionStatus::Failed => Some(match session.end_reason {
-                Some(SessionEndReason::Timeout) => {
-                    "Current lead session timed out. Inspect logs and hand off or restart the lead."
-                        .to_string()
+        Some(session) => session
+            .runtime
+            .parse()
+            .ok()
+            .and_then(|runtime| {
+                session_recovery_guidance(
+                    runtime,
+                    session.status,
+                    session.end_reason,
+                    session.capacity_status(),
+                )
+            })
+            .map(|guidance| match session.status {
+                SessionStatus::Completed => format!(
+                    "Current lead session completed. {guidance}"
+                ),
+                SessionStatus::Cancelled => format!(
+                    "Current lead session was cancelled. {guidance}"
+                ),
+                SessionStatus::Failed => format!("Current lead session failed. {guidance}"),
+                SessionStatus::Prepared => {
+                    format!("Current lead session is prepared but not yet running. {guidance}")
                 }
-                Some(SessionEndReason::TokenExhausted) => {
-                    "Current lead session appears to have exhausted tokens or context budget. Inspect logs and hand off or restart the lead."
-                        .to_string()
-                }
-                _ => "Current lead session failed. This can happen after runtime errors, token exhaustion, or timeout; inspect logs and hand off or restart the lead."
-                    .to_string(),
+                SessionStatus::Running => guidance,
             }),
-            SessionStatus::Cancelled => Some(
-                "Current lead session was cancelled. Restart the lead or promote another member before continuing orchestration.".to_string(),
-            ),
-        },
         None if manifest.current_lead_session_id().is_some() => Some(
             "Tracked current lead session is missing. Inspect logs and replace or restart the lead session."
                 .to_string(),

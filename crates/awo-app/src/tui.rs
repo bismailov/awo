@@ -5,7 +5,7 @@ mod widgets;
 
 use anyhow::Result;
 use awo_core::{
-    AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
+    AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, PlanItemState, RepoSummary,
     RoutingPreferencesSummary, RuntimeCapabilityDescriptor, SessionEndReason, SessionLaunchMode,
     SessionStatus, SessionSummary, SlotSummary, TaskCardState, TeamManifest,
     TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
@@ -79,6 +79,7 @@ pub(crate) enum InputAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TeamDashboardFocus {
     Team,
+    Plan,
     Member,
     Task,
 }
@@ -86,6 +87,7 @@ pub(crate) enum TeamDashboardFocus {
 #[derive(Debug)]
 pub(crate) struct TeamDashboardState {
     pub selected_team_idx: usize,
+    pub selected_plan_idx: usize,
     pub selected_member_idx: usize,
     pub selected_task_idx: usize,
     pub teams: Vec<TeamManifest>,
@@ -148,6 +150,7 @@ pub fn run_tui() -> Result<()> {
         filter_query: None,
         team_dashboard: TeamDashboardState {
             selected_team_idx: 0,
+            selected_plan_idx: 0,
             selected_member_idx: 0,
             selected_task_idx: 0,
             teams: Vec::new(),
@@ -380,6 +383,17 @@ pub(crate) fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
         .get(state.team_dashboard.selected_team_idx)
         .map(|team| team.members.len() + 1)
         .unwrap_or(0);
+    let plan_count = state
+        .team_dashboard
+        .teams
+        .get(state.team_dashboard.selected_team_idx)
+        .map(|team| team.plan_items.len())
+        .unwrap_or(0);
+    state.team_dashboard.selected_plan_idx = if plan_count > 0 {
+        state.team_dashboard.selected_plan_idx.min(plan_count - 1)
+    } else {
+        0
+    };
     state.team_dashboard.selected_member_idx = if member_count > 0 {
         state
             .team_dashboard
@@ -457,6 +471,30 @@ pub(crate) fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, sessio
     }
 }
 
+pub(crate) fn fetch_slot_diff(core: &mut AppCore, state: &mut TuiState, slot_id: &str) {
+    match core.dispatch(Command::ReviewDiff {
+        slot_id: slot_id.to_string(),
+    }) {
+        Ok(outcome) => {
+            if let Some(data) = &outcome.data {
+                let content = data.get("content").and_then(|value| value.as_str());
+                let slot_id = data.get("slot_id").and_then(|value| value.as_str());
+                let slot_path = data.get("slot_path").and_then(|value| value.as_str());
+                if let Some(content) = content {
+                    state.log_content = Some(content.to_string());
+                    state.log_session_id = Some(format!("slot-diff:{}", slot_id.unwrap_or("?")));
+                    state.log_path = slot_path.map(ToString::to_string);
+                    state.show_log_panel = true;
+                }
+            }
+            append_events(state, outcome.events);
+        }
+        Err(error) => {
+            state.status = format!("Error: {error:#}");
+        }
+    }
+}
+
 pub(crate) fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, team_id: &str) {
     let manifest = match core.load_team_manifest(team_id) {
         Ok(m) => m,
@@ -487,28 +525,7 @@ pub(crate) fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, tea
         attach_context: true,
         routing_preferences: None,
     };
-    match core.start_team_task(options) {
-        Ok((_manifest, slot_outcome, session_outcome, execution)) => {
-            let mut messages = Vec::new();
-            if let Some(slot_out) = &slot_outcome {
-                messages.push(slot_out.summary.clone());
-            }
-            messages.push(session_outcome.summary.clone());
-            messages.push(format!(
-                "Task `{}` started with {} on slot `{}`.",
-                execution.task_id, execution.runtime, execution.slot_id
-            ));
-            state.status = messages.last().cloned().unwrap_or_default();
-            if let Some(slot_out) = slot_outcome {
-                append_events(state, slot_out.events);
-            }
-            append_events(state, session_outcome.events);
-        }
-        Err(err) => {
-            state.status = format!("Error: {err:#}");
-            state.messages.push(state.status.clone());
-        }
-    }
+    apply_team_task_start(core, state, options);
 }
 
 pub(crate) fn refresh_team_dashboard_data(core: &AppCore, state: &mut TuiState) {
@@ -540,22 +557,28 @@ pub(crate) fn start_team_task_explicit(
         attach_context: true,
         routing_preferences: None,
     };
-    match core.start_team_task(options) {
-        Ok((_manifest, slot_outcome, session_outcome, execution)) => {
-            let mut messages = Vec::new();
-            if let Some(slot_out) = &slot_outcome {
-                messages.push(slot_out.summary.clone());
+    apply_team_task_start(core, state, options);
+}
+
+fn apply_team_task_start(core: &mut AppCore, state: &mut TuiState, options: TeamTaskStartOptions) {
+    match core.dispatch(Command::TeamTaskStart { options }) {
+        Ok(outcome) => {
+            state.status = outcome.summary.clone();
+            append_events(state, outcome.events);
+            if let Some(data) = outcome.data
+                && let Some(execution) = data.get("execution")
+                && let Ok(execution) =
+                    serde_json::from_value::<awo_core::TeamTaskExecution>(execution.clone())
+            {
+                state.messages.push(format!(
+                    "Task `{}` started with {} on slot `{}`.",
+                    execution.task_id, execution.runtime, execution.slot_id
+                ));
+                state.status = format!(
+                    "Task `{}` started with {} on slot `{}`.",
+                    execution.task_id, execution.runtime, execution.slot_id
+                );
             }
-            messages.push(session_outcome.summary.clone());
-            messages.push(format!(
-                "Task `{}` started with {} on slot `{}`.",
-                execution.task_id, execution.runtime, execution.slot_id
-            ));
-            state.status = messages.last().cloned().unwrap_or_default();
-            if let Some(slot_out) = slot_outcome {
-                append_events(state, slot_out.events);
-            }
-            append_events(state, session_outcome.events);
         }
         Err(err) => {
             state.status = format!("Error: {err:#}");
@@ -860,16 +883,20 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     frame.render_widget(messages, bottom[3]);
 
     if state.show_log_panel {
-        let session_running = snapshot.sessions.iter().any(|s| {
-            Some(&s.id) == state.log_session_id.as_ref()
-                && s.status == awo_core::runtime::SessionStatus::Running
-        });
-        let status_indicator = if session_running { " [running]" } else { "" };
-        let title = format!(
-            "Log: {}{} (Esc to close, r to refresh)",
-            state.log_session_id.as_deref().unwrap_or("?"),
-            status_indicator,
-        );
+        let log_id = state.log_session_id.as_deref().unwrap_or("?");
+        let title = if let Some(slot_id) = log_id.strip_prefix("slot-diff:") {
+            format!("Review Diff: {slot_id} (Esc to close, r to refresh)")
+        } else {
+            let session_running = snapshot.sessions.iter().any(|s| {
+                Some(&s.id) == state.log_session_id.as_ref()
+                    && s.status == awo_core::runtime::SessionStatus::Running
+            });
+            let status_indicator = if session_running { " [running]" } else { "" };
+            format!(
+                "Log: {}{} (Esc to close, r to refresh)",
+                log_id, status_indicator,
+            )
+        };
         let content = state.log_content.as_deref().unwrap_or("(empty)");
         let log_widget = Paragraph::new(content)
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -975,9 +1002,10 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
     if let Some(team) = dashboard {
         let details_layout = Layout::vertical([
             Constraint::Length(7),  // Mission / lead state
+            Constraint::Length(8),  // Plan items
             Constraint::Length(8),  // Members
-            Constraint::Min(9),     // Task cards
-            Constraint::Length(10), // Selected task detail
+            Constraint::Min(8),     // Task cards
+            Constraint::Length(10), // Selected detail
             Constraint::Length(3),  // Progress
         ])
         .split(layout[1]);
@@ -988,6 +1016,39 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             .block(Block::default().borders(Borders::ALL).title("Mission"))
             .wrap(Wrap { trim: true });
         frame.render_widget(objective, details_layout[0]);
+
+        // Plan Items
+        let plan_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Plan {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let plan_items: Vec<ListItem> = if team.plan_items.is_empty() {
+            vec![ListItem::new("(no plan items)")]
+        } else {
+            team.plan_items
+                .iter()
+                .enumerate()
+                .map(|(idx, plan)| {
+                    let selected = state.team_dashboard.focus == TeamDashboardFocus::Plan
+                        && state.team_dashboard.selected_plan_idx == idx;
+                    let style = if selected {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(format!("{} [{}] {}", plan.plan_id, plan.state, plan.title))
+                        .style(style)
+                })
+                .collect()
+        };
+        let plan_list = List::new(plan_items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Plan Items")
+                .border_style(plan_border_style),
+        );
+        frame.render_widget(plan_list, details_layout[1]);
 
         // Members
         let member_items: Vec<ListItem> = team
@@ -1048,7 +1109,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
                 .title("Members")
                 .border_style(members_border_style),
         );
-        frame.render_widget(members_list, details_layout[1]);
+        frame.render_widget(members_list, details_layout[2]);
 
         // Task Card Table
         let task_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Task {
@@ -1057,7 +1118,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             Style::default()
         };
 
-        let header_cells = ["ID", "Owner", "State", "Slot", "Deliverable"]
+        let header_cells = ["ID", "Owner", "Queue", "State", "Slot", "Deliverable"]
             .iter()
             .map(|h| Cell::from(*h).style(Style::default().add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).height(1).bottom_margin(0);
@@ -1073,6 +1134,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             Row::new(vec![
                 Cell::from(task.task_id.as_str()),
                 Cell::from(task.owner_id.as_str()),
+                Cell::from(task_queue_role_label(task)),
                 Cell::from(task.state.to_string()),
                 Cell::from(task.slot_id.as_deref().unwrap_or("-")),
                 Cell::from(task.deliverable.as_str()),
@@ -1083,11 +1145,12 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
         let task_table = Table::new(
             rows,
             [
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
-                Constraint::Percentage(40),
+                Constraint::Percentage(14),
+                Constraint::Percentage(14),
+                Constraint::Percentage(18),
+                Constraint::Percentage(12),
+                Constraint::Percentage(12),
+                Constraint::Percentage(30),
             ],
         )
         .header(header)
@@ -1097,31 +1160,32 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
                 .title("Task Cards")
                 .border_style(task_border_style),
         );
-        frame.render_widget(task_table, details_layout[2]);
+        frame.render_widget(task_table, details_layout[3]);
 
-        let task_detail = Paragraph::new(
-            render_dashboard_task_detail_lines(
-                team,
-                state.team_dashboard.selected_task_idx,
-                state.last_snapshot.as_ref(),
+        let (detail_title, detail_lines) = if state.team_dashboard.focus == TeamDashboardFocus::Plan
+        {
+            (
+                "Plan Item Detail",
+                render_dashboard_plan_detail_lines(team, state.team_dashboard.selected_plan_idx),
             )
-            .join("\n"),
-        )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Task Card Detail"),
-        )
-        .wrap(Wrap { trim: true });
-        frame.render_widget(task_detail, details_layout[3]);
+        } else {
+            (
+                "Task Card Detail",
+                render_dashboard_task_detail_lines(
+                    team,
+                    state.team_dashboard.selected_task_idx,
+                    state.last_snapshot.as_ref(),
+                ),
+            )
+        };
+        let task_detail = Paragraph::new(detail_lines.join("\n"))
+            .block(Block::default().borders(Borders::ALL).title(detail_title))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(task_detail, details_layout[4]);
 
         // Progress
         let total_tasks = team.tasks.len();
-        let done_tasks = team
-            .tasks
-            .iter()
-            .filter(|t| t.state == TaskCardState::Done)
-            .count();
+        let done_tasks = team.tasks.iter().filter(|t| t.state.is_closed()).count();
         let progress = if total_tasks > 0 {
             done_tasks as f64 / total_tasks as f64
         } else {
@@ -1132,11 +1196,8 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             .block(Block::default().borders(Borders::ALL).title("Progress"))
             .gauge_style(Style::default().fg(Color::Green))
             .ratio(progress)
-            .label(format!(
-                "{}/{} task cards completed",
-                done_tasks, total_tasks
-            ));
-        frame.render_widget(gauge, details_layout[4]);
+            .label(format!("{}/{} task cards closed", done_tasks, total_tasks));
+        frame.render_widget(gauge, details_layout[5]);
     } else {
         let no_team = Paragraph::new("No team selected or no teams found.")
             .block(Block::default().borders(Borders::ALL));
@@ -1303,6 +1364,16 @@ fn render_dashboard_mission_lines(
     snapshot: Option<&AppSnapshot>,
 ) -> Vec<String> {
     let mut lines = vec![format!("Objective: {}", team.objective)];
+    let draft_plans = team
+        .plan_items
+        .iter()
+        .filter(|plan| plan.state == PlanItemState::Draft)
+        .count();
+    let approved_plans = team
+        .plan_items
+        .iter()
+        .filter(|plan| plan.state == PlanItemState::Approved)
+        .count();
     let review_queue = team
         .tasks
         .iter()
@@ -1312,6 +1383,16 @@ fn render_dashboard_mission_lines(
         .tasks
         .iter()
         .filter(|task| task.state == TaskCardState::Done && task.slot_id.is_some())
+        .count();
+    let history_queue = team
+        .tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.state,
+                TaskCardState::Cancelled | TaskCardState::Superseded
+            )
+        })
         .count();
     let session = team.current_lead_session_id().and_then(|session_id| {
         snapshot.and_then(|snapshot| {
@@ -1330,13 +1411,65 @@ fn render_dashboard_mission_lines(
             .unwrap_or("-")
     ));
     lines.push(format!(
-        "Review queue: {} | Consolidation cleanup: {}",
-        review_queue, consolidation_queue
+        "Plan queue: {} draft | {} approved | {} generated",
+        draft_plans,
+        approved_plans,
+        team.plan_items
+            .len()
+            .saturating_sub(draft_plans + approved_plans)
+    ));
+    lines.push(format!(
+        "Review queue: {} | Consolidation cleanup: {} | History: {}",
+        review_queue, consolidation_queue, history_queue
     ));
     if let Some(attention) =
         dashboard_current_lead_attention(team, session, team.current_lead_session_id().is_some())
     {
         lines.push(format!("Lead attention: {attention}"));
+    }
+    lines
+}
+
+fn render_dashboard_plan_detail_lines(
+    team: &TeamManifest,
+    selected_plan_idx: usize,
+) -> Vec<String> {
+    let Some(plan) = team.plan_items.get(selected_plan_idx) else {
+        return vec!["Select a plan item to inspect or press p to add one.".to_string()];
+    };
+
+    let mut lines = vec![
+        format!("Plan: {} ({})", plan.title, plan.plan_id),
+        format!("State: {}", plan.state),
+        format!("Owner intent: {}", plan.owner_id.as_deref().unwrap_or("-")),
+        format!("Summary: {}", plan.summary),
+    ];
+    if plan.runtime.is_some() || plan.model.is_some() {
+        lines.push(format!(
+            "Requested runtime/model: {}/{}",
+            plan.runtime.as_deref().unwrap_or("-"),
+            plan.model.as_deref().unwrap_or("-"),
+        ));
+    }
+    if let Some(deliverable) = &plan.deliverable {
+        lines.push(format!("Deliverable: {deliverable}"));
+    }
+    if !plan.write_scope.is_empty() {
+        lines.push(format!("Write scope: {}", plan.write_scope.join(", ")));
+    }
+    if !plan.verification.is_empty() {
+        lines.push(format!("Verification: {}", plan.verification.join(", ")));
+    }
+    if !plan.depends_on.is_empty() {
+        lines.push(format!("Depends on: {}", plan.depends_on.join(", ")));
+    }
+    if let Some(notes) = &plan.notes {
+        lines.push(format!("Notes: {notes}"));
+    }
+    if let Some(task_id) = &plan.generated_task_id {
+        lines.push(format!("Generated task: {task_id}"));
+    } else {
+        lines.push("Actions: P approve draft item, G generate task card.".to_string());
     }
     lines
 }
@@ -1418,20 +1551,16 @@ fn render_dashboard_task_detail_lines(
             task.model.as_deref().unwrap_or("-"),
         ));
     }
-    let queue_label = match task.state {
-        TaskCardState::Review => "review queue",
-        TaskCardState::Done if task.slot_id.is_some() => "consolidation cleanup",
-        TaskCardState::Done => "done",
-        TaskCardState::InProgress => "running",
-        TaskCardState::Blocked => "blocked",
-        TaskCardState::Todo => "todo",
-    };
+    let queue_label = task_queue_role_label(task);
     lines.push(format!("Queue role: {queue_label}"));
     if let Some(result_summary) = &task.result_summary {
         lines.push(format!("Result: {result_summary}"));
     }
     if let Some(handoff_note) = &task.handoff_note {
         lines.push(format!("Handoff: {handoff_note}"));
+    }
+    if let Some(replacement_task_id) = &task.superseded_by_task_id {
+        lines.push(format!("Superseded by: {replacement_task_id}"));
     }
     if let Some(session_id) = &task.result_session_id {
         lines.push(format!(
@@ -1448,6 +1577,14 @@ fn render_dashboard_task_detail_lines(
                 .map(|session| session.capacity_status.as_str())
                 .unwrap_or("-"),
         ));
+        if let Some(session) = session {
+            if let Some(usage_note) = &session.usage_note {
+                lines.push(format!("Usage: {usage_note}"));
+            }
+            if let Some(recovery_hint) = &session.recovery_hint {
+                lines.push(format!("Recovery: {recovery_hint}"));
+            }
+        }
     }
     if let Some(slot_id) = &task.slot_id {
         lines.push(format!(
@@ -1459,7 +1596,11 @@ fn render_dashboard_task_detail_lines(
         ));
         if let Some(slot) = slot {
             lines.push(format!("Path: {}", slot.slot_path));
-            if task.state == TaskCardState::Done {
+            lines.push("Inspect: press v for diff or o for log.".to_string());
+            if matches!(
+                task.state,
+                TaskCardState::Done | TaskCardState::Cancelled | TaskCardState::Superseded
+            ) {
                 lines.push(
                     "Cleanup: press X to release/retain-for-reuse, or K to delete now.".to_string(),
                 );
@@ -1470,6 +1611,19 @@ fn render_dashboard_task_detail_lines(
         lines.push(format!("Log: {log_path}"));
     }
     lines
+}
+
+fn task_queue_role_label(task: &awo_core::TaskCard) -> &'static str {
+    match task.state {
+        TaskCardState::Review => "review queue",
+        TaskCardState::Done if task.slot_id.is_some() => "cleanup queue",
+        TaskCardState::Done => "done",
+        TaskCardState::InProgress => "running",
+        TaskCardState::Blocked => "blocked",
+        TaskCardState::Cancelled => "cancelled history",
+        TaskCardState::Superseded => "superseded history",
+        TaskCardState::Todo => "todo",
+    }
 }
 
 pub(crate) fn dispatch_in_background(
@@ -1617,6 +1771,7 @@ mod tests {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
         }
     }
 
@@ -1640,6 +1795,7 @@ mod tests {
             filter_query: None,
             team_dashboard: TeamDashboardState {
                 selected_team_idx: 0,
+                selected_plan_idx: 0,
                 selected_member_idx: 0,
                 selected_task_idx: 0,
                 teams: Vec::new(),
@@ -1681,6 +1837,7 @@ mod tests {
             lead: test_member("lead", "lead", None, true),
             current_lead_member_id: Some("lead".to_string()),
             current_lead_session_id: None,
+            plan_items: Vec::new(),
             members: vec![test_member("worker-a", "worker", Some("shell"), false)],
             tasks: vec![test_task("task-1", "worker-a")],
         }];
@@ -1700,6 +1857,75 @@ mod tests {
                 .iter()
                 .any(|line| line.to_string().contains("repository by path"))
         );
+    }
+
+    #[test]
+    fn task_detail_includes_usage_and_recovery_guidance() {
+        let mut snapshot = empty_snapshot();
+        snapshot.sessions.push(SessionSummary {
+            id: "session-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            slot_id: "slot-1".to_string(),
+            runtime: "codex".to_string(),
+            supervisor: None,
+            status: SessionStatus::Failed,
+            read_only: false,
+            dry_run: false,
+            log_path: Some("/tmp/session.log".to_string()),
+            exit_code: Some(1),
+            end_reason: Some(SessionEndReason::TokenExhausted),
+            capacity_status: awo_core::runtime::SessionCapacityStatus::Exhausted,
+            usage_note: Some(
+                "Structured usage stats are not available through the current CLI adapter; inspect logs or provider dashboards for exact spend."
+                    .to_string(),
+            ),
+            recovery_hint: Some(
+                "Session likely exhausted context or token budget. Hand off to another agent, reduce scope, or choose a different model."
+                    .to_string(),
+            ),
+        });
+        let lines = render_dashboard_task_detail_lines(
+            &TeamManifest {
+                version: 1,
+                team_id: "alpha".to_string(),
+                repo_id: "repo-1".to_string(),
+                objective: "Ship".to_string(),
+                status: awo_core::TeamStatus::Running,
+                routing_preferences: None,
+                lead: test_member("lead", "lead", None, true),
+                current_lead_member_id: Some("lead".to_string()),
+                current_lead_session_id: None,
+                plan_items: Vec::new(),
+                members: vec![test_member("worker-a", "worker", Some("codex"), false)],
+                tasks: vec![TaskCard {
+                    task_id: "task-1".to_string(),
+                    title: "Title".to_string(),
+                    summary: "Summary".to_string(),
+                    owner_id: "worker-a".to_string(),
+                    runtime: Some("codex".to_string()),
+                    model: None,
+                    slot_id: Some("slot-1".to_string()),
+                    branch_name: Some("awo/task-1".to_string()),
+                    read_only: false,
+                    write_scope: Vec::new(),
+                    deliverable: "Patch".to_string(),
+                    verification: Vec::new(),
+                    verification_command: None,
+                    depends_on: Vec::new(),
+                    state: TaskCardState::Review,
+                    result_summary: Some("Needs another pass".to_string()),
+                    result_session_id: Some("session-1".to_string()),
+                    handoff_note: None,
+                    output_log_path: Some("/tmp/session.log".to_string()),
+                    superseded_by_task_id: None,
+                }],
+            },
+            0,
+            Some(&snapshot),
+        );
+
+        assert!(lines.iter().any(|line| line.contains("Usage:")));
+        assert!(lines.iter().any(|line| line.contains("Recovery:")));
     }
 
     #[test]

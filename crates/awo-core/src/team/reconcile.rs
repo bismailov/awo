@@ -99,6 +99,21 @@ pub fn reconcile_team_manifest_state(
             .as_ref()
             .is_none_or(|slot| slot.status == SlotStatus::Released);
 
+        if matches!(
+            task.state,
+            TaskCardState::Cancelled | TaskCardState::Superseded
+        ) {
+            if slot_missing_or_released && !has_non_terminal_session {
+                if task.slot_id.take().is_some() {
+                    changed = true;
+                }
+                if task.branch_name.take().is_some() {
+                    changed = true;
+                }
+            }
+            continue;
+        }
+
         if has_active_session {
             if task.state != TaskCardState::InProgress {
                 task.state = TaskCardState::InProgress;

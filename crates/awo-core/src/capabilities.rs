@@ -1,4 +1,6 @@
-use crate::runtime::{RuntimeKind, SessionLaunchMode};
+use crate::runtime::{
+    RuntimeKind, SessionCapacityStatus, SessionEndReason, SessionLaunchMode, SessionStatus,
+};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
@@ -68,6 +70,8 @@ pub struct RuntimeCapabilityDescriptor {
     pub limit_profile: LimitProfile,
     pub usage_reporting: CapabilitySupport,
     pub capacity_reporting: CapabilitySupport,
+    pub budget_guardrails: CapabilitySupport,
+    pub session_lifetime: CapabilitySupport,
     pub operator_note: String,
     pub inline_subagents: CapabilitySupport,
     pub multi_session_teams: CapabilitySupport,
@@ -91,6 +95,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             limit_profile: LimitProfile::ApiMetered,
             usage_reporting: CapabilitySupport::Unknown,
             capacity_reporting: CapabilitySupport::Unknown,
+            budget_guardrails: CapabilitySupport::Unknown,
+            session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "High intelligence, higher spend. Use for complex planning and difficult code review."
                 .to_string(),
             inline_subagents: CapabilitySupport::Native,
@@ -115,6 +121,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             limit_profile: LimitProfile::ApiMetered,
             usage_reporting: CapabilitySupport::Unknown,
             capacity_reporting: CapabilitySupport::Unknown,
+            budget_guardrails: CapabilitySupport::Unknown,
+            session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "Good default balance for one-shot implementation and review loops."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
@@ -139,6 +147,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             limit_profile: LimitProfile::ApiMetered,
             usage_reporting: CapabilitySupport::Unknown,
             capacity_reporting: CapabilitySupport::Unknown,
+            budget_guardrails: CapabilitySupport::Unknown,
+            session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "Useful for large-context reads, audits, and lower-cost fallback work."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
@@ -162,6 +172,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             limit_profile: LimitProfile::LocalUnlimited,
             usage_reporting: CapabilitySupport::Unsupported,
             capacity_reporting: CapabilitySupport::Unsupported,
+            budget_guardrails: CapabilitySupport::Unsupported,
+            session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "Local validation and orchestration helper with no model quota pressure."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unsupported,
@@ -192,6 +204,70 @@ pub fn all_runtime_capabilities() -> Vec<RuntimeCapabilityDescriptor> {
     .collect()
 }
 
+pub fn usage_note_for_runtime(runtime: RuntimeKind) -> String {
+    match runtime {
+        RuntimeKind::Shell => {
+            "Shell has no token budget and does not expose model-usage telemetry.".to_string()
+        }
+        RuntimeKind::Claude | RuntimeKind::Codex | RuntimeKind::Gemini => {
+            "Structured usage stats are not available through the current CLI adapter; inspect logs or provider dashboards for exact spend.".to_string()
+        }
+    }
+}
+
+pub fn session_recovery_guidance(
+    runtime: RuntimeKind,
+    status: SessionStatus,
+    end_reason: Option<SessionEndReason>,
+    capacity_status: SessionCapacityStatus,
+) -> Option<String> {
+    match status {
+        SessionStatus::Prepared => Some(
+            "Session is prepared but not yet running. Start it or replace it before continuing."
+                .to_string(),
+        ),
+        SessionStatus::Running => None,
+        SessionStatus::Completed => Some(
+            "Session completed. Review diff/log output, then accept the task card or clean up its slot."
+                .to_string(),
+        ),
+        SessionStatus::Cancelled => Some(
+            "Session was cancelled by the operator. Restart it, reassign the task card, or close it out intentionally."
+                .to_string(),
+        ),
+        SessionStatus::Failed => match end_reason {
+            Some(SessionEndReason::Timeout) => Some(
+                "Session timed out. Split the task card, narrow scope, or restart with a fresh handoff."
+                    .to_string(),
+            ),
+            Some(SessionEndReason::TokenExhausted) => Some(
+                "Session likely exhausted context or token budget. Hand off to another agent, reduce scope, or choose a different model."
+                    .to_string(),
+            ),
+            Some(SessionEndReason::OperatorCancelled) => Some(
+                "Session was cancelled explicitly. Restart it or reassign the task card if work should continue."
+                    .to_string(),
+            ),
+            Some(SessionEndReason::RuntimeFailure) | Some(SessionEndReason::Completed) | None => {
+                match runtime {
+                    RuntimeKind::Shell => Some(
+                        "Shell session failed. Inspect exit code and logs, then retry only after fixing the command or environment."
+                            .to_string(),
+                    ),
+                    _ if capacity_status == SessionCapacityStatus::Unknown => Some(
+                        "Session failed without structured usage telemetry. Inspect logs; this may be a runtime failure, timeout, or provider-side budget exhaustion."
+                            .to_string(),
+                    ),
+                    _ => Some(
+                        "Session failed. Inspect logs and either retry with narrower scope or hand the task card to another agent."
+                            .to_string(),
+                    ),
+                }
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +280,10 @@ mod tests {
         assert_eq!(capabilities.skill_preload, CapabilitySupport::Native);
         assert_eq!(capabilities.cost_tier, CostTier::Premium);
         assert_eq!(capabilities.limit_profile, LimitProfile::ApiMetered);
+        assert_eq!(
+            capabilities.session_lifetime,
+            CapabilitySupport::AdapterManaged
+        );
     }
 
     #[test]
@@ -215,6 +295,7 @@ mod tests {
             CapabilitySupport::Unsupported
         );
         assert_eq!(capabilities.cost_tier, CostTier::Standard);
+        assert_eq!(capabilities.budget_guardrails, CapabilitySupport::Unknown);
     }
 
     #[test]
@@ -222,5 +303,30 @@ mod tests {
         let capabilities = runtime_capabilities(RuntimeKind::Shell);
         assert_eq!(capabilities.cost_tier, CostTier::Local);
         assert_eq!(capabilities.limit_profile, LimitProfile::LocalUnlimited);
+        assert_eq!(
+            capabilities.budget_guardrails,
+            CapabilitySupport::Unsupported
+        );
+    }
+
+    #[test]
+    fn session_recovery_guidance_distinguishes_timeout_and_exhaustion() {
+        let timeout = session_recovery_guidance(
+            RuntimeKind::Codex,
+            SessionStatus::Failed,
+            Some(SessionEndReason::Timeout),
+            SessionCapacityStatus::TimedOut,
+        )
+        .expect("timeout guidance");
+        assert!(timeout.contains("timed out"));
+
+        let exhausted = session_recovery_guidance(
+            RuntimeKind::Claude,
+            SessionStatus::Failed,
+            Some(SessionEndReason::TokenExhausted),
+            SessionCapacityStatus::Exhausted,
+        )
+        .expect("exhaustion guidance");
+        assert!(exhausted.contains("token budget"));
     }
 }

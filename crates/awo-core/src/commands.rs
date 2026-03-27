@@ -5,7 +5,7 @@ use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::{SlotStatus, SlotStrategy};
 use crate::store::Store;
-use crate::team::{TaskCard, TeamMember, TeamTaskDelegateOptions, TeamTaskStartOptions};
+use crate::team::{PlanItem, TaskCard, TeamMember, TeamTaskDelegateOptions, TeamTaskStartOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -127,6 +127,8 @@ pub enum Command {
     },
     #[serde(rename = "review.status")]
     ReviewStatus { repo_id: Option<String> },
+    #[serde(rename = "review.diff")]
+    ReviewDiff { slot_id: String },
     #[serde(rename = "team.list")]
     TeamList { repo_id: Option<String> },
     #[serde(rename = "team.show")]
@@ -148,6 +150,16 @@ pub enum Command {
     TeamMemberAdd { team_id: String, member: TeamMember },
     #[serde(rename = "team.lead.replace")]
     TeamLeadReplace { team_id: String, member_id: String },
+    #[serde(rename = "team.plan.add")]
+    TeamPlanAdd { team_id: String, plan: PlanItem },
+    #[serde(rename = "team.plan.approve")]
+    TeamPlanApprove { team_id: String, plan_id: String },
+    #[serde(rename = "team.plan.generate")]
+    TeamPlanGenerate {
+        team_id: String,
+        plan_id: String,
+        task: TaskCard,
+    },
     #[serde(rename = "team.task.add")]
     TeamTaskAdd { team_id: String, task: TaskCard },
     #[serde(rename = "team.task.state")]
@@ -160,6 +172,14 @@ pub enum Command {
     TeamTaskAccept { team_id: String, task_id: String },
     #[serde(rename = "team.task.rework")]
     TeamTaskRework { team_id: String, task_id: String },
+    #[serde(rename = "team.task.cancel")]
+    TeamTaskCancel { team_id: String, task_id: String },
+    #[serde(rename = "team.task.supersede")]
+    TeamTaskSupersede {
+        team_id: String,
+        task_id: String,
+        replacement_task_id: String,
+    },
     #[serde(rename = "team.task.start")]
     TeamTaskStart { options: TeamTaskStartOptions },
     #[serde(rename = "team.task.delegate")]
@@ -216,15 +236,21 @@ impl Command {
             Self::SessionDelete { .. } => "session.delete",
             Self::SessionLog { .. } => "session.log",
             Self::ReviewStatus { .. } => "review.status",
+            Self::ReviewDiff { .. } => "review.diff",
             Self::TeamList { .. } => "team.list",
             Self::TeamShow { .. } => "team.show",
             Self::TeamInit { .. } => "team.init",
             Self::TeamMemberAdd { .. } => "team.member.add",
             Self::TeamLeadReplace { .. } => "team.lead.replace",
+            Self::TeamPlanAdd { .. } => "team.plan.add",
+            Self::TeamPlanApprove { .. } => "team.plan.approve",
+            Self::TeamPlanGenerate { .. } => "team.plan.generate",
             Self::TeamTaskAdd { .. } => "team.task.add",
             Self::TeamTaskState { .. } => "team.task.state",
             Self::TeamTaskAccept { .. } => "team.task.accept",
             Self::TeamTaskRework { .. } => "team.task.rework",
+            Self::TeamTaskCancel { .. } => "team.task.cancel",
+            Self::TeamTaskSupersede { .. } => "team.task.supersede",
             Self::TeamTaskStart { .. } => "team.task.start",
             Self::TeamTaskDelegate { .. } => "team.task.delegate",
             Self::TeamReset { .. } => "team.reset",
@@ -449,6 +475,7 @@ impl<'a> CommandRunner<'a> {
                 stream,
             } => self.run_session_log(session_id, lines, stream),
             Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
+            Command::ReviewDiff { slot_id } => self.run_review_diff(slot_id),
             Command::TeamList { repo_id } => self.run_team_list(repo_id),
             Command::TeamShow { team_id } => self.run_team_show(team_id),
             Command::TeamInit {
@@ -478,6 +505,15 @@ impl<'a> CommandRunner<'a> {
             Command::TeamLeadReplace { team_id, member_id } => {
                 self.run_team_lead_replace(team_id, member_id)
             }
+            Command::TeamPlanAdd { team_id, plan } => self.run_team_plan_add(team_id, plan),
+            Command::TeamPlanApprove { team_id, plan_id } => {
+                self.run_team_plan_approve(team_id, plan_id)
+            }
+            Command::TeamPlanGenerate {
+                team_id,
+                plan_id,
+                task,
+            } => self.run_team_plan_generate(team_id, plan_id, task),
             Command::TeamTaskAdd { team_id, task } => self.run_team_task_add(team_id, task),
             Command::TeamTaskState {
                 team_id,
@@ -490,6 +526,14 @@ impl<'a> CommandRunner<'a> {
             Command::TeamTaskRework { team_id, task_id } => {
                 self.run_team_task_rework(team_id, task_id)
             }
+            Command::TeamTaskCancel { team_id, task_id } => {
+                self.run_team_task_cancel(team_id, task_id)
+            }
+            Command::TeamTaskSupersede {
+                team_id,
+                task_id,
+                replacement_task_id,
+            } => self.run_team_task_supersede(team_id, task_id, replacement_task_id),
             Command::TeamTaskStart { options } => self.run_team_task_start(options),
             Command::TeamTaskDelegate { options } => self.run_team_task_delegate(options),
             Command::TeamReset { team_id, force } => self.run_team_reset(team_id, force),

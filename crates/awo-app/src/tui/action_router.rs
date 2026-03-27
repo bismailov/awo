@@ -4,15 +4,15 @@ use super::forms::{
 };
 use super::{
     BackgroundResult, InputAction, InputMode, TeamDashboardFocus, TuiFocus, TuiState,
-    append_events, apply_command, dispatch_in_background, fetch_session_log,
+    append_events, apply_command, dispatch_in_background, fetch_session_log, fetch_slot_diff,
     refresh_team_dashboard_data, selected_repo, selected_session, selected_slot, selected_team,
     start_next_team_task, start_team_task_explicit, visible_sessions,
 };
 use anyhow::{Result, anyhow};
 use awo_core::runtime::{RuntimeKind, SessionLaunchMode};
 use awo_core::team::{
-    DelegationContext, TaskCard, TaskCardState, TeamExecutionMode, TeamMember,
-    TeamTaskDelegateOptions,
+    DelegationContext, PlanItem, PlanItemState, TaskCard, TaskCardState, TeamExecutionMode,
+    TeamMember, TeamTaskDelegateOptions,
 };
 use awo_core::{AppCore, AppSnapshot, Command};
 use crossbeam_channel::Sender;
@@ -78,7 +78,8 @@ pub(crate) fn handle_key_event(
         KeyCode::Tab => {
             if state.focus == TuiFocus::TeamDashboard {
                 state.team_dashboard.focus = match state.team_dashboard.focus {
-                    TeamDashboardFocus::Team => TeamDashboardFocus::Member,
+                    TeamDashboardFocus::Team => TeamDashboardFocus::Plan,
+                    TeamDashboardFocus::Plan => TeamDashboardFocus::Member,
                     TeamDashboardFocus::Member => TeamDashboardFocus::Task,
                     TeamDashboardFocus::Task => TeamDashboardFocus::Team,
                 };
@@ -97,7 +98,8 @@ pub(crate) fn handle_key_event(
             if state.focus == TuiFocus::TeamDashboard {
                 state.team_dashboard.focus = match state.team_dashboard.focus {
                     TeamDashboardFocus::Team => TeamDashboardFocus::Task,
-                    TeamDashboardFocus::Member => TeamDashboardFocus::Team,
+                    TeamDashboardFocus::Plan => TeamDashboardFocus::Team,
+                    TeamDashboardFocus::Member => TeamDashboardFocus::Plan,
                     TeamDashboardFocus::Task => TeamDashboardFocus::Member,
                 };
             } else {
@@ -198,10 +200,32 @@ pub(crate) fn handle_key_event(
             }
             KeyOutcome::Continue
         }
+        KeyCode::Char('p') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_plan_add_form(state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('P') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                approve_selected_plan_item(core, state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('G') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_plan_generate_form(state);
+            }
+            KeyOutcome::Continue
+        }
         KeyCode::Char('r') => {
             if state.show_log_panel {
                 if let Some(session_id) = state.log_session_id.clone() {
-                    fetch_session_log(core, state, &session_id);
+                    if let Some(slot_id) = session_id.strip_prefix("slot-diff:") {
+                        fetch_slot_diff(core, state, slot_id);
+                    } else {
+                        fetch_session_log(core, state, &session_id);
+                    }
                     state.log_scroll = u16::MAX;
                 }
             } else {
@@ -271,9 +295,39 @@ pub(crate) fn handle_key_event(
             }
             KeyOutcome::Continue
         }
+        KeyCode::Char('C') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_task_cancel_confirm(state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('S') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_task_supersede_form(state);
+            }
+            KeyOutcome::Continue
+        }
         KeyCode::Char('o') => {
             if state.focus == TuiFocus::TeamDashboard {
                 open_selected_task_log(core, state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('v') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_selected_task_diff(core, state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char(']') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                select_adjacent_actionable_task(state, true);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('[') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                select_adjacent_actionable_task(state, false);
             }
             KeyOutcome::Continue
         }
@@ -516,6 +570,10 @@ fn handle_confirm_key(core: &mut AppCore, state: &mut TuiState, key: KeyCode) {
                     apply_command(core, state, Command::TeamTaskRework { team_id, task_id });
                     refresh_team_dashboard_data(core, state);
                 }
+                ConfirmAction::CancelTask { team_id, task_id } => {
+                    apply_command(core, state, Command::TeamTaskCancel { team_id, task_id });
+                    refresh_team_dashboard_data(core, state);
+                }
                 ConfirmAction::DeleteSlot { slot_id } => {
                     apply_command(core, state, Command::SlotDelete { slot_id });
                     refresh_team_dashboard_data(core, state);
@@ -564,6 +622,96 @@ fn submit_form(
                     fallback_model: None,
                     routing_preferences: None,
                     force: false,
+                },
+            )?;
+            state.input_mode = InputMode::Normal;
+            refresh_team_dashboard_data(core, state);
+        }
+        FormKind::PlanAdd { team_id } => {
+            let plan_id = required_value(form, "plan_id", "Plan ID")?;
+            let title = required_value(form, "title", "Title")?;
+            let summary = required_value(form, "summary", "Summary")?;
+            let owner_id = form.value("owner_id").and_then(blank_to_none);
+            let runtime = form.value("runtime").and_then(blank_to_none);
+            let model = form.value("model").and_then(blank_to_none);
+            let read_only = parse_bool(form, "read_only")?;
+            let write_scope = form.value("write_scope").map(split_csv).unwrap_or_default();
+            let deliverable = form.value("deliverable").and_then(blank_to_none);
+            let verification = form
+                .value("verification")
+                .map(split_csv)
+                .unwrap_or_default();
+            let depends_on = form.value("depends_on").map(split_csv).unwrap_or_default();
+            let notes = form.value("notes").and_then(blank_to_none);
+            apply_form_command(
+                core,
+                state,
+                Command::TeamPlanAdd {
+                    team_id: team_id.clone(),
+                    plan: PlanItem {
+                        plan_id,
+                        title,
+                        summary,
+                        owner_id,
+                        runtime,
+                        model,
+                        read_only,
+                        write_scope,
+                        deliverable,
+                        verification,
+                        depends_on,
+                        notes,
+                        state: PlanItemState::Draft,
+                        generated_task_id: None,
+                    },
+                },
+            )?;
+            state.input_mode = InputMode::Normal;
+            refresh_team_dashboard_data(core, state);
+        }
+        FormKind::PlanGenerate { team_id, plan_id } => {
+            let task_id = required_value(form, "task_id", "Task ID")?;
+            let owner_id = required_value(form, "owner_id", "Owner")?;
+            let manifest = core.load_team_manifest(team_id)?;
+            let plan = manifest
+                .plan_item(plan_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown plan item `{plan_id}`"))?;
+            let title = plan.title.clone();
+            let summary = plan.summary.clone();
+            let deliverable = form
+                .value("deliverable")
+                .and_then(blank_to_none)
+                .or(plan.deliverable.clone())
+                .ok_or_else(|| anyhow!("Deliverable is required"))?;
+            apply_form_command(
+                core,
+                state,
+                Command::TeamPlanGenerate {
+                    team_id: team_id.clone(),
+                    plan_id: plan_id.clone(),
+                    task: TaskCard {
+                        task_id,
+                        title,
+                        summary,
+                        owner_id,
+                        runtime: plan.runtime.clone(),
+                        model: plan.model.clone(),
+                        slot_id: None,
+                        branch_name: None,
+                        read_only: plan.read_only,
+                        write_scope: plan.write_scope.clone(),
+                        deliverable,
+                        verification: plan.verification.clone(),
+                        verification_command: None,
+                        depends_on: plan.depends_on.clone(),
+                        state: TaskCardState::Todo,
+                        result_summary: None,
+                        result_session_id: None,
+                        handoff_note: None,
+                        output_log_path: None,
+                        superseded_by_task_id: None,
+                    },
                 },
             )?;
             state.input_mode = InputMode::Normal;
@@ -667,6 +815,7 @@ fn submit_form(
                         result_session_id: None,
                         handoff_note: None,
                         output_log_path: None,
+                        superseded_by_task_id: None,
                     },
                 },
             )?;
@@ -698,6 +847,21 @@ fn submit_form(
                             .to_string(),
                         attach_context: true,
                     },
+                },
+            )?;
+            state.input_mode = InputMode::Normal;
+            refresh_team_dashboard_data(core, state);
+        }
+        FormKind::TaskSupersede { team_id, task_id } => {
+            let replacement_task_id =
+                required_value(form, "replacement_task_id", "Replacement task card")?;
+            apply_form_command(
+                core,
+                state,
+                Command::TeamTaskSupersede {
+                    team_id: team_id.clone(),
+                    task_id: task_id.clone(),
+                    replacement_task_id,
                 },
             )?;
             state.input_mode = InputMode::Normal;
@@ -745,8 +909,14 @@ fn move_selection_up(state: &mut TuiState, snapshot: &AppSnapshot) {
             TeamDashboardFocus::Team => {
                 if state.team_dashboard.selected_team_idx > 0 {
                     state.team_dashboard.selected_team_idx -= 1;
+                    state.team_dashboard.selected_plan_idx = 0;
                     state.team_dashboard.selected_task_idx = 0;
                     state.team_dashboard.selected_member_idx = 0;
+                }
+            }
+            TeamDashboardFocus::Plan => {
+                if state.team_dashboard.selected_plan_idx > 0 {
+                    state.team_dashboard.selected_plan_idx -= 1;
                 }
             }
             TeamDashboardFocus::Member => {
@@ -796,8 +966,16 @@ fn move_selection_down(state: &mut TuiState, snapshot: &AppSnapshot) {
             TeamDashboardFocus::Team => {
                 if state.team_dashboard.selected_team_idx + 1 < state.team_dashboard.teams.len() {
                     state.team_dashboard.selected_team_idx += 1;
+                    state.team_dashboard.selected_plan_idx = 0;
                     state.team_dashboard.selected_task_idx = 0;
                     state.team_dashboard.selected_member_idx = 0;
+                }
+            }
+            TeamDashboardFocus::Plan => {
+                if let Some(team) = selected_dashboard_team(state)
+                    && state.team_dashboard.selected_plan_idx + 1 < team.plan_items.len()
+                {
+                    state.team_dashboard.selected_plan_idx += 1;
                 }
             }
             TeamDashboardFocus::Member => {
@@ -845,7 +1023,16 @@ fn move_selection_down(state: &mut TuiState, snapshot: &AppSnapshot) {
 
 fn handle_enter(core: &mut AppCore, state: &mut TuiState, snapshot: &AppSnapshot) {
     if state.focus == TuiFocus::TeamDashboard {
-        if state.team_dashboard.focus == TeamDashboardFocus::Task {
+        if state.team_dashboard.focus == TeamDashboardFocus::Plan {
+            if let Some(plan) = selected_dashboard_plan(state) {
+                state.status = format!(
+                    "Plan item: {} [{}] - {}",
+                    plan.plan_id,
+                    plan.state.as_str(),
+                    plan.title
+                );
+            }
+        } else if state.team_dashboard.focus == TeamDashboardFocus::Task {
             let result_session_id =
                 selected_dashboard_task(state).and_then(|task| task.result_session_id.clone());
             if let Some(task) = selected_dashboard_task(state) {
@@ -907,6 +1094,44 @@ fn open_member_add_form(state: &mut TuiState) {
         return;
     };
     state.input_mode = InputMode::Form(FormState::member_add(team.team_id.clone()));
+}
+
+fn open_plan_add_form(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    state.input_mode = InputMode::Form(FormState::plan_add(
+        team.team_id.clone(),
+        dashboard_member_ids(team),
+    ));
+}
+
+fn approve_selected_plan_item(core: &mut AppCore, state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(plan) = selected_dashboard_plan(state) else {
+        state.status = "Error: select a plan item to approve.".to_string();
+        return;
+    };
+    if plan.state != PlanItemState::Draft {
+        state.status = format!(
+            "Error: plan item `{}` must be draft before approval.",
+            plan.plan_id
+        );
+        return;
+    }
+    apply_command(
+        core,
+        state,
+        Command::TeamPlanApprove {
+            team_id: team.team_id.clone(),
+            plan_id: plan.plan_id.clone(),
+        },
+    );
+    refresh_team_dashboard_data(core, state);
 }
 
 fn open_member_update_form(state: &mut TuiState) {
@@ -972,6 +1197,40 @@ fn open_task_add_form(state: &mut TuiState) {
     state.input_mode = InputMode::Form(FormState::task_add(team.team_id.clone(), owner_ids));
 }
 
+fn open_plan_generate_form(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(plan) = selected_dashboard_plan(state) else {
+        state.status = "Error: select a plan item to generate from.".to_string();
+        return;
+    };
+    if plan.state != PlanItemState::Approved {
+        state.status = format!(
+            "Error: plan item `{}` must be approved before generating a task card.",
+            plan.plan_id
+        );
+        return;
+    }
+    let owner_ids = dashboard_member_ids(team);
+    if owner_ids.is_empty() {
+        state.status = "Error: add a team member before generating task cards.".to_string();
+        return;
+    }
+    let default_task_id = if team.task(&plan.plan_id).is_none() {
+        plan.plan_id.clone()
+    } else {
+        format!("{}-task", plan.plan_id)
+    };
+    state.input_mode = InputMode::Form(FormState::plan_generate(
+        team.team_id.clone(),
+        plan,
+        owner_ids,
+        default_task_id,
+    ));
+}
+
 fn open_task_delegate_form(state: &mut TuiState) {
     let Some(team) = selected_dashboard_team(state) else {
         state.status = "Error: select a team in the Team Dashboard first.".to_string();
@@ -1026,6 +1285,54 @@ fn open_task_rework_confirm(state: &mut TuiState) {
     ));
 }
 
+fn open_task_cancel_confirm(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card to cancel.".to_string();
+        return;
+    };
+    state.input_mode = InputMode::Confirm(ConfirmState::cancel_task(
+        team.team_id.clone(),
+        task.task_id.clone(),
+    ));
+}
+
+fn open_task_supersede_form(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card to supersede.".to_string();
+        return;
+    };
+    let replacement_task_ids = team
+        .tasks
+        .iter()
+        .filter(|candidate| candidate.task_id != task.task_id)
+        .filter(|candidate| {
+            !matches!(
+                candidate.state,
+                TaskCardState::Cancelled | TaskCardState::Superseded
+            )
+        })
+        .map(|candidate| candidate.task_id.clone())
+        .collect::<Vec<_>>();
+    if replacement_task_ids.is_empty() {
+        state.status =
+            "Error: add another non-cancelled task card before superseding this one.".to_string();
+        return;
+    }
+    state.input_mode = InputMode::Form(FormState::task_supersede(
+        team.team_id.clone(),
+        task.task_id.clone(),
+        replacement_task_ids,
+    ));
+}
+
 fn open_slot_delete_confirm(state: &mut TuiState) {
     let Some(task) = selected_dashboard_task(state) else {
         state.status = "Error: select a task card first.".to_string();
@@ -1048,6 +1355,11 @@ fn selected_dashboard_team(state: &TuiState) -> Option<&awo_core::TeamManifest> 
 fn selected_dashboard_task(state: &TuiState) -> Option<&TaskCard> {
     let team = selected_dashboard_team(state)?;
     team.tasks.get(state.team_dashboard.selected_task_idx)
+}
+
+fn selected_dashboard_plan(state: &TuiState) -> Option<&PlanItem> {
+    let team = selected_dashboard_team(state)?;
+    team.plan_items.get(state.team_dashboard.selected_plan_idx)
 }
 
 fn selected_dashboard_member_count(state: &TuiState) -> usize {
@@ -1087,10 +1399,84 @@ fn open_selected_task_log(core: &mut AppCore, state: &mut TuiState) {
     state.log_scroll = u16::MAX;
 }
 
+fn open_selected_task_diff(core: &mut AppCore, state: &mut TuiState) {
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card first.".to_string();
+        return;
+    };
+    let Some(slot_id) = task.slot_id.clone() else {
+        state.status = "Error: selected task card has no bound slot.".to_string();
+        return;
+    };
+    fetch_slot_diff(core, state, &slot_id);
+    state.log_scroll = u16::MAX;
+}
+
 fn dashboard_member_ids(team: &awo_core::TeamManifest) -> Vec<String> {
     std::iter::once(team.lead.member_id.clone())
         .chain(team.members.iter().map(|member| member.member_id.clone()))
         .collect()
+}
+
+fn select_adjacent_actionable_task(state: &mut TuiState, forward: bool) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let actionable_indices = team
+        .tasks
+        .iter()
+        .enumerate()
+        .filter(|(_, task)| matches!(task.state, TaskCardState::Review) || task.slot_id.is_some())
+        .map(|(idx, _)| idx)
+        .collect::<Vec<_>>();
+    if actionable_indices.is_empty() {
+        state.status = "No review or cleanup task cards are queued.".to_string();
+        return;
+    }
+    let selected_task = {
+        let current = state.team_dashboard.selected_task_idx;
+        let selected =
+            if let Some(position) = actionable_indices.iter().position(|idx| *idx == current) {
+                if forward {
+                    actionable_indices[(position + 1) % actionable_indices.len()]
+                } else {
+                    actionable_indices
+                        [(position + actionable_indices.len() - 1) % actionable_indices.len()]
+                }
+            } else if forward {
+                actionable_indices[0]
+            } else {
+                *actionable_indices.last().unwrap_or(&0)
+            };
+        team.tasks.get(selected).map(|task| {
+            (
+                selected,
+                task.task_id.clone(),
+                if task.state == TaskCardState::Review {
+                    "review task card"
+                } else {
+                    "cleanup task card"
+                },
+                task_queue_label(task),
+            )
+        })
+    };
+    state.team_dashboard.focus = TeamDashboardFocus::Task;
+    if let Some((selected, task_id, task_kind, queue_label)) = selected_task {
+        state.team_dashboard.selected_task_idx = selected;
+        state.status = format!("Selected {} `{}` in {}.", task_kind, task_id, queue_label);
+    }
+}
+
+fn task_queue_label(task: &TaskCard) -> &'static str {
+    if task.state == TaskCardState::Review {
+        "review queue"
+    } else if task.slot_id.is_some() {
+        "cleanup queue"
+    } else {
+        "task list"
+    }
 }
 
 #[cfg(test)]
@@ -1102,7 +1488,7 @@ mod tests {
     };
     use anyhow::Result;
     use awo_core::capabilities::CostTier;
-    use awo_core::{AppCore, Command, TaskCardState, TeamExecutionMode};
+    use awo_core::{AppCore, Command, PlanItemState, TaskCardState, TeamExecutionMode};
     use crossbeam_channel::unbounded;
     use crossterm::event::KeyCode;
     use std::path::{Path, PathBuf};
@@ -1208,6 +1594,7 @@ mod tests {
             filter_query: None,
             team_dashboard: TeamDashboardState {
                 selected_team_idx: 0,
+                selected_plan_idx: 0,
                 selected_member_idx: 0,
                 selected_task_idx: 0,
                 teams: Vec::new(),
@@ -1564,6 +1951,209 @@ mod tests {
     }
 
     #[test]
+    fn plan_item_add_approve_and_generate_flow_works() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("plan-flow");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Plan the rollout".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Plan;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('p'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Form(_)));
+        if let InputMode::Form(form) = &mut state.input_mode {
+            set_value(form, "plan_id", "plan-1");
+            set_value(form, "title", "Break out feature work");
+            set_value(form, "summary", "Turn planning into execution");
+            set_value(form, "deliverable", "Task card ready for work");
+            set_value(form, "verification", "cargo test");
+        }
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx.clone());
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.plan_items.len(), 1);
+        assert_eq!(manifest.plan_items[0].state, PlanItemState::Draft);
+
+        super::refresh_team_dashboard_data(&core, &mut state);
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('P'),
+            tx.clone(),
+        );
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.plan_items[0].state, PlanItemState::Approved);
+
+        super::refresh_team_dashboard_data(&core, &mut state);
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('G'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Form(_)));
+        if let InputMode::Form(form) = &mut state.input_mode {
+            set_value(form, "task_id", "task-from-plan");
+            set_value(form, "deliverable", "Task card ready for work");
+        }
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx);
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.tasks.len(), 1);
+        assert_eq!(manifest.tasks[0].task_id, "task-from-plan");
+        assert_eq!(manifest.plan_items[0].state, PlanItemState::Generated);
+        assert_eq!(
+            manifest.plan_items[0].generated_task_id.as_deref(),
+            Some("task-from-plan")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn actionable_task_navigation_jumps_between_review_and_cleanup() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("actionable-nav");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Navigate actionable tasks".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+        core.dispatch(Command::SlotAcquire {
+            repo_id: core
+                .snapshot()?
+                .registered_repos
+                .first()
+                .expect("repo exists")
+                .id
+                .clone(),
+            task_name: "cleanup-task".to_string(),
+            strategy: awo_core::SlotStrategy::Fresh,
+        })?;
+        let cleanup_slot = core
+            .snapshot()?
+            .slots
+            .into_iter()
+            .find(|slot| slot.task_name == "cleanup-task")
+            .expect("cleanup slot");
+        for (task_id, state, slot_id) in [
+            ("todo-1", TaskCardState::Todo, None),
+            ("review-1", TaskCardState::Review, None),
+            (
+                "done-1",
+                TaskCardState::Done,
+                Some(cleanup_slot.id.as_str()),
+            ),
+        ] {
+            core.dispatch(Command::TeamTaskAdd {
+                team_id: "alpha".to_string(),
+                task: awo_core::TaskCard {
+                    task_id: task_id.to_string(),
+                    title: task_id.to_string(),
+                    summary: "Task".to_string(),
+                    owner_id: "lead".to_string(),
+                    runtime: None,
+                    model: None,
+                    slot_id: slot_id.map(str::to_string),
+                    branch_name: slot_id.map(|_| cleanup_slot.branch_name.clone()),
+                    read_only: false,
+                    write_scope: Vec::new(),
+                    deliverable: "Patch".to_string(),
+                    verification: Vec::new(),
+                    verification_command: None,
+                    depends_on: Vec::new(),
+                    state,
+                    result_summary: None,
+                    result_session_id: None,
+                    handoff_note: None,
+                    output_log_path: None,
+                    superseded_by_task_id: None,
+                },
+            })?;
+        }
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Task;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char(']'),
+            tx.clone(),
+        );
+        assert_eq!(state.team_dashboard.selected_task_idx, 1);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char(']'),
+            tx.clone(),
+        );
+        assert_eq!(state.team_dashboard.selected_task_idx, 2);
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Char('['), tx);
+        assert_eq!(state.team_dashboard.selected_task_idx, 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn accept_action_marks_selected_review_task_done() -> Result<()> {
         let env = TestEnv::new();
         let repo_dir = env.create_repo("review-accept");
@@ -1611,6 +2201,7 @@ mod tests {
                 result_session_id: None,
                 handoff_note: None,
                 output_log_path: None,
+                superseded_by_task_id: None,
             },
         })?;
         core.dispatch(Command::TeamTaskState {
@@ -1689,6 +2280,7 @@ mod tests {
                 result_session_id: Some("session-1".to_string()),
                 handoff_note: Some("Please tighten the edge cases".to_string()),
                 output_log_path: Some("/tmp/log".to_string()),
+                superseded_by_task_id: None,
             },
         })?;
         let path = awo_core::team::default_team_manifest_path(core.paths(), "alpha");
@@ -1721,6 +2313,160 @@ mod tests {
         assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
         assert!(manifest.tasks[0].result_summary.is_none());
         assert!(manifest.tasks[0].handoff_note.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn cancel_action_marks_task_card_cancelled() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("review-cancel");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Cancel task card".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+        core.dispatch(Command::TeamTaskAdd {
+            team_id: "alpha".to_string(),
+            task: awo_core::TaskCard {
+                task_id: "task-1".to_string(),
+                title: "Not needed".to_string(),
+                summary: "Cancel it".to_string(),
+                owner_id: "lead".to_string(),
+                runtime: None,
+                model: None,
+                slot_id: None,
+                branch_name: None,
+                read_only: false,
+                write_scope: Vec::new(),
+                deliverable: "Patch".to_string(),
+                verification: Vec::new(),
+                verification_command: None,
+                depends_on: Vec::new(),
+                state: TaskCardState::Todo,
+                result_summary: None,
+                result_session_id: None,
+                handoff_note: None,
+                output_log_path: None,
+                superseded_by_task_id: None,
+            },
+        })?;
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Task;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('C'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Confirm(_)));
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx);
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.tasks[0].state, TaskCardState::Cancelled);
+        Ok(())
+    }
+
+    #[test]
+    fn supersede_action_links_task_card_replacement() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("review-supersede");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Supersede task card".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+        for (task_id, title) in [("task-1", "Original"), ("task-2", "Replacement")] {
+            core.dispatch(Command::TeamTaskAdd {
+                team_id: "alpha".to_string(),
+                task: awo_core::TaskCard {
+                    task_id: task_id.to_string(),
+                    title: title.to_string(),
+                    summary: "Task".to_string(),
+                    owner_id: "lead".to_string(),
+                    runtime: None,
+                    model: None,
+                    slot_id: None,
+                    branch_name: None,
+                    read_only: false,
+                    write_scope: Vec::new(),
+                    deliverable: "Patch".to_string(),
+                    verification: Vec::new(),
+                    verification_command: None,
+                    depends_on: Vec::new(),
+                    state: TaskCardState::Todo,
+                    result_summary: None,
+                    result_session_id: None,
+                    handoff_note: None,
+                    output_log_path: None,
+                    superseded_by_task_id: None,
+                },
+            })?;
+        }
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Task;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('S'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Form(_)));
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx);
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.tasks[0].state, TaskCardState::Superseded);
+        assert_eq!(
+            manifest.tasks[0].superseded_by_task_id.as_deref(),
+            Some("task-2")
+        );
         Ok(())
     }
 

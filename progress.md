@@ -2,6 +2,215 @@
 
 ## Session: 2026-03-27
 
+### Audit Session: Overall Quality Review And Roadmap Refresh
+- **Status:** complete
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the development plan, the master finalization plan, and the architecture rules before auditing.
+  - Ran an audit sweep over:
+    - command-layer parity vs direct `AppCore` mutation paths
+    - roadmap/doc drift vs the implemented orchestration checkpoint
+    - open-source safety in checked-in planning docs
+    - verification and test noise
+  - Fixed audit findings with small safe scope:
+    - replaced machine-specific absolute links in the master finalization plan with relative links
+    - routed additional operator flows back through command dispatch where public commands already existed
+    - added richer command outcome data for archive/reset/delete and dispatcher-backed teardown handling
+  - Wrote a dated audit summary document with residual risks and recommendations.
+  - Refreshed the general development plan and the master finalization plan to reflect the actual current checkpoint and remaining objectives.
+- Files created/modified:
+  - `crates/awo-core/src/app.rs`
+  - `crates/awo-core/src/commands/team.rs`
+  - `crates/awo-app/src/handlers.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-27-master-finalization-plan.md`
+  - `planning/2026-03-28-audit-and-quality-review.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+  - note: full `cargo test` still emits expected negative-path `git` and `r2d2` error lines while passing
+  - checkpoint committed and pushed after this audit pass
+
+### Implementation Session: Consolidation Cockpit Depth And Runtime Recovery Truth
+- **Status:** complete for the current slice
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the planning trace, and the current review/runtime surfaces before editing.
+  - Deepened the consolidation cockpit in the TUI:
+    - explicit task-card queue-role labels
+    - quick actionable-task navigation between review and cleanup items with `[` and `]`
+    - richer task detail text for review and cleanup work
+  - Extended command and reporting output:
+    - team reports now include queue-aware sections for plan items, review, cleanup, and history
+    - text output now shows queue counts and per-task queue roles
+  - Deepened runtime recovery/operator truth:
+    - added advisory usage notes per runtime
+    - added recovery hints based on runtime kind, session status, end reason, and capacity state
+    - extended runtime capability output with budget-guardrail and session-lifetime support signals
+    - surfaced those hints in both CLI output and TUI task detail
+  - Added focused tests for:
+    - actionable task-card navigation between review and cleanup queues
+    - team report queue sections
+    - session recovery guidance logic
+    - TUI task detail usage/recovery rendering
+  - Updated operator docs and manuals for the richer review/consolidation cockpit and runtime recovery language.
+- Files created/modified:
+  - `crates/awo-core/src/capabilities.rs`
+  - `crates/awo-core/src/snapshot.rs`
+  - `crates/awo-core/src/commands/team.rs`
+  - `crates/awo-core/tests/command_flows.rs`
+  - `crates/awo-app/src/output.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/keymap.rs`
+  - `docs/product-spec.md`
+  - `docs/v1-control-surface.md`
+  - `MANUAL_TEST_SCENARIOS.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+  - Note: the full test run still emits expected negative-path `git` and `r2d2` error lines while finishing green.
+
+### Implementation Session: Planning-To-Task-Card Flow
+- **Status:** complete for the current slice
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the planning trace, and the partial planning-to-task-card changes before continuing.
+  - Finished the planning-layer schema in the core:
+    - `PlanItem`
+    - `PlanItemState`
+    - manifest validation and reset behavior
+    - command-backed add / approve / generate operations
+  - Added CLI support for:
+    - `awo team plan add`
+    - `awo team plan approve`
+    - `awo team plan generate`
+  - Extended `team show` / text output so plan items are visible alongside task cards.
+  - Finished the TUI Team Dashboard planning workflow:
+    - new `Plan` dashboard pane
+    - `p` add a plan item
+    - `P` approve the selected draft plan item
+    - `G` generate a task card from the selected approved plan item
+    - plan-item detail rendering and selection behavior
+  - Added focused tests for:
+    - form defaults for plan add / generate
+    - Team Dashboard plan-item add / approve / generate flow
+    - manifest-level plan-item lifecycle
+    - CLI/operator flow showing generated plan items and task cards
+    - command roundtrip coverage for the new plan commands
+  - Updated docs/manuals for:
+    - plan-item manifest shape
+    - new CLI commands
+    - new TUI keys and planning workflow
+- Files created/modified:
+  - `crates/awo-core/src/team.rs`
+  - `crates/awo-core/src/team/tests.rs`
+  - `crates/awo-core/src/commands.rs`
+  - `crates/awo-core/src/commands/team.rs`
+  - `crates/awo-core/src/events.rs`
+  - `crates/awo-core/src/dispatch.rs`
+  - `crates/awo-core/src/lib.rs`
+  - `crates/awo-app/src/cli.rs`
+  - `crates/awo-app/src/handlers.rs`
+  - `crates/awo-app/src/output.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/forms.rs`
+  - `crates/awo-app/src/tui/keymap.rs`
+  - `crates/awo-app/tests/operator_flows.rs`
+  - `docs/team-manifest-spec.md`
+  - `docs/v1-control-surface.md`
+  - `MANUAL_TEST_SCENARIOS.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+
+### Implementation Session: Immutable Task Recovery And Review Diff
+- **Status:** complete for the current slice
+- **Started:** 2026-03-27
+- Actions taken:
+  - Re-read `project.md`, the planning trace, and the next-iterations plan before editing.
+  - Added immutable task recovery to the core team model:
+    - new task-card states `cancelled` and `superseded`
+    - `superseded_by_task_id` linkage
+    - manifest validation and status/archive semantics for the new states
+  - Added command-backed task recovery operations:
+    - `team.task.cancel`
+    - `team.task.supersede`
+    - live-session guardrails so active bound work cannot be silently retired
+  - Surfaced immutable recovery across the operator surfaces:
+    - CLI commands and text output
+    - TUI confirm/form flows for cancel and supersede
+    - Team Dashboard queue/detail updates for cancelled and superseded history
+  - Added a bounded review diff helper:
+    - core `review.diff`
+    - CLI `awo review diff <slot>`
+    - TUI diff inspection in the existing log/detail panel on `v`
+  - Updated docs/manual scenarios for:
+    - immutable task recovery
+    - bounded diff inspection
+  - Added focused tests for:
+    - manifest-level cancel/supersede behavior
+    - command-flow recovery and diff behavior
+    - TUI cancel/supersede actions
+- Files created/modified:
+  - `crates/awo-core/src/team.rs`
+  - `crates/awo-core/src/team/reconcile.rs`
+  - `crates/awo-core/src/commands.rs`
+  - `crates/awo-core/src/commands/team.rs`
+  - `crates/awo-core/src/commands/review.rs`
+  - `crates/awo-core/src/events.rs`
+  - `crates/awo-core/src/snapshot.rs`
+  - `crates/awo-core/src/dispatch.rs`
+  - `crates/awo-core/src/team/tests.rs`
+  - `crates/awo-core/src/app/tests.rs`
+  - `crates/awo-core/tests/command_flows.rs`
+  - `crates/awo-app/src/cli.rs`
+  - `crates/awo-app/src/handlers.rs`
+  - `crates/awo-app/src/output.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/forms.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/keymap.rs`
+  - `crates/awo-mcp/src/server.rs`
+  - `docs/team-manifest-spec.md`
+  - `docs/v1-control-surface.md`
+  - `MANUAL_TEST_SCENARIOS.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+### Planning Session: Next Iterations After The Current Orchestration Checkpoint
+- **Status:** complete
+- **Started:** 2026-03-27
+- Actions taken:
+  - Re-read the current task plan and the master/orchestration roadmap documents.
+  - Identified the highest-value remaining local-product gaps after the current checkpoint:
+    - immutable task recovery
+    - diff/review cockpit depth
+    - planning-to-task-card workflow
+    - runtime usage/recovery upgrades
+  - Authored a focused follow-on plan that narrows the next work into four concrete iterations instead of a loose backlog.
+  - Updated the planning trace to reflect the new immediate sequencing.
+- Files created/modified:
+  - `planning/2026-03-27-next-iterations-plan.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
 ### Implementation Session: Task-Card Model Overrides, Storage Roots, And Prune Controls
 - **Status:** complete for the current follow-on slice
 - **Started:** 2026-03-27

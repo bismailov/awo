@@ -111,6 +111,10 @@ pub enum DomainEvent {
         dirty: usize,
         stale: usize,
     },
+    ReviewDiffLoaded {
+        slot_id: String,
+        changed_files: usize,
+    },
     SessionLogLoaded {
         session_id: String,
         stream: String,
@@ -156,6 +160,19 @@ pub enum DomainEvent {
         team_id: String,
         member_id: String,
     },
+    TeamPlanAdded {
+        team_id: String,
+        plan_id: String,
+    },
+    TeamPlanApproved {
+        team_id: String,
+        plan_id: String,
+    },
+    TeamPlanGenerated {
+        team_id: String,
+        plan_id: String,
+        task_id: String,
+    },
     TeamTaskAdded {
         team_id: String,
         task_id: String,
@@ -167,6 +184,15 @@ pub enum DomainEvent {
     TeamTaskReworkRequested {
         team_id: String,
         task_id: String,
+    },
+    TeamTaskCancelled {
+        team_id: String,
+        task_id: String,
+    },
+    TeamTaskSuperseded {
+        team_id: String,
+        task_id: String,
+        replacement_task_id: String,
     },
     TeamReportGenerated {
         team_id: String,
@@ -313,6 +339,14 @@ impl DomainEvent {
             Self::ReviewStatusLoaded { dirty, stale } => {
                 format!("Review status: {dirty} dirty slot(s), {stale} stale slot(s)")
             }
+            Self::ReviewDiffLoaded {
+                slot_id,
+                changed_files,
+            } => {
+                format!(
+                    "Loaded review diff for slot `{slot_id}` with {changed_files} changed file(s)"
+                )
+            }
             Self::SessionLogLoaded {
                 session_id,
                 stream,
@@ -371,6 +405,19 @@ impl DomainEvent {
             Self::TeamLeadReplaced { team_id, member_id } => {
                 format!("Current lead for team `{team_id}` is now `{member_id}`")
             }
+            Self::TeamPlanAdded { team_id, plan_id } => {
+                format!("Added plan item `{plan_id}` to team `{team_id}`")
+            }
+            Self::TeamPlanApproved { team_id, plan_id } => {
+                format!("Approved plan item `{plan_id}` in team `{team_id}`")
+            }
+            Self::TeamPlanGenerated {
+                team_id,
+                plan_id,
+                task_id,
+            } => {
+                format!("Generated task `{task_id}` from plan item `{plan_id}` in team `{team_id}`")
+            }
             Self::TeamTaskAdded { team_id, task_id } => {
                 format!("Added task `{task_id}` to team `{team_id}`")
             }
@@ -379,6 +426,18 @@ impl DomainEvent {
             }
             Self::TeamTaskReworkRequested { team_id, task_id } => {
                 format!("Sent task `{task_id}` back for rework in team `{team_id}`")
+            }
+            Self::TeamTaskCancelled { team_id, task_id } => {
+                format!("Cancelled task `{task_id}` in team `{team_id}`")
+            }
+            Self::TeamTaskSuperseded {
+                team_id,
+                task_id,
+                replacement_task_id,
+            } => {
+                format!(
+                    "Superseded task `{task_id}` in team `{team_id}` with `{replacement_task_id}`"
+                )
             }
             Self::TeamReportGenerated {
                 team_id,

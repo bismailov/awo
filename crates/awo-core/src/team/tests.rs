@@ -45,6 +45,7 @@ fn sample_manifest() -> TeamManifest {
         },
         current_lead_member_id: Some("lead".to_string()),
         current_lead_session_id: None,
+        plan_items: Vec::new(),
         members: vec![TeamMember {
             member_id: "worker-a".to_string(),
             role: "implementer".to_string(),
@@ -81,6 +82,7 @@ fn sample_manifest() -> TeamManifest {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         }],
     }
@@ -187,6 +189,7 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         result_session_id: None,
         handoff_note: None,
         output_log_path: None,
+        superseded_by_task_id: None,
         state: TaskCardState::Todo,
     })?;
 
@@ -194,6 +197,93 @@ fn add_member_and_task_render_prompt() -> Result<()> {
     assert!(prompt.contains("Team objective"));
     assert!(prompt.contains("Relevant skills"));
     assert!(prompt.contains("Verification"));
+    Ok(())
+}
+
+#[test]
+fn add_approve_and_generate_plan_item() -> Result<()> {
+    let mut manifest = starter_team_manifest(
+        "repo-1",
+        "team-alpha",
+        "Ship a safe release",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    manifest.add_member(TeamMember {
+        member_id: "worker-a".to_string(),
+        role: "implementer".to_string(),
+        runtime: Some("codex".to_string()),
+        model: Some("mini".to_string()),
+        execution_mode: TeamExecutionMode::ExternalSlots,
+        slot_id: None,
+        branch_name: None,
+        read_only: false,
+        write_scope: vec!["src/lib.rs".to_string()],
+        context_packs: Vec::new(),
+        skills: Vec::new(),
+        notes: None,
+        fallback_runtime: None,
+        fallback_model: None,
+        routing_preferences: None,
+    })?;
+
+    manifest.add_plan_item(PlanItem {
+        plan_id: "plan-1".to_string(),
+        title: "Implement feature".to_string(),
+        summary: "Turn the feature outline into execution".to_string(),
+        owner_id: Some("worker-a".to_string()),
+        runtime: Some("codex".to_string()),
+        model: Some("mini".to_string()),
+        read_only: false,
+        write_scope: vec!["src/lib.rs".to_string()],
+        deliverable: Some("Tested patch".to_string()),
+        verification: vec!["cargo test".to_string()],
+        depends_on: Vec::new(),
+        notes: Some("Keep it small".to_string()),
+        state: PlanItemState::Draft,
+        generated_task_id: None,
+    })?;
+    assert_eq!(manifest.plan_items[0].state, PlanItemState::Draft);
+
+    manifest.approve_plan_item("plan-1")?;
+    assert_eq!(manifest.plan_items[0].state, PlanItemState::Approved);
+
+    manifest.generate_task_from_plan_item(
+        "plan-1",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Implement feature".to_string(),
+            summary: "Turn the feature outline into execution".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("codex".to_string()),
+            model: Some("mini".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["src/lib.rs".to_string()],
+            deliverable: "Tested patch".to_string(),
+            verification: vec!["cargo test".to_string()],
+            verification_command: None,
+            depends_on: Vec::new(),
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    assert_eq!(manifest.plan_items[0].state, PlanItemState::Generated);
+    assert_eq!(
+        manifest.plan_items[0].generated_task_id.as_deref(),
+        Some("task-1")
+    );
+    assert_eq!(manifest.tasks.len(), 1);
+
     Ok(())
 }
 
@@ -475,6 +565,91 @@ fn request_task_rework_clears_review_result_and_reopens_todo() -> Result<()> {
     assert!(manifest.tasks[0].result_session_id.is_none());
     assert!(manifest.tasks[0].handoff_note.is_none());
     assert!(manifest.tasks[0].output_log_path.is_none());
+    Ok(())
+}
+
+#[test]
+fn cancel_task_marks_task_cancelled() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Blocked;
+    manifest.tasks[0].result_summary = Some("Session failed".to_string());
+
+    manifest.cancel_task("task-1")?;
+
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Cancelled);
+    assert_eq!(
+        manifest.tasks[0].result_summary.as_deref(),
+        Some("Session failed")
+    );
+    Ok(())
+}
+
+#[test]
+fn supersede_task_links_replacement() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.add_task(TaskCard {
+        task_id: "task-2".to_string(),
+        title: "Replacement".to_string(),
+        summary: "Better follow-up".to_string(),
+        owner_id: "worker-a".to_string(),
+        runtime: Some("codex".to_string()),
+        model: None,
+        slot_id: None,
+        branch_name: None,
+        read_only: false,
+        write_scope: vec!["src/lib.rs".to_string()],
+        deliverable: "Replacement patch".to_string(),
+        verification: vec!["cargo test".to_string()],
+        verification_command: None,
+        depends_on: Vec::new(),
+        state: TaskCardState::Todo,
+        result_summary: None,
+        result_session_id: None,
+        handoff_note: None,
+        output_log_path: None,
+        superseded_by_task_id: None,
+    })?;
+
+    manifest.supersede_task("task-1", "task-2")?;
+
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Superseded);
+    assert_eq!(
+        manifest.tasks[0].superseded_by_task_id.as_deref(),
+        Some("task-2")
+    );
+    Ok(())
+}
+
+#[test]
+fn refresh_status_treats_cancelled_and_superseded_tasks_as_complete() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Cancelled;
+    manifest.add_task(TaskCard {
+        task_id: "task-2".to_string(),
+        title: "Replacement".to_string(),
+        summary: "Already done".to_string(),
+        owner_id: "worker-a".to_string(),
+        runtime: Some("codex".to_string()),
+        model: None,
+        slot_id: None,
+        branch_name: None,
+        read_only: false,
+        write_scope: Vec::new(),
+        deliverable: "Done".to_string(),
+        verification: Vec::new(),
+        verification_command: None,
+        depends_on: Vec::new(),
+        state: TaskCardState::Superseded,
+        result_summary: None,
+        result_session_id: None,
+        handoff_note: None,
+        output_log_path: None,
+        superseded_by_task_id: Some("task-1".to_string()),
+    })?;
+
+    manifest.refresh_status();
+
+    assert_eq!(manifest.status, TeamStatus::Complete);
     Ok(())
 }
 

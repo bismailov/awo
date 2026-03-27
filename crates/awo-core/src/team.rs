@@ -75,9 +75,44 @@ pub enum TaskCardState {
     Blocked,
     #[serde(alias = "Done")]
     Done,
+    #[serde(alias = "Cancelled")]
+    Cancelled,
+    #[serde(alias = "Superseded")]
+    Superseded,
 }
 
 impl TaskCardState {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    pub fn is_archive_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Done | Self::Blocked | Self::Cancelled | Self::Superseded
+        )
+    }
+
+    pub fn is_closed(self) -> bool {
+        matches!(self, Self::Done | Self::Cancelled | Self::Superseded)
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum PlanItemState {
+    #[serde(alias = "Draft")]
+    Draft,
+    #[serde(alias = "Approved")]
+    Approved,
+    #[serde(alias = "Generated")]
+    Generated,
+}
+
+impl PlanItemState {
     pub fn as_str(self) -> &'static str {
         self.into()
     }
@@ -101,6 +136,32 @@ pub struct TeamMember {
     pub fallback_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing_preferences: Option<crate::routing::RoutingPreferences>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub plan_id: String,
+    pub title: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub read_only: bool,
+    pub write_scope: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliverable: Option<String>,
+    #[serde(default)]
+    pub verification: Vec<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    pub state: PlanItemState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +191,8 @@ pub struct TaskCard {
     pub handoff_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +260,8 @@ pub struct TeamManifest {
     pub current_lead_member_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_lead_session_id: Option<String>,
+    #[serde(default)]
+    pub plan_items: Vec<PlanItem>,
     pub members: Vec<TeamMember>,
     pub tasks: Vec<TaskCard>,
 }
@@ -250,6 +315,49 @@ impl TeamManifest {
             }
         }
 
+        let mut plan_ids = std::collections::BTreeSet::new();
+        for plan in &self.plan_items {
+            if plan.plan_id.trim().is_empty() {
+                awo_bail!("plan items require non-empty plan ids");
+            }
+            if !plan_ids.insert(plan.plan_id.as_str()) {
+                awo_bail!("duplicate plan item id `{}`", plan.plan_id);
+            }
+            if let Some(owner_id) = plan.owner_id.as_deref()
+                && !member_ids.contains(owner_id)
+            {
+                awo_bail!(
+                    "plan item `{}` references unknown owner `{}`",
+                    plan.plan_id,
+                    owner_id
+                );
+            }
+            match (plan.state, plan.generated_task_id.as_deref()) {
+                (PlanItemState::Generated, Some(task_id)) => {
+                    if !task_ids.contains(task_id) {
+                        awo_bail!(
+                            "plan item `{}` references unknown generated task `{}`",
+                            plan.plan_id,
+                            task_id
+                        );
+                    }
+                }
+                (PlanItemState::Generated, None) => {
+                    awo_bail!(
+                        "plan item `{}` must reference a generated task when state is `generated`",
+                        plan.plan_id
+                    );
+                }
+                (_, Some(_)) => {
+                    awo_bail!(
+                        "plan item `{}` can only set generated_task_id when state is `generated`",
+                        plan.plan_id
+                    );
+                }
+                (_, None) => {}
+            }
+        }
+
         for task in &self.tasks {
             for dependency in &task.depends_on {
                 if !task_ids.contains(dependency.as_str()) {
@@ -259,6 +367,34 @@ impl TeamManifest {
                         dependency
                     );
                 }
+            }
+
+            match (task.state, task.superseded_by_task_id.as_deref()) {
+                (TaskCardState::Superseded, Some(replacement_id)) => {
+                    if replacement_id == task.task_id {
+                        awo_bail!("task `{}` cannot supersede itself", task.task_id);
+                    }
+                    if !task_ids.contains(replacement_id) {
+                        awo_bail!(
+                            "task `{}` is superseded by unknown task `{}`",
+                            task.task_id,
+                            replacement_id
+                        );
+                    }
+                }
+                (TaskCardState::Superseded, None) => {
+                    awo_bail!(
+                        "task `{}` must reference a replacement task when superseded",
+                        task.task_id
+                    );
+                }
+                (_, Some(_)) => {
+                    awo_bail!(
+                        "task `{}` can only set superseded_by_task_id when state is `superseded`",
+                        task.task_id
+                    );
+                }
+                (_, None) => {}
             }
         }
 
@@ -335,6 +471,16 @@ impl TeamManifest {
         self.tasks.iter_mut().find(|task| task.task_id == task_id)
     }
 
+    pub fn plan_item(&self, plan_id: &str) -> Option<&PlanItem> {
+        self.plan_items.iter().find(|plan| plan.plan_id == plan_id)
+    }
+
+    pub fn plan_item_mut(&mut self, plan_id: &str) -> Option<&mut PlanItem> {
+        self.plan_items
+            .iter_mut()
+            .find(|plan| plan.plan_id == plan_id)
+    }
+
     pub fn update_member_policy(
         &mut self,
         member_id: &str,
@@ -401,11 +547,56 @@ impl TeamManifest {
         self.validate()
     }
 
+    pub fn add_plan_item(&mut self, plan: PlanItem) -> AwoResult<()> {
+        if self.plan_item(&plan.plan_id).is_some() {
+            awo_bail!("plan item `{}` already exists", plan.plan_id);
+        }
+        self.plan_items.push(plan);
+        self.validate()
+    }
+
+    pub fn approve_plan_item(&mut self, plan_id: &str) -> AwoResult<()> {
+        let plan = self
+            .plan_item_mut(plan_id)
+            .ok_or_else(|| AwoError::validation("unknown plan item `{plan_id}`"))?;
+        if plan.state != PlanItemState::Draft {
+            awo_bail!(
+                "plan item `{}` must be in `draft` before it can be approved",
+                plan_id
+            );
+        }
+        plan.state = PlanItemState::Approved;
+        self.validate()
+    }
+
+    pub fn generate_task_from_plan_item(&mut self, plan_id: &str, task: TaskCard) -> AwoResult<()> {
+        let plan = self
+            .plan_item(plan_id)
+            .ok_or_else(|| AwoError::validation("unknown plan item `{plan_id}`"))?;
+        if plan.state != PlanItemState::Approved {
+            awo_bail!(
+                "plan item `{}` must be `approved` before generating a task card",
+                plan_id
+            );
+        }
+
+        self.add_task(task.clone())?;
+        let plan = self
+            .plan_item_mut(plan_id)
+            .ok_or_else(|| AwoError::validation("unknown plan item `{plan_id}`"))?;
+        plan.state = PlanItemState::Generated;
+        plan.generated_task_id = Some(task.task_id);
+        self.validate()
+    }
+
     pub fn set_task_state(&mut self, task_id: &str, state: TaskCardState) -> AwoResult<()> {
         let task = self
             .task_mut(task_id)
             .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
         task.state = state;
+        if state != TaskCardState::Superseded {
+            task.superseded_by_task_id = None;
+        }
         self.refresh_status();
         self.validate()
     }
@@ -435,6 +626,60 @@ impl TeamManifest {
         }
         self.clear_task_result(task_id)?;
         self.set_task_state(task_id, TaskCardState::Todo)
+    }
+
+    pub fn cancel_task(&mut self, task_id: &str) -> AwoResult<()> {
+        let task = self
+            .task(task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
+        if matches!(
+            task.state,
+            TaskCardState::Done | TaskCardState::Cancelled | TaskCardState::Superseded
+        ) {
+            awo_bail!(
+                "task `{}` cannot be cancelled from `{}`",
+                task_id,
+                task.state
+            );
+        }
+        self.set_task_state(task_id, TaskCardState::Cancelled)
+    }
+
+    pub fn supersede_task(&mut self, task_id: &str, replacement_task_id: &str) -> AwoResult<()> {
+        if task_id == replacement_task_id {
+            awo_bail!("task `{task_id}` cannot supersede itself");
+        }
+
+        let replacement = self
+            .task(replacement_task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{replacement_task_id}`"))?;
+        if matches!(
+            replacement.state,
+            TaskCardState::Cancelled | TaskCardState::Superseded
+        ) {
+            awo_bail!(
+                "replacement task `{replacement_task_id}` must not be `{}`",
+                replacement.state
+            );
+        }
+
+        let task = self
+            .task_mut(task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
+        if matches!(
+            task.state,
+            TaskCardState::Cancelled | TaskCardState::Superseded
+        ) {
+            awo_bail!(
+                "task `{}` cannot be superseded from `{}`",
+                task_id,
+                task.state
+            );
+        }
+        task.state = TaskCardState::Superseded;
+        task.superseded_by_task_id = Some(replacement_task_id.to_string());
+        self.refresh_status();
+        self.validate()
     }
 
     pub fn assign_member_slot(
@@ -482,11 +727,7 @@ impl TeamManifest {
         }
         self.status = if self.tasks.is_empty() {
             TeamStatus::Planning
-        } else if self
-            .tasks
-            .iter()
-            .all(|task| task.state == TaskCardState::Done)
-        {
+        } else if self.tasks.iter().all(|task| task.state.is_closed()) {
             TeamStatus::Complete
         } else if self
             .tasks
@@ -611,25 +852,18 @@ impl TeamManifest {
 
     /// Returns a list of reasons why this team cannot be archived, or an empty
     /// vec when archive is safe. Archive requires all tasks to be in a terminal
-    /// state (Done or Blocked) and the team must not already be archived.
+    /// state and the team must not already be archived.
     pub fn archive_blockers(&self) -> Vec<String> {
         let mut blockers = Vec::new();
         if self.status == TeamStatus::Archived {
             blockers.push("team is already archived".to_string());
         }
         for task in &self.tasks {
-            match task.state {
-                TaskCardState::Done => {}
-                TaskCardState::Todo | TaskCardState::InProgress | TaskCardState::Review => {
-                    blockers.push(format!(
-                        "task `{}` is in non-terminal state `{}`",
-                        task.task_id, task.state
-                    ));
-                }
-                TaskCardState::Blocked => {
-                    // Blocked is terminal for archive purposes — the operator
-                    // is explicitly choosing to shelve work that could not proceed.
-                }
+            if !task.state.is_archive_terminal() {
+                blockers.push(format!(
+                    "task `{}` is in non-terminal state `{}`",
+                    task.task_id, task.state
+                ));
             }
         }
         blockers
@@ -688,6 +922,11 @@ impl TeamManifest {
             task.result_session_id = None;
             task.handoff_note = None;
             task.output_log_path = None;
+            task.superseded_by_task_id = None;
+        }
+        for plan in &mut self.plan_items {
+            plan.state = PlanItemState::Draft;
+            plan.generated_task_id = None;
         }
         self.lead.slot_id = None;
         self.lead.branch_name = None;
@@ -777,6 +1016,7 @@ pub fn starter_team_manifest(
         },
         current_lead_member_id: Some("lead".to_string()),
         current_lead_session_id: None,
+        plan_items: Vec::new(),
         members: Vec::new(),
         tasks: Vec::new(),
     }

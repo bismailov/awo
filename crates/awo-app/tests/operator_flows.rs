@@ -828,6 +828,75 @@ fn team_member_add_and_task_add_appear_in_show() {
 }
 
 #[test]
+fn team_plan_add_approve_and_generate_flow_appears_in_show() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-plan-flow");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "plan-team",
+        "Turn a broad mission into task cards",
+    ]);
+    assert_eq!(init_result["ok"], true, "team init failed: {init_result}");
+
+    let add_plan = env.run(&[
+        "team",
+        "plan",
+        "add",
+        "plan-team",
+        "plan-1",
+        "Break out review work",
+        "Split the audit into one concrete task card",
+        "--owner-id",
+        "lead",
+        "--deliverable",
+        "Review task card ready",
+        "--verification",
+        "cargo test",
+    ]);
+    assert_eq!(add_plan["ok"], true, "plan add failed: {add_plan}");
+    assert_eq!(add_plan["data"]["plan_items"][0]["state"], "draft");
+
+    let approve = env.run(&["team", "plan", "approve", "plan-team", "plan-1"]);
+    assert_eq!(approve["ok"], true, "plan approve failed: {approve}");
+    assert_eq!(approve["data"]["plan_items"][0]["state"], "approved");
+
+    let generate = env.run(&[
+        "team",
+        "plan",
+        "generate",
+        "plan-team",
+        "plan-1",
+        "task-1",
+        "--deliverable",
+        "Review task card ready",
+    ]);
+    assert_eq!(generate["ok"], true, "plan generate failed: {generate}");
+    assert_eq!(generate["data"]["plan_items"][0]["state"], "generated");
+    assert_eq!(
+        generate["data"]["plan_items"][0]["generated_task_id"],
+        "task-1"
+    );
+    assert_eq!(generate["data"]["tasks"][0]["task_id"], "task-1");
+
+    let show_result = env.run(&["team", "show", "plan-team"]);
+    assert_eq!(show_result["ok"], true);
+    assert_eq!(show_result["data"]["plan_items"][0]["plan_id"], "plan-1");
+    assert_eq!(show_result["data"]["plan_items"][0]["state"], "generated");
+    assert_eq!(
+        show_result["data"]["tasks"][0]["title"],
+        "Break out review work"
+    );
+}
+
+#[test]
 fn team_task_delegate_supports_no_auto_start_without_launching_session() {
     let env = TestEnv::new();
     let repo_dir = env.create_repo("delegate-no-auto-start");

@@ -252,6 +252,12 @@ pub fn print_sessions(snapshot: &AppSnapshot, repo_filter: Option<&str>) {
         if let Some(log_path) = &session.log_path {
             println!("  log={log_path}");
         }
+        if let Some(usage_note) = &session.usage_note {
+            println!("  usage={usage_note}");
+        }
+        if let Some(recovery_hint) = &session.recovery_hint {
+            println!("  recovery={recovery_hint}");
+        }
     }
 }
 
@@ -290,6 +296,11 @@ pub fn print_review(review: &ReviewSummary) {
     }
 }
 
+pub fn print_review_diff(content: &str) {
+    println!();
+    println!("{content}");
+}
+
 pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) {
     if capabilities.is_empty() {
         println!("No runtime capabilities found.");
@@ -299,13 +310,15 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
     println!("Runtime capabilities:");
     for capability in capabilities {
         println!(
-            "- {} ({}) tier={} limit={} usage={} capacity={} launch={} subagents={} teams={} skills={}",
+            "- {} ({}) tier={} limit={} usage={} capacity={} budget={} lifetime={} launch={} subagents={} teams={} skills={}",
             capability.display_name,
             capability.runtime,
             capability.cost_tier.as_str(),
             capability.limit_profile.as_str(),
             capability.usage_reporting.as_str(),
             capability.capacity_reporting.as_str(),
+            capability.budget_guardrails.as_str(),
+            capability.session_lifetime.as_str(),
             capability.default_launch_mode,
             capability.inline_subagents.as_str(),
             capability.multi_session_teams.as_str(),
@@ -508,6 +521,30 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
             .unwrap_or("-"),
         manifest.current_lead_session_id().unwrap_or("-"),
     );
+    let review_queue = manifest
+        .tasks
+        .iter()
+        .filter(|task| task.state == awo_core::TaskCardState::Review)
+        .count();
+    let cleanup_queue = manifest
+        .tasks
+        .iter()
+        .filter(|task| task.state == awo_core::TaskCardState::Done && task.slot_id.is_some())
+        .count();
+    let history_queue = manifest
+        .tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.state,
+                awo_core::TaskCardState::Cancelled | awo_core::TaskCardState::Superseded
+            )
+        })
+        .count();
+    println!(
+        "- queues: review={} cleanup={} history={}",
+        review_queue, cleanup_queue, history_queue
+    );
 
     if manifest.members.is_empty() {
         println!("- members: none");
@@ -558,6 +595,21 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
                 "  - {} owner={} state={} deliverable={}",
                 task.title, task.owner_id, task.state, task.deliverable
             );
+            println!(
+                "    queue={}",
+                if task.state == awo_core::TaskCardState::Review {
+                    "review queue"
+                } else if task.state == awo_core::TaskCardState::Done && task.slot_id.is_some() {
+                    "cleanup queue"
+                } else if matches!(
+                    task.state,
+                    awo_core::TaskCardState::Cancelled | awo_core::TaskCardState::Superseded
+                ) {
+                    "history"
+                } else {
+                    "task list"
+                }
+            );
             if task.runtime.is_some() || task.model.is_some() {
                 println!(
                     "    requested={} model={}",
@@ -584,11 +636,38 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
             if let Some(result_summary) = &task.result_summary {
                 println!("    result={result_summary}");
             }
+            if let Some(replacement_task_id) = &task.superseded_by_task_id {
+                println!("    superseded_by={replacement_task_id}");
+            }
             if let Some(handoff_note) = &task.handoff_note {
                 println!("    handoff={handoff_note}");
             }
             if let Some(output_log_path) = &task.output_log_path {
                 println!("    log={output_log_path}");
+            }
+        }
+    }
+
+    if manifest.plan_items.is_empty() {
+        println!("- plan items: none");
+    } else {
+        println!("- plan items:");
+        for plan in &manifest.plan_items {
+            println!(
+                "  - {} state={} owner={} title={}",
+                plan.plan_id,
+                plan.state,
+                plan.owner_id.as_deref().unwrap_or("-"),
+                plan.title
+            );
+            if let Some(task_id) = &plan.generated_task_id {
+                println!("    generated_task={task_id}");
+            }
+            if let Some(deliverable) = &plan.deliverable {
+                println!("    deliverable={deliverable}");
+            }
+            if let Some(notes) = &plan.notes {
+                println!("    notes={notes}");
             }
         }
     }

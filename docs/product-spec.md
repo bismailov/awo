@@ -270,6 +270,11 @@ The product should support:
 - handoff notes between sessions
 - audit trail for workspace lifecycle changes
 
+For runtime usage and recovery, the product should also:
+- expose whether a runtime can report structured usage honestly
+- distinguish explicit timeout, operator cancel, likely exhaustion, and unknown failure
+- surface recovery guidance such as handoff, restart, scope reduction, or cleanup instead of just raw status labels
+
 Suggested quality gate prompts:
 - definition of done
 - required tests

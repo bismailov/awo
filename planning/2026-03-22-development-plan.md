@@ -13,7 +13,7 @@ It answers four questions:
 
 Current baseline for this document:
 - branch: `main`
-- commit: `30ac045`
+- checkpoint: post-audit working tree on March 28, 2026
 
 ## Product Vision
 
@@ -60,7 +60,7 @@ The project started with a clear V1 goal:
 
 ## What We Achieved
 
-Awo Console is now a robust orchestration substrate with a stable V1 slice.
+Awo Console is now a robust local orchestration substrate with a much richer operator loop than the original V1 slice.
 
 ### Core Orchestration & Hardening
 - Rust workspace split into `awo-core`, `awo-app`, and `awo-mcp`.
@@ -82,15 +82,24 @@ Awo Console is now a robust orchestration substrate with a stable V1 slice.
 
 ### Team Execution
 - Team manifests with task cards and member routing.
+- Replaceable current lead tracking plus lead-session visibility.
+- Planning-to-task-card workflow with draft/approved/generated plan items.
+- Immutable task recovery with `cancelled` / `superseded` task-card history.
 - **Automated task verification**: Executes quality gates (e.g., `cargo test`) on session completion.
 - **Result consolidation**: Captures logs, status, and summaries into task cards.
 - **Report generation**: Markdown summaries of team missions and outcomes in `analysis/reports/`.
 
 ### Operator Interfaces
-- **TUI**: Responsive dashboard with background Git ops, panel filtering (`/`), and live log tailing.
-- **CLI**: full-lifecycle management via headless dispatcher.
+- **TUI**: Responsive dashboard with background Git ops, plan/task-card panes, review/cleanup queues, bounded diff inspection, and live log tailing.
+- **CLI**: full-lifecycle management via headless dispatcher, including review diff, model overrides, and immutable recovery flows.
 - **MCP Server**: Exposes orchestration tools and resources to LLMs.
 - **Daemon (`awod`)**: JSON-RPC 2.0 over UDS for headless brokerage.
+
+### Recent Local-Product Gains
+- Configurable clone/worktree roots and explicit retained-slot pruning.
+- Task-card model overrides for budget-aware routing.
+- Runtime usage notes and recovery hints surfaced in CLI/TUI.
+- Review/consolidation cockpit depth in the Team Dashboard.
 
 ## Current Product Shape
 
@@ -128,77 +137,84 @@ As the project moves toward public development, keep these repository rules in p
 
 ## What Is Still Missing Or Not Finalized
 
-The most important remaining work falls into six buckets.
+The most important remaining work now falls into six buckets.
 
-### 1. Broker Maturity
-- production-grade daemon lifecycle and degraded-state handling
-- broker-mode concurrency validation
-- push/subscription-style event delivery for live clients
+### 1. Dispatcher / Control-Surface Parity
+- some CLI/TUI team-member and slot-binding mutations still call `AppCore` helpers directly
+- `team.member.update`, `team.member.remove`, `team.member.assign_slot`, and `team.task.bind_slot` are still missing as first-class commands
+- direct-vs-daemon parity is therefore improved but not fully complete
 
-### 2. Platform Maturity
-- Windows ConPTY completion and workflow validation
-- Named Pipe transport for Windows daemon.
+### 2. Broker Maturity
+- production-grade daemon lifecycle and degraded-state handling still need more real-world hardening
+- broker-mode concurrency validation should deepen further
+- push/subscription-style event delivery should replace more polling behavior over time
 
-### 3. Immutable Task Recovery
-- `task cancel`
-- `task supersede`
-- TUI/CLI flows that preserve history without task edit/delete
+### 3. Platform Maturity
+- Windows ConPTY completion and workflow validation remain open
+- Named Pipe transport for the Windows daemon remains open
 
-### 4. Reliability And Test Depth
-- `team_ops`
-- handlers and direct-vs-daemon parity
-- fingerprinting and readiness decisions
-- reconciliation flows
-- broker/event concurrency
+### 4. Runtime Usage Truth
+- provider-specific usage/capacity telemetry is still mostly advisory rather than structured
+- lead/worker recovery guidance is honest, but richer adapter-fed budget and lifetime data still needs work
 
 ### 5. Middleware Enrichment
 - automated context-pack generation
 - shared RPC type cleanup
 - stronger local MCP subscription semantics
 
-### 6. Orchestration Intelligence
-- deeper lead/worker handoff flows
-- richer synthesis and reporting
-- later WASI sandboxing exploration
+### 6. Release Finalization
+- help text and contributor docs still need a polish pass
+- manual scenario coverage needs a fresh full-product release sweep
+- known limitations should be tightened into a cleaner public release story
+
+## Current Objectives
+
+1. Finish dispatcher parity for all remaining mutating team flows.
+2. Make the daemon truly feel like the default local broker.
+3. Finish the honest local-platform story on Windows.
+4. Deepen structured runtime usage/capacity truth without inventing fake telemetry.
+5. Turn the current strong engineering substrate into a public release-quality local product.
 
 ## Recommended Next Milestones
 
-### Milestone 1: Broker Hardening
+### Milestone 1: Control-Surface Completion
+Goal: remove the remaining command-layer gaps between CLI/TUI/direct core paths.
+- add missing command variants for team-member update/remove/assign-slot and task-slot binding
+- route remaining mutating operator flows through `Command` dispatch
+- add direct-vs-daemon parity coverage for those paths
+
+### Milestone 2: Broker Hardening
 Goal: make the daemon feel like a dependable local broker.
 - harden lifecycle/status/cleanup behavior
 - validate broker-mode concurrency
 - upgrade event delivery for live clients
 
-### Milestone 2: Reliability And Test Closure
-Goal: close the remaining confidence gaps in orchestration-critical paths.
-- deepen `team_ops`, handler, fingerprint, reconciliation, and event tests
-- make manual validation a confirmation step rather than a discovery step
-
-### Milestone 3: Immutable Task Recovery
-Goal: make immutable tasks practical.
-- add cancel/supersede flows
-- expose them in CLI and TUI without introducing edit/delete
-
-### Milestone 4: Windows Completion
+### Milestone 3: Windows Completion
 Goal: achieve honest local parity on Windows.
 - finish ConPTY workflow parity
 - implement Named Pipes for the daemon
 
-### Milestone 5+: Local-First Enrichment
-Goal: deepen local orchestration before any remote expansion.
+### Milestone 4: Runtime Usage Truth
+Goal: turn advisory recovery messaging into stronger runtime-backed operator signals where possible.
+- add adapter-fed usage/capacity support where runtimes expose it
+- keep `unknown`/`unsupported` explicit where they do not
+- improve lead/worker handoff guidance around timeouts and token exhaustion
+
+### Milestone 5: Local-First Enrichment And Release Finalization
+Goal: deepen local orchestration and finish the release story.
 - middleware subscriptions and context-pack generation
-- lead/worker handoff depth
-- richer synthesis and reporting
+- richer lead/worker handoff and synthesis
+- help text, manual scenarios, known-limitations docs, and release polish
 
 ## Recommended Work Order
 
-1. Lock the local-first product contract in durable docs.
+1. Finish dispatcher/control-surface parity.
 2. Finalize daemon lifecycle, degraded-state handling, and broker validation.
-3. Close the high-value orchestration test gaps.
-4. Implement immutable task recovery.
-5. Complete Windows parity.
-6. Enrich local middleware and orchestration intelligence.
+3. Complete Windows parity.
+4. Strengthen runtime usage/capacity truth where adapters support it.
+5. Enrich local middleware and orchestration intelligence.
+6. Do the final release-quality documentation and validation pass.
 
 ## Summary
 
-Awo Console has moved from concept to a strong local orchestration substrate. The focus now shifts from "make the features exist" to "make the local product stable, observable, recoverable, and trustworthy enough to finish."
+Awo Console has moved from concept to a strong local orchestration product with real planning, review, cleanup, and recovery flows. The focus now shifts from "make the features exist" to "finish the last parity gaps, harden the broker/platform story, and ship a local product that feels coherent and trustworthy end to end."

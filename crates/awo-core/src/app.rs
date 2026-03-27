@@ -225,8 +225,7 @@ impl Dispatcher for AppCore {
             ));
         }
 
-        // Intercept TeamTaskStart and TeamTaskDelegate — they need full AppCore access
-        // and return complex payloads.
+        // Intercept commands that need full AppCore access and return richer payloads.
         match command {
             Command::TeamTaskStart { options } => {
                 let (manifest, slot_outcome, session_outcome, execution) =
@@ -263,6 +262,19 @@ impl Dispatcher for AppCore {
                     }),
                 );
                 outcome.events = events;
+                self.event_bus.publish(&outcome.events);
+                return Ok(outcome);
+            }
+            Command::TeamTeardown { team_id, .. } => {
+                let (manifest, result) = self.teardown_team(&team_id)?;
+                let outcome = CommandOutcome::with_all(
+                    format!("Tore down team `{team_id}`."),
+                    vec![],
+                    serde_json::json!({
+                        "manifest": manifest,
+                        "result": result,
+                    }),
+                );
                 self.event_bus.publish(&outcome.events);
                 return Ok(outcome);
             }

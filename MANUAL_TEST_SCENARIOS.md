@@ -147,10 +147,16 @@ test -d <WARM_SLOT_PATH>
   --runtime shell --model local-shell --notes "Reviews documentation completeness"
 
 # 3. Add tasks
-./target/debug/awo team task add audit-team code-scan code-reviewer \
-  "Scan code quality" \
-  "Run clippy and check for common issues" \
-  --model local-shell \
+./target/debug/awo team plan add audit-team plan-code "Break out code scan" \
+  "Convert the broad review idea into one executable task card" \
+  --owner-id code-reviewer \
+  --deliverable "Executable code review task card" \
+  --verification "cargo test"
+
+./target/debug/awo team plan approve audit-team plan-code
+
+./target/debug/awo team plan generate audit-team plan-code code-scan \
+  --owner-id code-reviewer \
   --deliverable "Quality report"
 
 ./target/debug/awo team task add audit-team doc-scan doc-reviewer \
@@ -204,6 +210,9 @@ test -d <WARM_SLOT_PATH>
 #   m           — add a member in Team Dashboard
 #   u           — update the selected member's routing/runtime policy
 #   d           — remove the selected non-lead member (with confirmation)
+#   p           — add a plan item in Team Dashboard
+#   P           — approve the selected draft plan item
+#   G           — generate a task card from the selected approved plan item
 #   n           — add a task in Team Dashboard
 #   D           — delegate the selected task
 #   s           — start the selected task in Team Dashboard
@@ -212,13 +221,14 @@ test -d <WARM_SLOT_PATH>
 #   o           — open the selected task-card log
 #   X           — release the selected task-card slot (retain warm / delete fresh)
 #   K           — delete the selected released task-card slot
+#   [ / ]       — jump directly between review/cleanup task cards in the Team Dashboard
 
 # 3. Explore the operational controls:
 #   Tab         — cycle between panels (Repos, Teams, Slots, Sessions)
 #   j/k or ↑/↓  — navigate lists
 #   /           — filter (type to search, Esc to clear)
 #   Enter       — on Slots: start a session prompt; on Sessions: open the log view
-#   Tab         — in Team Dashboard: cycle Teams -> Members -> Tasks
+#   Tab         — in Team Dashboard: cycle Teams -> Plan -> Members -> Tasks
 #   Shift+Tab   — cycle dashboard panes in reverse
 #   x           — cancel the selected session
 #   X           — release the selected slot
@@ -256,13 +266,28 @@ test -d <WARM_SLOT_PATH>
 #   T           — open Team Dashboard
 #   Tab         — focus the Task Cards pane
 #   Enter       — open the selected task-card log when a result session exists
+#   v           — open the selected task-card diff
 #   A           — accept the task card and mark it done
+#   C           — cancel the task card without deleting its history
+#   S           — supersede the task card with another task card
 #   X           — release the slot bound to that task card
 #                warm slots are retained for reuse; fresh slots are removed
 #   K           — if the slot was warm and released, delete it explicitly
 
 # 4. Re-run the scenario and choose rework instead:
 #   W           — send the task card back to todo and clear its review summary
+```
+
+```bash
+# 5. Exercise immutable recovery from the CLI as well:
+./target/debug/awo team task add closeout-team task-2 lead \
+  "Replacement task" \
+  "Follow-up after supersede" \
+  --deliverable "A replacement patch"
+./target/debug/awo team task cancel closeout-team task-1
+./target/debug/awo team task state closeout-team task-1 todo
+./target/debug/awo team task supersede closeout-team task-1 task-2
+./target/debug/awo review diff <SLOT_ID>
 ```
 
 ---

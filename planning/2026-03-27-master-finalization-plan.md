@@ -13,6 +13,25 @@ It supersedes ad hoc next-step notes by aligning:
 
 Use this plan as the primary roadmap for the next implementation waves.
 
+## Current Checkpoint
+
+As of March 28, 2026, the local product has advanced beyond the original version of this plan in several important ways:
+
+- immutable task recovery is implemented
+- lead-session orchestration is implemented
+- planning-to-task-card flow is implemented
+- review/consolidation cockpit v1 is implemented
+- configurable storage roots and retained-slot pruning are implemented
+- runtime recovery messaging is implemented at an honest advisory level
+
+The remaining roadmap focus is therefore less about adding first-time versions of those features and more about:
+
+- finishing command-surface parity
+- hardening daemon/broker behavior
+- closing Windows parity
+- enriching runtime telemetry where adapters allow it
+- polishing the release story
+
 ## Final Product Goal
 
 Finalize Awo Console as a **local-first orchestration console and broker** that an operator can trust for daily use.
@@ -126,7 +145,7 @@ Focus:
 - event delivery for live clients
 
 Primary job card:
-- [job-card-O-broker-hardening-and-daemon-ux.md](/Users/bismailov/Documents/chaban/planning/job-card-O-broker-hardening-and-daemon-ux.md)
+- [job-card-O-broker-hardening-and-daemon-ux.md](job-card-O-broker-hardening-and-daemon-ux.md)
 
 Exit criteria:
 - broker mode is the default mental model for supported platforms
@@ -142,9 +161,10 @@ Focus:
 - fingerprinting
 - reconciliation
 - daemon/event concurrency
+- command-layer parity for remaining mutating team flows
 
 Primary job card:
-- [job-card-P-orchestration-test-depth.md](/Users/bismailov/Documents/chaban/planning/job-card-P-orchestration-test-depth.md)
+- [job-card-P-orchestration-test-depth.md](job-card-P-orchestration-test-depth.md)
 
 Exit criteria:
 - critical lifecycle paths are deeply covered
@@ -160,7 +180,7 @@ Focus:
 - TUI/CLI support for history-preserving correction
 
 Primary job card:
-- [job-card-Q-immutable-task-recovery.md](/Users/bismailov/Documents/chaban/planning/job-card-Q-immutable-task-recovery.md)
+- [job-card-Q-immutable-task-recovery.md](job-card-Q-immutable-task-recovery.md)
 
 Exit criteria:
 - operators can correct plans without editing/deleting tasks
@@ -176,7 +196,7 @@ Focus:
 - workflow parity
 
 Primary job card:
-- [job-card-R-windows-parity-completion.md](/Users/bismailov/Documents/chaban/planning/job-card-R-windows-parity-completion.md)
+- [job-card-R-windows-parity-completion.md](job-card-R-windows-parity-completion.md)
 
 Exit criteria:
 - core local workflows work on Windows and Unix with honest, documented behavior
@@ -192,7 +212,7 @@ Focus:
 - control-surface consistency
 
 Primary job card:
-- [job-card-S-middleware-local-enrichment.md](/Users/bismailov/Documents/chaban/planning/job-card-S-middleware-local-enrichment.md)
+- [job-card-S-middleware-local-enrichment.md](job-card-S-middleware-local-enrichment.md)
 
 Exit criteria:
 - local automation and integrations feel stable and coherent
@@ -211,14 +231,14 @@ Focus:
 - capacity-aware recovery for lead/worker sessions
 
 Primary job card:
-- [job-card-T-orchestration-intelligence.md](/Users/bismailov/Documents/chaban/planning/job-card-T-orchestration-intelligence.md)
+- [job-card-T-orchestration-intelligence.md](job-card-T-orchestration-intelligence.md)
 
 Supporting orchestration package:
-- [2026-03-27-lead-agent-task-card-orchestration-plan.md](/Users/bismailov/Documents/chaban/planning/2026-03-27-lead-agent-task-card-orchestration-plan.md)
-- [job-card-X-lead-session-and-task-card-model.md](/Users/bismailov/Documents/chaban/planning/job-card-X-lead-session-and-task-card-model.md)
-- [job-card-Y-output-ingestion-and-capacity-state.md](/Users/bismailov/Documents/chaban/planning/job-card-Y-output-ingestion-and-capacity-state.md)
-- [job-card-Z-consolidation-cockpit-and-retention-controls.md](/Users/bismailov/Documents/chaban/planning/job-card-Z-consolidation-cockpit-and-retention-controls.md)
-- [job-card-AA-configurable-storage-roots.md](/Users/bismailov/Documents/chaban/planning/job-card-AA-configurable-storage-roots.md)
+- [2026-03-27-lead-agent-task-card-orchestration-plan.md](2026-03-27-lead-agent-task-card-orchestration-plan.md)
+- [job-card-X-lead-session-and-task-card-model.md](job-card-X-lead-session-and-task-card-model.md)
+- [job-card-Y-output-ingestion-and-capacity-state.md](job-card-Y-output-ingestion-and-capacity-state.md)
+- [job-card-Z-consolidation-cockpit-and-retention-controls.md](job-card-Z-consolidation-cockpit-and-retention-controls.md)
+- [job-card-AA-configurable-storage-roots.md](job-card-AA-configurable-storage-roots.md)
 
 Exit criteria:
 - local multi-agent coordination is a meaningful product advantage
@@ -235,7 +255,7 @@ Focus:
 - stable known-limitations documentation
 
 Primary job card:
-- [job-card-U-release-finalization.md](/Users/bismailov/Documents/chaban/planning/job-card-U-release-finalization.md)
+- [job-card-U-release-finalization.md](job-card-U-release-finalization.md)
 
 Exit criteria:
 - the product is locally release-ready
@@ -258,6 +278,7 @@ This is the sequencing that best matches the current product shape and risk prof
 ### TUI Rule
 - The TUI remains command-backed.
 - No TUI-only business logic for core mutations.
+- When a public `Command` exists, prefer routing the operator flow through dispatch instead of calling a mutating `AppCore` helper directly.
 - New TUI flows must route through existing commands or newly added `awo-core` orchestration APIs.
 
 ### Safety Rule

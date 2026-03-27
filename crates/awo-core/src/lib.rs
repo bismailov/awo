@@ -56,8 +56,9 @@ pub use snapshot::{
     SessionSummary, SlotSummary, TeamSummary,
 };
 pub use team::{
-    DelegationContext, TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember,
-    TeamResetSummary, TeamStatus, TeamTaskDelegateOptions, TeamTaskExecution, TeamTaskStartOptions,
-    TeamTeardownPlan, TeamTeardownResult, default_team_manifest_path, list_team_manifest_paths,
-    load_team_manifest, remove_team_manifest, save_team_manifest, starter_team_manifest,
+    DelegationContext, PlanItem, PlanItemState, TaskCard, TaskCardState, TeamExecutionMode,
+    TeamManifest, TeamMember, TeamResetSummary, TeamStatus, TeamTaskDelegateOptions,
+    TeamTaskExecution, TeamTaskStartOptions, TeamTeardownPlan, TeamTeardownResult,
+    default_team_manifest_path, list_team_manifest_paths, load_team_manifest, remove_team_manifest,
+    save_team_manifest, starter_team_manifest,
 };

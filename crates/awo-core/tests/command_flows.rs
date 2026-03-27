@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use awo_core::app::AppPaths;
 use awo_core::config::{AppConfig, AppSettings};
 use awo_core::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus, detect_tmux};
-use awo_core::{AppCore, Command, SlotStatus, SlotStrategy};
+use awo_core::{AppCore, Command, SlotStatus, SlotStrategy, TaskCardState};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -618,6 +618,288 @@ fn repo_scoped_review_summary_excludes_other_repos() -> Result<()> {
     worker
         .join()
         .map_err(|_| anyhow::anyhow!("worker thread panicked"))??;
+
+    Ok(())
+}
+
+#[test]
+fn team_task_cancel_and_supersede_preserve_history() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("task-recovery")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::TeamInit {
+        team_id: "alpha".to_string(),
+        repo_id,
+        objective: "Recover immutable task cards".to_string(),
+        lead_runtime: None,
+        lead_model: None,
+        execution_mode: "external_slots".to_string(),
+        fallback_runtime: None,
+        fallback_model: None,
+        routing_preferences: None,
+        force: false,
+    })?;
+    core.dispatch(Command::TeamTaskAdd {
+        team_id: "alpha".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Original".to_string(),
+            summary: "Original plan".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Patch".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+    core.dispatch(Command::TeamTaskAdd {
+        team_id: "alpha".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "task-2".to_string(),
+            title: "Replacement".to_string(),
+            summary: "Better plan".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Replacement patch".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+
+    let outcome = core.dispatch(Command::TeamTaskCancel {
+        team_id: "alpha".to_string(),
+        task_id: "task-1".to_string(),
+    })?;
+    assert!(outcome.summary.contains("Cancelled task `task-1`"));
+    let manifest = core.load_team_manifest("alpha")?;
+    assert_eq!(
+        manifest.task("task-1").unwrap().state,
+        TaskCardState::Cancelled
+    );
+
+    core.dispatch(Command::TeamTaskState {
+        team_id: "alpha".to_string(),
+        task_id: "task-1".to_string(),
+        state: TaskCardState::Todo,
+    })?;
+    let outcome = core.dispatch(Command::TeamTaskSupersede {
+        team_id: "alpha".to_string(),
+        task_id: "task-1".to_string(),
+        replacement_task_id: "task-2".to_string(),
+    })?;
+    assert!(outcome.summary.contains("Superseded task `task-1`"));
+    let manifest = core.load_team_manifest("alpha")?;
+    let task = manifest.task("task-1").unwrap();
+    assert_eq!(task.state, TaskCardState::Superseded);
+    assert_eq!(task.superseded_by_task_id.as_deref(), Some("task-2"));
+
+    Ok(())
+}
+
+#[test]
+fn team_report_includes_plan_review_cleanup_and_history_sections() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("team-report")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::TeamInit {
+        team_id: "alpha".to_string(),
+        repo_id,
+        objective: "Produce a rich report".to_string(),
+        lead_runtime: None,
+        lead_model: None,
+        execution_mode: "external_slots".to_string(),
+        fallback_runtime: None,
+        fallback_model: None,
+        routing_preferences: None,
+        force: false,
+    })?;
+    core.dispatch(Command::TeamPlanAdd {
+        team_id: "alpha".to_string(),
+        plan: awo_core::PlanItem {
+            plan_id: "plan-1".to_string(),
+            title: "Break out review work".to_string(),
+            summary: "Turn the review into task cards".to_string(),
+            owner_id: Some("lead".to_string()),
+            runtime: None,
+            model: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: Some("Task card".to_string()),
+            verification: vec!["cargo test".to_string()],
+            depends_on: Vec::new(),
+            notes: None,
+            state: awo_core::PlanItemState::Draft,
+            generated_task_id: None,
+        },
+    })?;
+    core.dispatch(Command::TeamPlanApprove {
+        team_id: "alpha".to_string(),
+        plan_id: "plan-1".to_string(),
+    })?;
+    core.dispatch(Command::TeamPlanGenerate {
+        team_id: "alpha".to_string(),
+        plan_id: "plan-1".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "review-task".to_string(),
+            title: "Review task".to_string(),
+            summary: "Review".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Review output".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+    core.dispatch(Command::TeamTaskAdd {
+        team_id: "alpha".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "cleanup-task".to_string(),
+            title: "Cleanup task".to_string(),
+            summary: "Done but still bound".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: Some("slot-1".to_string()),
+            branch_name: Some("awo/cleanup".to_string()),
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Cleanup output".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Done,
+            result_summary: Some("Looks good".to_string()),
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+    core.dispatch(Command::TeamTaskAdd {
+        team_id: "alpha".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "history-task".to_string(),
+            title: "Old plan".to_string(),
+            summary: "Retired".to_string(),
+            owner_id: "lead".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Retired".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Cancelled,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+    core.dispatch(Command::TeamTaskState {
+        team_id: "alpha".to_string(),
+        task_id: "review-task".to_string(),
+        state: TaskCardState::Review,
+    })?;
+
+    let outcome = core.dispatch(Command::TeamReport {
+        team_id: "alpha".to_string(),
+    })?;
+    let report_path = outcome
+        .events
+        .iter()
+        .find_map(|event| match event {
+            awo_core::DomainEvent::TeamReportGenerated { report_path, .. } => {
+                Some(PathBuf::from(report_path))
+            }
+            _ => None,
+        })
+        .context("report path event")?;
+    let content = fs::read_to_string(report_path)?;
+    assert!(content.contains("## Queues"));
+    assert!(content.contains("## Plan Items"));
+    assert!(content.contains("## Review Queue"));
+    assert!(content.contains("## Cleanup Queue"));
+    assert!(content.contains("## History Queue"));
+
+    Ok(())
+}
+
+#[test]
+fn review_diff_returns_bounded_slot_diff_content() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("review-diff")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id,
+        task_name: "review-diff".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .next()
+        .context("missing slot")?;
+    fs::write(
+        Path::new(&slot.slot_path).join("README.md"),
+        "hello\nupdated\n",
+    )?;
+
+    let outcome = core.dispatch(Command::ReviewDiff {
+        slot_id: slot.id.clone(),
+    })?;
+    let data = outcome.data.context("missing diff payload")?;
+    let content = data
+        .get("content")
+        .and_then(|value| value.as_str())
+        .context("missing diff content")?;
+    assert!(content.contains("# Review Diff"));
+    assert!(content.contains("README.md"));
+    assert!(content.contains("Diff Stat"));
 
     Ok(())
 }

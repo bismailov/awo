@@ -170,6 +170,7 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -273,6 +274,7 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -349,6 +351,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -509,6 +512,7 @@ fn start_team_task_for_current_lead_binds_session_until_reconcile() -> Result<()
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -594,6 +598,7 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1005,6 +1010,7 @@ fn create_team_with_bound_slot(
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1218,6 +1224,7 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Done,
         },
     )?;
@@ -1310,6 +1317,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Done,
         },
     )?;
@@ -1637,6 +1645,7 @@ fn delegate_team_task_updates_owner_state_and_prompt() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1734,6 +1743,7 @@ fn delegate_team_task_with_auto_start_false_only_updates_manifest() -> Result<()
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1802,6 +1812,7 @@ fn delegate_team_task_fails_for_unknown_member() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::Todo,
         },
     )?;
@@ -1886,6 +1897,7 @@ fn delegate_team_task_fails_for_non_todo_task() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::InProgress,
         },
     )?;
@@ -2005,6 +2017,7 @@ fn team_task_delegation_flow() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
         },
     )?;
 
@@ -2087,6 +2100,7 @@ fn team_task_state_transitions() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
         },
     )?;
 
@@ -2153,6 +2167,7 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::InProgress,
         },
     )?;
@@ -2216,6 +2231,7 @@ fn test_reconcile_failed_verification_blocks() -> Result<()> {
             result_session_id: None,
             handoff_note: None,
             output_log_path: None,
+            superseded_by_task_id: None,
             state: TaskCardState::InProgress,
         },
     )?;

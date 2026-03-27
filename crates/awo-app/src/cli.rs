@@ -268,6 +268,11 @@ pub enum TeamCommand {
         #[command(subcommand)]
         command: TeamMemberCommand,
     },
+    /// Manage planning items before they become task cards.
+    Plan {
+        #[command(subcommand)]
+        command: TeamPlanCommand,
+    },
     /// Manage team task cards.
     Task {
         #[command(subcommand)]
@@ -389,6 +394,47 @@ pub enum TeamMemberCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum TeamPlanCommand {
+    /// Add a new plan item to the team manifest.
+    Add {
+        team_id: String,
+        plan_id: String,
+        title: String,
+        summary: String,
+        #[arg(long)]
+        owner_id: Option<String>,
+        #[arg(long)]
+        runtime: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        read_only: bool,
+        #[arg(long)]
+        write_scope: Vec<String>,
+        #[arg(long)]
+        deliverable: Option<String>,
+        #[arg(long)]
+        verification: Vec<String>,
+        #[arg(long)]
+        depends_on: Vec<String>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Approve a draft plan item so it can generate a task card.
+    Approve { team_id: String, plan_id: String },
+    /// Generate a task card from an approved plan item.
+    Generate {
+        team_id: String,
+        plan_id: String,
+        task_id: String,
+        #[arg(long)]
+        owner_id: Option<String>,
+        #[arg(long)]
+        deliverable: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum TeamTaskCommand {
     /// Add a new task card to the team manifest.
     Add {
@@ -433,6 +479,14 @@ pub enum TeamTaskCommand {
     Accept { team_id: String, task_id: String },
     /// Send a reviewed task card back to todo and clear its review result.
     Rework { team_id: String, task_id: String },
+    /// Cancel a task card without deleting its history.
+    Cancel { team_id: String, task_id: String },
+    /// Mark a task card superseded by another task card.
+    Supersede {
+        team_id: String,
+        task_id: String,
+        replacement_task_id: String,
+    },
     /// Manually bind a worktree slot to a task.
     BindSlot {
         team_id: String,
@@ -579,6 +633,8 @@ pub enum ReviewCommand {
         #[arg(long)]
         repo_id: Option<String>,
     },
+    /// Show a bounded diff summary for a slot/worktree.
+    Diff { slot_id: String },
 }
 
 #[derive(Debug, Subcommand)]

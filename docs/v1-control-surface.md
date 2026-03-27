@@ -190,14 +190,38 @@ Shows a review-oriented snapshot:
 - failed sessions
 
 #### `awo review diff <slot>`
-Opens a diff summary for the slot.
+Opens a bounded diff summary for the slot, including `git status`, `git diff --stat`, and a truncated patch preview.
+
+Expected operator behavior:
+- use it before `accept` when a task card is in the review queue
+- use it before `release` or `delete` when a done task card still owns a slot
 
 ### Team Task-Card Closeout Commands
+#### `awo team plan add <team> <plan_id> <title> <summary> ...`
+Adds a planning-layer item that can later be approved and generated into a task card.
+
+Expected behaviors:
+- preserve planning intent separately from executable task cards
+- allow optional owner/runtime/model intent
+- keep notes, deliverable intent, verification, and dependencies alongside the plan
+
+#### `awo team plan approve <team> <plan_id>`
+Marks a draft plan item ready for task-card generation.
+
+#### `awo team plan generate <team> <plan_id> <task_id> ...`
+Creates a task card from an approved plan item and links the task card back to the originating plan item.
+
 #### `awo team task accept <team> <task>`
 Marks a review-ready task card as done while preserving its review summary and leaving slot cleanup explicit.
 
 #### `awo team task rework <team> <task>`
 Sends a reviewed task card back to `todo` and clears the prior review result so the next run starts from a clean review state.
+
+#### `awo team task cancel <team> <task>`
+Marks a task card `cancelled` without deleting its history.
+
+#### `awo team task supersede <team> <task> <replacement_task>`
+Marks a task card `superseded` and links it to the replacement task card that should be followed instead.
 
 #### `awo team task add <team> <task> ... --runtime <runtime> --model <model>`
 Allows task-card-specific runtime and model overrides so an operator can route one task more cheaply or more aggressively than the owner member's default profile.
@@ -208,6 +232,18 @@ Detects multiple slots modifying risky file classes:
 - migrations
 - deploy config
 - shared DTO/schema packages
+
+### Runtime Operator Truth
+Runtime capabilities should distinguish:
+- `usage_reporting`
+- `capacity_reporting`
+- `budget_guardrails`
+- `session_lifetime`
+
+Operator surfaces should prefer honest guidance over fake precision:
+- say when usage is unsupported or unknown
+- show timeout vs likely exhaustion vs operator cancel distinctly
+- recommend handoff, restart, scope reduction, or cleanup based on the observed end reason
 
 ### Context Commands
 #### `awo context pack <repo>`
@@ -293,11 +329,13 @@ Useful throughout the TUI:
 
 ### Workflow D: Review And Close Out
 1. User opens Team Dashboard and selects a task card in `review`.
-2. Tool shows the result summary, handoff note, session outcome, and slot details.
-3. User opens the task-card log if deeper inspection is needed.
+2. Tool shows the result summary, handoff note, session outcome, slot details, and diff/log actions.
+3. User opens the task-card log or diff if deeper inspection is needed.
 4. User chooses:
    - accept: mark the task card `done`
    - rework: send it back to `todo` and clear the prior review result
+   - cancel: mark the task card `cancelled`
+   - supersede: mark the task card `superseded` and link a replacement
 5. User explicitly chooses what happens to the slot:
    - release: retain warm worktrees for reuse or delete fresh ones
    - delete: remove the released worktree immediately

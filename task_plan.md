@@ -1,10 +1,10 @@
 # Task Plan: Lead-Agent Task-Card Orchestration Implementation
 
 ## Goal
-Extend the current orchestration slice with three operator-facing follow-ons: task-card model overrides, configurable clone/worktree roots, and bulk pruning of released retained slots, while preserving the verified lead/output/review foundations from Job Cards X, Y, and Z.
+Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
 
 ## Current Phase
-Phase 8
+Phase 13
 
 ## Phases
 
@@ -44,8 +44,8 @@ Phase 8
 - [x] Update `progress.md`
 - [x] Add focused core/TUI tests for the new lead behavior
 - [x] Run formatting, linting, targeted tests, and full workspace tests
-- [ ] Prepare the final handoff summary
-- **Status:** in progress
+- [x] Prepare the final handoff summary
+- **Status:** complete
 
 ### Phase 6: Job Card Y Design And Implementation
 - [x] Add session end-reason and capacity-state models to runtime/store/snapshot
@@ -57,8 +57,8 @@ Phase 8
 - [x] Update `findings.md`
 - [x] Update `progress.md`
 - [x] Run formatting, linting, targeted tests, and full workspace tests
-- [ ] Prepare the final handoff summary
-- **Status:** in progress
+- [x] Prepare the final handoff summary
+- **Status:** complete
 
 ### Phase 7: Job Card Z Review Closeout And Retention Controls
 - [x] Re-read Job Card Z and inspect current review/consolidation and retention code paths
@@ -80,8 +80,61 @@ Phase 8
 - [x] Add focused tests for task-card model routing, storage-root precedence, and prune behavior
 - [x] Update operator docs/manual scenarios for model overrides, configurable roots, and prune
 - [x] Run formatting, linting, and full workspace tests
-- [ ] Prepare the final handoff summary
-- **Status:** in progress
+- [x] Prepare the final handoff summary
+- **Status:** complete
+
+### Phase 9: Next Iterations Planning
+- [x] Re-read the current orchestration checkpoint and master roadmap
+- [x] Identify the highest-value remaining local-product gaps
+- [x] Convert those gaps into an implementation order
+- [x] Write a focused next-iterations plan document
+- [x] Prepare the final handoff summary
+- **Status:** complete
+
+### Phase 10: Immutable Recovery And Review Diff Follow-Through
+- [x] Add immutable task recovery states and manifest linkage for superseded task cards
+- [x] Add command-backed `team.task.cancel` and `team.task.supersede`
+- [x] Reject cancel/supersede when a task card still has live sessions bound to its slot
+- [x] Surface cancel/supersede in CLI and TUI
+- [x] Preserve closed-task cleanup visibility for cancelled/superseded task cards
+- [x] Add bounded `review.diff` and expose it through CLI and the TUI
+- [x] Update focused docs and manual scenarios for immutable recovery and diff inspection
+- [x] Run formatting, clippy, and the full test suite
+- [x] Prepare the final handoff summary
+- **Status:** complete
+
+### Phase 11: Planning-To-Task-Card Flow
+- [x] Add durable plan-item schema support to `TeamManifest`
+- [x] Add command-backed `team.plan.add`, `team.plan.approve`, and `team.plan.generate`
+- [x] Surface plan items in CLI output and `team show`
+- [x] Add Team Dashboard plan-pane support with add, approve, and generate actions
+- [x] Add focused manifest, TUI, dispatch, and operator-flow tests for plan-item workflows
+- [x] Update team-manifest, control-surface, and manual-test docs for plan items
+- [x] Run formatting, clippy, and the full test suite
+- [x] Prepare the final handoff summary
+- **Status:** complete
+
+### Phase 12: Consolidation Cockpit Depth And Runtime Recovery Truth
+- [x] Make task-card review, cleanup, and history queue roles explicit in the Team Dashboard
+- [x] Add quick navigation between actionable review and cleanup task cards
+- [x] Extend team reports and text output with queue-aware sections and counts
+- [x] Add runtime usage notes and recovery hints to session snapshots and operator surfaces
+- [x] Extend runtime capability output with honest budget and session-lifetime support signals
+- [x] Add focused tests for queue navigation, report sections, and recovery guidance rendering
+- [x] Update docs and manual scenarios for the richer consolidation cockpit and recovery language
+- [x] Run formatting, clippy, and the full test suite
+- [x] Prepare the final handoff summary
+- **Status:** complete
+
+### Phase 13: Audit, Plan Refresh, And Release-Readiness Review
+- [x] Re-read the current architecture and roadmap docs before auditing
+- [x] Audit the codebase for command-layer parity, product drift, and documentation hygiene
+- [x] Fix audit findings that are small, concrete, and safe to resolve in this slice
+- [x] Write a dated audit report with strengths, residual risks, and recommendations
+- [x] Refresh the development and finalization plans to reflect the actual current checkpoint
+- [x] Run formatting, clippy, and the full test suite
+- [x] Commit and push the checkpoint
+- **Status:** complete
 
 ## Key Questions
 1. What is the smallest durable lead-session model that keeps older team manifests compatible?
@@ -110,6 +163,19 @@ Phase 8
 | Add task-card `model` separately from member defaults | Savvy operators need per-task cost/performance steering without mutating the assigned member profile |
 | Make clone/worktree roots globally configurable via settings/env before adding richer UI config management | This unlocks real operator control now without expanding into a larger settings UX slice |
 | Add `slot prune` as bulk cleanup rather than hiding deletion inside release/teardown | Operators should be able to clear retained warm workspace inventory intentionally and at repo scope |
+| Prioritize immutable task recovery before native planning flow | Recovery is the bigger operational gap and should solidify the task model before more orchestration layers depend on it |
+| Put diff/consolidation depth ahead of planning-to-task-card UX | The review loop is closer to operator-critical readiness than planning ergonomics right now |
+| Model immutable recovery with `cancelled` and `superseded` task-card states plus `superseded_by_task_id` | This preserves history without adding edit/delete semantics |
+| Treat `complete` as “all remaining task cards are closed” rather than strictly “all done” | Cancelled and superseded cards should not keep a finished team permanently out of `complete` |
+| Keep review diff bounded and text-first | A status/stat/patch summary is enough for the TUI cockpit without turning Awo into a full terminal pager |
+| Add a lightweight `plan item` layer instead of overloading task cards for both planning and execution | This keeps lead planning durable without losing the executable task-card model |
+| Make task-card generation command-backed rather than a TUI-only convenience | CLI, TUI, and future MCP/operator surfaces should share the same planning mutation path |
+| Put planning directly into the Team Dashboard instead of adding a second planning screen | The dashboard already has the right operator context and keeps the workflow single-surface |
+| Show queue roles explicitly instead of forcing operators to infer them from raw task state | The review/consolidation cockpit becomes faster to scan and easier to operate |
+| Keep runtime usage messaging advisory and capability-based | We can provide useful operator guidance today without pretending to have universal token telemetry |
+| Add direct navigation between actionable task cards | The cockpit should optimize for “what needs my attention now,” not only generic list browsing |
+| Treat command-surface parity as a release-level architecture objective, not a background cleanup | It directly affects daemon/direct consistency and the credibility of the core mutation rule |
+| Keep roadmap docs aligned with the real checkpoint after major slices land | Drift now hurts contributor onboarding more than feature ideation helps |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -123,6 +189,14 @@ Phase 8
 | New Team Dashboard closeout actions hit borrow-checker conflicts in `action_router.rs` | 1 | Clone selected slot/session ids before mutating TUI state so the new release/log flows stay ownership-safe |
 | `std::env::set_var`/`remove_var` are unsafe in this toolchain and the workspace forbids unsafe code | 1 | Refactored storage-root precedence into a pure helper and tested that instead of mutating process env in tests |
 | New prune test initially reused the same warm slot instead of producing multiple retained slots | 1 | Adjusted the test to hold two active warm slots before release so prune verifies the true multi-slot case |
+| The backlog was broad enough to encourage jumping between unrelated concerns | 1 | Wrote a narrower next-iterations plan that orders the work into four concrete local-product slices |
+| Bulk fixture update for the new task-card recovery field added duplicate initializers in two operator-surface files | 1 | Re-ran a compile-guided sweep and cleaned the duplicated `superseded_by_task_id` assignments by hand |
+| First full `cargo test` pass after the new CLI operator-flow coverage failed because the test did not provide an owner for generated task-card creation | 1 | Added `--owner-id lead` to the operator-flow test so the generation path matches the command contract |
+| The first actionable-task navigation test attached a cleanup candidate to a fake slot id and reconciliation stripped the binding immediately | 1 | Acquired a real slot in the test and used that id so the cleanup candidate remains actionable |
+| The new queue-navigation helper initially tangled borrow scopes and empty-list edge cases | 1 | Reworked the helper to build an actionable id list first, then mutate the selected index afterward |
+| `cargo test` still emits noisy `fatal: cannot change to ...` and `r2d2 unable to open database file` lines from intentional negative-path coverage | 1 | Verified the suites still finish green and left those existing diagnostics untouched in this slice |
+| The master finalization plan had machine-specific absolute links checked into the repo | 1 | Replaced them with portable relative links during the audit pass |
+| Several operator flows were still bypassing the dispatcher even when matching public commands already existed | 1 | Routed the easy cases back through dispatch and recorded the remaining command-surface gaps in the roadmap |
 
 ## Notes
 - The orchestration planning package created earlier in this line of work is:

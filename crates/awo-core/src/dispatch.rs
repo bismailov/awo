@@ -410,8 +410,8 @@ mod tests {
         use crate::runtime::{RuntimeKind, SessionLaunchMode};
         use crate::slot::SlotStrategy;
         use crate::team::{
-            DelegationContext, TaskCard, TeamExecutionMode, TeamMember, TeamTaskDelegateOptions,
-            TeamTaskStartOptions,
+            DelegationContext, PlanItem, PlanItemState, TaskCard, TeamExecutionMode, TeamMember,
+            TeamTaskDelegateOptions, TeamTaskStartOptions,
         };
         use std::path::PathBuf;
 
@@ -521,6 +521,55 @@ mod tests {
                 team_id: "team".to_string(),
                 member_id: "worker-a".to_string(),
             },
+            Command::TeamPlanAdd {
+                team_id: "team".to_string(),
+                plan: PlanItem {
+                    plan_id: "plan".to_string(),
+                    title: "Break out work".to_string(),
+                    summary: "Turn planning into execution".to_string(),
+                    owner_id: Some("m".to_string()),
+                    runtime: Some("codex".to_string()),
+                    model: Some("mini".to_string()),
+                    read_only: false,
+                    write_scope: vec!["src/lib.rs".to_string()],
+                    deliverable: Some("Task card draft".to_string()),
+                    verification: vec!["cargo test".to_string()],
+                    depends_on: vec![],
+                    notes: Some("Keep it narrow".to_string()),
+                    state: PlanItemState::Draft,
+                    generated_task_id: None,
+                },
+            },
+            Command::TeamPlanApprove {
+                team_id: "team".to_string(),
+                plan_id: "plan".to_string(),
+            },
+            Command::TeamPlanGenerate {
+                team_id: "team".to_string(),
+                plan_id: "plan".to_string(),
+                task: TaskCard {
+                    task_id: "t-plan".to_string(),
+                    title: "Break out work".to_string(),
+                    summary: "Turn planning into execution".to_string(),
+                    owner_id: "m".to_string(),
+                    runtime: Some("codex".to_string()),
+                    model: Some("mini".to_string()),
+                    slot_id: None,
+                    branch_name: None,
+                    read_only: false,
+                    write_scope: vec!["src/lib.rs".to_string()],
+                    deliverable: "Task card draft".to_string(),
+                    verification: vec!["cargo test".to_string()],
+                    depends_on: vec![],
+                    state: crate::team::TaskCardState::Todo,
+                    verification_command: None,
+                    result_summary: None,
+                    result_session_id: None,
+                    handoff_note: None,
+                    output_log_path: None,
+                    superseded_by_task_id: None,
+                },
+            },
             Command::TeamTaskAdd {
                 team_id: "team".to_string(),
                 task: TaskCard {
@@ -543,6 +592,7 @@ mod tests {
                     result_session_id: None,
                     handoff_note: None,
                     output_log_path: None,
+                    superseded_by_task_id: None,
                 },
             },
             Command::TeamTaskStart {

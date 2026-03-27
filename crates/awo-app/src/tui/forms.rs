@@ -1,14 +1,17 @@
 use awo_core::routing::RoutingPreferences;
-use awo_core::team::TeamMember;
+use awo_core::team::{PlanItem, TeamMember};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FormKind {
     RepoAdd,
     TeamInit,
+    PlanAdd { team_id: String },
+    PlanGenerate { team_id: String, plan_id: String },
     MemberAdd { team_id: String },
     MemberUpdate { team_id: String, member_id: String },
     TaskAdd { team_id: String },
     TaskDelegate { team_id: String, task_id: String },
+    TaskSupersede { team_id: String, task_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +200,42 @@ impl FormState {
         .with_footer("Execution mode defaults to external_slots")
     }
 
+    pub fn plan_add(team_id: String, owner_ids: Vec<String>) -> Self {
+        let mut owner_options = vec![String::new()];
+        owner_options.extend(owner_ids);
+        let default_owner = owner_options.first().cloned().unwrap_or_default();
+        Self::new(
+            FormKind::PlanAdd { team_id },
+            "Add Plan Item",
+            "Add",
+            vec![
+                FormField::text("plan_id", "Plan ID", ""),
+                FormField::text("title", "Title", ""),
+                FormField::text("summary", "Summary", ""),
+                FormField::choice("owner_id", "Owner intent", owner_options, default_owner),
+                FormField::choice(
+                    "runtime",
+                    "Runtime intent",
+                    optional_runtime_options(),
+                    "",
+                ),
+                FormField::text("model", "Model intent", ""),
+                FormField::choice(
+                    "read_only",
+                    "Read-only",
+                    vec!["false".to_string(), "true".to_string()],
+                    "false",
+                ),
+                FormField::text("write_scope", "Write scope (comma-separated)", ""),
+                FormField::text("deliverable", "Deliverable", ""),
+                FormField::text("verification", "Verification (comma-separated)", ""),
+                FormField::text("depends_on", "Depends on (comma-separated)", ""),
+                FormField::text("notes", "Notes", ""),
+            ],
+        )
+        .with_footer("Plan items stay immutable; approve them first, then generate task cards from the approved plan")
+    }
+
     pub fn member_update(team_id: String, member: &TeamMember) -> Self {
         let preferences = member.routing_preferences.clone().unwrap_or_default();
         Self::new(
@@ -306,6 +345,40 @@ impl FormState {
         )
     }
 
+    pub fn plan_generate(
+        team_id: String,
+        plan: &PlanItem,
+        owner_ids: Vec<String>,
+        default_task_id: String,
+    ) -> Self {
+        let default_owner = plan
+            .owner_id
+            .clone()
+            .filter(|owner_id| owner_ids.iter().any(|candidate| candidate == owner_id))
+            .or_else(|| owner_ids.first().cloned())
+            .unwrap_or_default();
+        Self::new(
+            FormKind::PlanGenerate {
+                team_id,
+                plan_id: plan.plan_id.clone(),
+            },
+            "Generate Task Card",
+            "Generate",
+            vec![
+                FormField::text("task_id", "Task ID", default_task_id),
+                FormField::choice("owner_id", "Owner", owner_ids, default_owner),
+                FormField::text(
+                    "deliverable",
+                    "Deliverable",
+                    plan.deliverable.clone().unwrap_or_default(),
+                ),
+            ],
+        )
+        .with_footer(
+            "Generation creates a new task card and links it back to the approved plan item",
+        )
+    }
+
     pub fn task_delegate(team_id: String, task_id: String, target_member_ids: Vec<String>) -> Self {
         let default_target = target_member_ids.first().cloned().unwrap_or_default();
         Self::new(
@@ -331,6 +404,26 @@ impl FormState {
         )
         .with_footer("Delegation preserves immutable tasks by reassigning ownership, not editing task content")
     }
+
+    pub fn task_supersede(
+        team_id: String,
+        task_id: String,
+        replacement_task_ids: Vec<String>,
+    ) -> Self {
+        let default_replacement = replacement_task_ids.first().cloned().unwrap_or_default();
+        Self::new(
+            FormKind::TaskSupersede { team_id, task_id },
+            "Supersede Task Card",
+            "Supersede",
+            vec![FormField::choice(
+                "replacement_task_id",
+                "Replacement task card",
+                replacement_task_ids,
+                default_replacement,
+            )],
+        )
+        .with_footer("Supersede preserves history by linking this task card to its replacement instead of editing or deleting it")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +432,7 @@ pub(crate) enum ConfirmAction {
     PromoteLead { team_id: String, member_id: String },
     AcceptTask { team_id: String, task_id: String },
     ReworkTask { team_id: String, task_id: String },
+    CancelTask { team_id: String, task_id: String },
     DeleteSlot { slot_id: String },
 }
 
@@ -387,6 +481,16 @@ impl ConfirmState {
                 "Send task card `{task_id}` in team `{team_id}` back to todo and clear its review result?\nPress Enter to confirm or Esc to cancel."
             ),
             action: ConfirmAction::ReworkTask { team_id, task_id },
+        }
+    }
+
+    pub fn cancel_task(team_id: String, task_id: String) -> Self {
+        Self {
+            title: "Cancel Task Card".to_string(),
+            message: format!(
+                "Cancel task card `{task_id}` in team `{team_id}` without deleting its history?\nPress Enter to confirm or Esc to cancel."
+            ),
+            action: ConfirmAction::CancelTask { team_id, task_id },
         }
     }
 
@@ -449,6 +553,7 @@ pub(crate) fn split_csv(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{FormField, FormState, split_csv};
+    use awo_core::{PlanItem, PlanItemState};
 
     #[test]
     fn choice_field_cycles_in_both_directions() {
@@ -491,6 +596,49 @@ mod tests {
 
         assert_eq!(form.value("runtime"), Some(""));
         assert_eq!(form.value("model"), Some(""));
+    }
+
+    #[test]
+    fn plan_add_form_exposes_owner_and_model_intent() {
+        let form = FormState::plan_add(
+            "team-a".to_string(),
+            vec!["lead".to_string(), "worker".to_string()],
+        );
+
+        assert_eq!(form.value("owner_id"), Some(""));
+        assert_eq!(form.value("runtime"), Some(""));
+        assert_eq!(form.value("model"), Some(""));
+    }
+
+    #[test]
+    fn plan_generate_prefills_plan_defaults() {
+        let plan = PlanItem {
+            plan_id: "plan-a".to_string(),
+            title: "Split runtime layer".to_string(),
+            summary: "Break the work into one task card".to_string(),
+            owner_id: Some("worker".to_string()),
+            runtime: Some("codex".to_string()),
+            model: Some("mini".to_string()),
+            read_only: false,
+            write_scope: vec!["src/runtime.rs".to_string()],
+            deliverable: Some("Tested patch".to_string()),
+            verification: vec!["cargo test".to_string()],
+            depends_on: Vec::new(),
+            notes: None,
+            state: PlanItemState::Approved,
+            generated_task_id: None,
+        };
+
+        let form = FormState::plan_generate(
+            "team-a".to_string(),
+            &plan,
+            vec!["lead".to_string(), "worker".to_string()],
+            "task-a".to_string(),
+        );
+
+        assert_eq!(form.value("task_id"), Some("task-a"));
+        assert_eq!(form.value("owner_id"), Some("worker"));
+        assert_eq!(form.value("deliverable"), Some("Tested patch"));
     }
 
     #[test]

@@ -3,11 +3,11 @@ use crate::cli::DaemonCommand;
 use crate::cli::{
     AppCommand, ContextCommand, DebugCommand, RepoCommand, ReviewCommand, RuntimeCommand,
     RuntimePressureCommand, SessionCommand, SkillsCommand, SlotCommand, TeamCommand,
-    TeamMemberCommand, TeamTaskCommand,
+    TeamMemberCommand, TeamPlanCommand, TeamTaskCommand,
 };
 use crate::output::{
     OutputMode, merge_command_outcomes, print_context, print_context_doctor, print_json_response,
-    print_outcome, print_registered_repos, print_review, print_routing_preview,
+    print_outcome, print_registered_repos, print_review, print_review_diff, print_routing_preview,
     print_routing_recommendation, print_runtime_capabilities, print_runtime_pressure_profile,
     print_session_log, print_sessions, print_skill_doctor, print_skills_catalog, print_slots,
     print_team_manifest, print_team_manifests, print_team_member, print_team_task_execution,
@@ -21,15 +21,15 @@ use awo_core::commands::CommandOutcome;
 use awo_core::dispatch::Dispatcher;
 use awo_core::error::AwoResult;
 use awo_core::{
-    AppCore, Command, DelegationContext, RoutingContext, RoutingPreferences, RoutingTarget,
-    RuntimeKind, RuntimePressure, SessionLaunchMode, SkillLinkMode, SkillRuntime, SlotStrategy,
-    TaskCard, TaskCardState, TeamExecutionMode, TeamManifest, TeamMember, TeamResetSummary,
-    TeamTaskDelegateOptions, TeamTaskStartOptions, all_runtime_capabilities, route_runtime,
-    runtime_capabilities,
+    AppCore, Command, DelegationContext, PlanItem, PlanItemState, RoutingContext,
+    RoutingPreferences, RoutingTarget, RuntimeKind, RuntimePressure, SessionLaunchMode,
+    SkillLinkMode, SkillRuntime, SlotStrategy, TaskCard, TaskCardState, TeamExecutionMode,
+    TeamManifest, TeamMember, TeamResetSummary, TeamTaskDelegateOptions, TeamTaskStartOptions,
+    all_runtime_capabilities, route_runtime, runtime_capabilities,
 };
 #[cfg(unix)]
 use awo_core::{DaemonOptions, DaemonServer, DaemonStatus, get_daemon_status, stop_daemon};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use serde_json::json;
 #[cfg(unix)]
@@ -816,6 +816,119 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 print_routing_recommendation(&recommendation);
             }
         }
+        TeamCommand::Plan { command } => match command {
+            TeamPlanCommand::Add {
+                team_id,
+                plan_id,
+                title,
+                summary,
+                owner_id,
+                runtime,
+                model,
+                read_only,
+                write_scope,
+                deliverable,
+                verification,
+                depends_on,
+                notes,
+            } => {
+                let outcome = backend.dispatch(Command::TeamPlanAdd {
+                    team_id,
+                    plan: PlanItem {
+                        plan_id,
+                        title,
+                        summary,
+                        owner_id,
+                        runtime: parse_optional_runtime(runtime.as_deref())?,
+                        model,
+                        read_only,
+                        write_scope,
+                        deliverable,
+                        verification,
+                        depends_on,
+                        notes,
+                        state: PlanItemState::Draft,
+                        generated_task_id: None,
+                    },
+                })?;
+                if output.json {
+                    print_json_response(&outcome.data, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                }
+            }
+            TeamPlanCommand::Approve { team_id, plan_id } => {
+                let outcome = backend.dispatch(Command::TeamPlanApprove { team_id, plan_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamPlanCommand::Generate {
+                team_id,
+                plan_id,
+                task_id,
+                owner_id,
+                deliverable,
+            } => {
+                let manifest = core.load_team_manifest(&team_id)?;
+                let plan = manifest
+                    .plan_item(&plan_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("unknown plan item: {}", plan_id))?;
+                let task = TaskCard {
+                    task_id,
+                    title: plan.title.clone(),
+                    summary: plan.summary.clone(),
+                    owner_id: owner_id.or(plan.owner_id.clone()).ok_or_else(|| {
+                        anyhow::anyhow!("owner_id is required to generate a task card")
+                    })?,
+                    runtime: plan.runtime.clone(),
+                    model: plan.model.clone(),
+                    slot_id: None,
+                    branch_name: None,
+                    read_only: plan.read_only,
+                    write_scope: plan.write_scope.clone(),
+                    deliverable: deliverable.or(plan.deliverable.clone()).ok_or_else(|| {
+                        anyhow::anyhow!("deliverable is required to generate a task card")
+                    })?,
+                    verification: plan.verification.clone(),
+                    verification_command: None,
+                    depends_on: plan.depends_on.clone(),
+                    state: TaskCardState::Todo,
+                    result_summary: None,
+                    result_session_id: None,
+                    handoff_note: None,
+                    output_log_path: None,
+                    superseded_by_task_id: None,
+                };
+                let outcome = backend.dispatch(Command::TeamPlanGenerate {
+                    team_id,
+                    plan_id,
+                    task,
+                })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+        },
         TeamCommand::Member { command } => match command {
             TeamMemberCommand::Show { team_id, member_id } => {
                 let manifest = core.load_team_manifest(&team_id)?;
@@ -1011,6 +1124,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         result_session_id: None,
                         handoff_note: None,
                         output_log_path: None,
+                        superseded_by_task_id: None,
                     },
                 })?;
                 if output.json {
@@ -1059,6 +1173,44 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             }
             TeamTaskCommand::Rework { team_id, task_id } => {
                 let outcome = backend.dispatch(Command::TeamTaskRework { team_id, task_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamTaskCommand::Cancel { team_id, task_id } => {
+                let outcome = backend.dispatch(Command::TeamTaskCancel { team_id, task_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamTaskCommand::Supersede {
+                team_id,
+                task_id,
+                replacement_task_id,
+            } => {
+                let outcome = backend.dispatch(Command::TeamTaskSupersede {
+                    team_id,
+                    task_id,
+                    replacement_task_id,
+                })?;
                 let manifest: TeamManifest = serde_json::from_value(
                     outcome
                         .data
@@ -1187,12 +1339,22 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
             }
         },
         TeamCommand::Archive { team_id } => {
-            let manifest = core.archive_team(&team_id)?;
+            let outcome = backend.dispatch(Command::TeamArchive {
+                team_id: team_id.clone(),
+                force: true,
+            })?;
             if output.json {
-                print_json_response(&manifest, None);
+                print_json_response(
+                    outcome.data.as_ref().unwrap_or(&serde_json::Value::Null),
+                    Some(&outcome),
+                );
             } else {
-                println!("Team `{}` archived.", manifest.team_id);
-                print_team_manifest(&manifest);
+                print_outcome(&outcome);
+                if let Some(data) = &outcome.data
+                    && let Ok(manifest) = serde_json::from_value::<TeamManifest>(data.clone())
+                {
+                    print_team_manifest(&manifest);
+                }
             }
         }
         TeamCommand::Reset { team_id, force } => {
@@ -1231,12 +1393,22 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 }
                 return Ok(());
             }
-            let (manifest, _summary) = core.reset_team(&team_id)?;
+            let outcome = backend.dispatch(Command::TeamReset {
+                team_id: team_id.clone(),
+                force,
+            })?;
             if output.json {
-                print_json_response(&manifest, None);
+                print_json_response(
+                    outcome.data.as_ref().unwrap_or(&serde_json::Value::Null),
+                    Some(&outcome),
+                );
             } else {
-                println!("Team `{}` reset to planning.", manifest.team_id);
-                print_team_manifest(&manifest);
+                print_outcome(&outcome);
+                if let Some(data) = &outcome.data
+                    && let Ok(manifest) = serde_json::from_value::<TeamManifest>(data.clone())
+                {
+                    print_team_manifest(&manifest);
+                }
             }
         }
         TeamCommand::Report { team_id } => {
@@ -1259,44 +1431,43 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 return Ok(());
             }
 
-            let (manifest, result) = core.teardown_team(&team_id)?;
+            let outcome = backend.dispatch(Command::TeamTeardown {
+                team_id: team_id.clone(),
+                force,
+            })?;
             if output.json {
-                #[derive(Serialize)]
-                struct TeamTeardownResponse<'a> {
-                    manifest: &'a TeamManifest,
-                    result: &'a awo_core::TeamTeardownResult,
+                print_json_response(
+                    outcome.data.as_ref().unwrap_or(&serde_json::Value::Null),
+                    Some(&outcome),
+                );
+            } else if let Some(data) = &outcome.data {
+                #[derive(Deserialize)]
+                struct TeamTeardownResponse {
+                    manifest: TeamManifest,
+                    result: awo_core::TeamTeardownResult,
                 }
 
-                print_json_response(
-                    &TeamTeardownResponse {
-                        manifest: &manifest,
-                        result: &result,
-                    },
-                    None,
-                );
+                if let Ok(response) = serde_json::from_value::<TeamTeardownResponse>(data.clone()) {
+                    print_team_teardown_result(&team_id, &response.result);
+                    print_team_manifest(&response.manifest);
+                } else {
+                    print_outcome(&outcome);
+                }
             } else {
-                print_team_teardown_result(&team_id, &result);
-                print_team_manifest(&manifest);
+                print_outcome(&outcome);
             }
         }
         TeamCommand::Delete { team_id } => {
-            core.delete_team(&team_id)?;
+            let outcome = backend.dispatch(Command::TeamDelete {
+                team_id: team_id.clone(),
+            })?;
             if output.json {
-                #[derive(Serialize)]
-                struct TeamDeleteResponse<'a> {
-                    team_id: &'a str,
-                    deleted: bool,
-                }
-
                 print_json_response(
-                    &TeamDeleteResponse {
-                        team_id: &team_id,
-                        deleted: true,
-                    },
-                    None,
+                    outcome.data.as_ref().unwrap_or(&serde_json::Value::Null),
+                    Some(&outcome),
                 );
             } else {
-                println!("Deleted team manifest `{team_id}`.");
+                print_outcome(&outcome);
             }
         }
     }
@@ -1434,10 +1605,24 @@ fn run_review(command: ReviewCommand, output: OutputMode) -> Result<()> {
     let mut backend = bootstrap_backend(output)?;
     let repo_filter = match &command {
         ReviewCommand::Status { repo_id } => repo_id.clone(),
+        ReviewCommand::Diff { .. } => None,
     };
     let outcome = match command {
         ReviewCommand::Status { repo_id } => backend.dispatch(Command::ReviewStatus { repo_id })?,
+        ReviewCommand::Diff { slot_id } => backend.dispatch(Command::ReviewDiff { slot_id })?,
     };
+
+    if let Some(data) = &outcome.data
+        && let Some(content) = data.get("content").and_then(|value| value.as_str())
+    {
+        if output.json {
+            print_json_response(data, Some(&outcome));
+        } else {
+            print_outcome(&outcome);
+            print_review_diff(content);
+        }
+        return Ok(());
+    }
 
     let snapshot = backend.core().snapshot()?;
     let review = snapshot.review_for_repo(repo_filter.as_deref());
