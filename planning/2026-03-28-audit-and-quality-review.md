@@ -37,24 +37,44 @@ I did not find a blocking correctness bug in the newly added orchestration slice
 2. Open-source safety drift in roadmap docs.
    The master finalization plan had machine-specific absolute filesystem links. Those were replaced with portable relative links.
 
+### External Audit Reconciliation
+
+An additional external audit was reviewed after this document was first written. Its findings were incorporated selectively:
+
+1. TUI blocking snapshot work was a real concern and has now been mitigated.
+   The TUI no longer performs its periodic full `snapshot()` refresh on the render loop. Initial load is still synchronous, but later refreshes now arrive from a background worker, which makes this a polish concern rather than a current blocker.
+
+2. `action_router.rs` bloat was real and has been partly addressed.
+   Dialog/form/confirm handling now lives in `crates/awo-app/src/tui/action_router/dialogs.rs`, substantially shrinking the main router. More bounded decomposition is still desirable before another large cockpit feature lands.
+
+3. The command-parity warning was valid, but its concrete examples are now outdated.
+   The external audit cited member update/remove/assign-slot and task bind-slot as still bypassing commands. That was true before the March 28 parity sweep, but those specific flows are now first-class commands and dispatch-backed across CLI/TUI.
+
+   The broader architectural rule remains important, but those named examples should no longer be treated as open gaps.
+
+4. The `unwrap`/`expect` warning needed nuance and has mostly been addressed where it mattered.
+   Most hits in `awo-core` are in tests. The production concern that still matters is concentrated in `EventBus` lock/condvar handling in `crates/awo-core/src/events.rs`, where poisoned synchronization primitives would currently panic the process.
+   That was a legitimate hardening task, and it has now been addressed by recovering poisoned state and warning instead of panicking immediately. The external audit still overstated the breadth of production panic exposure, but it usefully pointed at the right hotspot.
+
+5. CI hardening was a valid remaining gap and is now partly closed.
+   The GitHub Actions workflow now includes `cargo audit` and `cargo deny`, and the repo now has a `deny.toml`. Local `cargo audit` validation succeeded; `cargo-deny` local validation still needs follow-through.
+
 ### Residual Risks
 
-1. Remaining command-layer parity gap.
-   Some mutating team-management flows still use direct `AppCore` helpers because the command surface is incomplete.
+1. Broker live-update delivery is still thinner than the long-term design wants.
+   The broker is healthier and more explicit about degraded states now, but event delivery still leans on polling/long-polling more than the final local operating model should.
 
-   Current examples:
-   - team-member policy update
-   - team-member remove
-   - team-member assign-slot
-   - task-slot binding
+2. TUI module bloat and boundary drift remain a watch item.
+   The router split is materially better than before, but more bounded extraction will still help if another major dashboard slice lands.
 
-   This is now the most important architecture-cleanup item because it directly affects daemon/direct parity and the credibility of the “all mutations flow through commands” rule.
-
-2. Runtime usage truth is still mostly advisory.
+3. Runtime usage truth is still mostly advisory.
    The product now gives honest recovery hints, which is good, but adapter-fed token or budget telemetry is still thin. That is acceptable for now as long as `unknown` and `unsupported` remain explicit, but it is still an important remaining product gap.
 
-3. Windows completion remains a release blocker.
+4. Windows completion remains a release blocker.
    The Unix/local story is much stronger than the Windows story today. Release confidence still depends on finishing the Windows daemon/supervision path and validating the same operator workflows there.
+
+5. CI security policy still needs finishing work.
+   The workflow and config are now present, `cargo audit` locally reports one known warning (`RUSTSEC-2017-0008` through `portable-pty -> serial`), and `deny.toml` now ignores that advisory explicitly. `cargo-deny` still needs local validation.
 
 ## Strengths
 
@@ -67,11 +87,11 @@ I did not find a blocking correctness bug in the newly added orchestration slice
 
 ## Recommended Next Objectives
 
-1. Complete the missing command surface for mutating team-management flows.
-2. Continue broker hardening until daemon mode feels like the default local operating model.
+1. Finish broker hardening around live-event delivery and any remaining degraded-state visibility.
+2. Continue bounded TUI decomposition before another large cockpit expansion.
 3. Finish Windows parity before broad release ambitions.
 4. Improve structured runtime usage/capacity truth where adapters genuinely support it.
-5. Use the next release-prep pass to tighten docs, help text, and known limitations.
+5. Finish validating CI security/supply-chain checks.
 
 ## Verification
 
@@ -80,5 +100,6 @@ Passed during this audit:
 - `cargo fmt --all`
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo test`
+- `cargo audit` (warning-only: `RUSTSEC-2017-0008` via `portable-pty -> serial`)
 
 Note: the full test suite still emits expected negative-path `git` and `r2d2` error lines for missing directories and invalid SQLite paths, but the suite finishes green.

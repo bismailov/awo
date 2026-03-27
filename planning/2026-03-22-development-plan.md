@@ -100,6 +100,10 @@ Awo Console is now a robust local orchestration substrate with a much richer ope
 - Task-card model overrides for budget-aware routing.
 - Runtime usage notes and recovery hints surfaced in CLI/TUI.
 - Review/consolidation cockpit depth in the Team Dashboard.
+- Background TUI snapshot refresh and Team Dashboard selection preservation.
+- Bounded TUI router decomposition for dialog/form workflow handling.
+- Event-bus poison recovery in production synchronization paths.
+- RPC-level daemon health probing with degraded detection for unresponsive brokers.
 
 ## Current Product Shape
 
@@ -139,13 +143,15 @@ As the project moves toward public development, keep these repository rules in p
 
 The most important remaining work now falls into six buckets.
 
-### 1. Dispatcher / Control-Surface Parity
-- some CLI/TUI team-member and slot-binding mutations still call `AppCore` helpers directly
-- `team.member.update`, `team.member.remove`, `team.member.assign_slot`, and `team.task.bind_slot` are still missing as first-class commands
-- direct-vs-daemon parity is therefore improved but not fully complete
+### 1. TUI Responsiveness And Structure
+- the TUI now refreshes later snapshots from a background worker instead of doing periodic full refreshes on the render loop
+- `snapshot()` still performs runtime sync and manifest reconciliation, so further snapshot-cost reduction remains a polish/performance opportunity rather than a blocker
+- `crates/awo-app/src/tui/action_router.rs` has been reduced by extracting dialog handling, but more decomposition is still desirable before another major cockpit expansion
 
 ### 2. Broker Maturity
 - production-grade daemon lifecycle and degraded-state handling still need more real-world hardening
+- daemon health now requires a bounded RPC roundtrip instead of a bare socket connect
+- daemon clients now apply bounded stream I/O timeouts so unresponsive brokers fail more predictably
 - broker-mode concurrency validation should deepen further
 - push/subscription-style event delivery should replace more polling behavior over time
 
@@ -157,35 +163,42 @@ The most important remaining work now falls into six buckets.
 - provider-specific usage/capacity telemetry is still mostly advisory rather than structured
 - lead/worker recovery guidance is honest, but richer adapter-fed budget and lifetime data still needs work
 
-### 5. Middleware Enrichment
+### 5. Hardening And CI Maturity
+- `EventBus` poison handling now recovers and warns instead of panicking immediately
+- output serialization no longer panics on unexpected JSON serialization failures
+- CI is now wired to run `cargo audit` and `cargo deny`, but `cargo-deny` configuration still needs local validation
+- `cargo audit` currently reports one known warning: `RUSTSEC-2017-0008` (`serial` via `portable-pty`), and `deny.toml` now ignores that advisory explicitly pending an upstream/runtime change
+
+### 6. Middleware Enrichment
 - automated context-pack generation
 - shared RPC type cleanup
 - stronger local MCP subscription semantics
 
-### 6. Release Finalization
+### 7. Release Finalization
 - help text and contributor docs still need a polish pass
 - manual scenario coverage needs a fresh full-product release sweep
 - known limitations should be tightened into a cleaner public release story
 
 ## Current Objectives
 
-1. Finish dispatcher parity for all remaining mutating team flows.
+1. Make the TUI feel responsive and maintainable under larger local workloads.
 2. Make the daemon truly feel like the default local broker.
 3. Finish the honest local-platform story on Windows.
 4. Deepen structured runtime usage/capacity truth without inventing fake telemetry.
-5. Turn the current strong engineering substrate into a public release-quality local product.
+5. Finish validating and operationalizing the new CI/security checks.
+6. Turn the current strong engineering substrate into a public release-quality local product.
 
 ## Recommended Next Milestones
 
-### Milestone 1: Control-Surface Completion
-Goal: remove the remaining command-layer gaps between CLI/TUI/direct core paths.
-- add missing command variants for team-member update/remove/assign-slot and task-slot binding
-- route remaining mutating operator flows through `Command` dispatch
-- add direct-vs-daemon parity coverage for those paths
+### Milestone 1: TUI Responsiveness And Decomposition
+Goal: keep the operator surface fast and maintainable as orchestration state grows.
+- completed: move periodic snapshot refresh off the render loop
+- completed: extract dialog/form-confirm workflow handling from `action_router.rs`
+- next: continue bounded decomposition only where new cockpit work would otherwise regrow the router
 
 ### Milestone 2: Broker Hardening
 Goal: make the daemon feel like a dependable local broker.
-- harden lifecycle/status/cleanup behavior
+- completed so far: harden lifecycle/status/cleanup behavior around stale artifacts, degraded states, RPC health checks, and client I/O timeouts
 - validate broker-mode concurrency
 - upgrade event delivery for live clients
 
@@ -200,7 +213,14 @@ Goal: turn advisory recovery messaging into stronger runtime-backed operator sig
 - keep `unknown`/`unsupported` explicit where they do not
 - improve lead/worker handoff guidance around timeouts and token exhaustion
 
-### Milestone 5: Local-First Enrichment And Release Finalization
+### Milestone 5: Hardening And CI Maturity
+Goal: reduce avoidable crash/supply-chain risk before final release work.
+- completed so far: remove the remaining high-risk production panic paths in `EventBus` and JSON output handling
+- completed so far: add `cargo audit` and `cargo deny` steps plus `deny.toml`
+- completed so far: record an explicit temporary ignore for `RUSTSEC-2017-0008` (`portable-pty -> serial`) in `deny.toml`
+- next: validate `cargo deny` locally
+
+### Milestone 6: Local-First Enrichment And Release Finalization
 Goal: deepen local orchestration and finish the release story.
 - middleware subscriptions and context-pack generation
 - richer lead/worker handoff and synthesis
@@ -208,13 +228,13 @@ Goal: deepen local orchestration and finish the release story.
 
 ## Recommended Work Order
 
-1. Finish dispatcher/control-surface parity.
-2. Finalize daemon lifecycle, degraded-state handling, and broker validation.
-3. Complete Windows parity.
-4. Strengthen runtime usage/capacity truth where adapters support it.
+1. Finish broker live-event delivery and any remaining degraded-state operator visibility.
+2. Complete Windows parity.
+3. Strengthen runtime usage/capacity truth where adapters support it.
+4. Finish validating CI/security checks and set advisory policy.
 5. Enrich local middleware and orchestration intelligence.
 6. Do the final release-quality documentation and validation pass.
 
 ## Summary
 
-Awo Console has moved from concept to a strong local orchestration product with real planning, review, cleanup, and recovery flows. The focus now shifts from "make the features exist" to "finish the last parity gaps, harden the broker/platform story, and ship a local product that feels coherent and trustworthy end to end."
+Awo Console has moved from concept to a strong local orchestration product with real planning, review, cleanup, and recovery flows. The focus now shifts from "make the features exist" to "keep the operator surface fast, harden the broker/platform story, and ship a local product that feels coherent and trustworthy end to end."

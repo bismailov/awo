@@ -2,9 +2,10 @@
 
 use anyhow::{Context, Result, bail};
 use awo_core::app::AppPaths;
+use awo_core::capabilities::CostTier;
 use awo_core::config::{AppConfig, AppSettings};
 use awo_core::runtime::{RuntimeKind, SessionLaunchMode, SessionStatus, detect_tmux};
-use awo_core::{AppCore, Command, SlotStatus, SlotStrategy, TaskCardState};
+use awo_core::{AppCore, Command, SlotStatus, SlotStrategy, TaskCardState, TeamExecutionMode};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -717,6 +718,177 @@ fn team_task_cancel_and_supersede_preserve_history() -> Result<()> {
     let task = manifest.task("task-1").unwrap();
     assert_eq!(task.state, TaskCardState::Superseded);
     assert_eq!(task.superseded_by_task_id.as_deref(), Some("task-2"));
+
+    Ok(())
+}
+
+#[test]
+fn team_member_and_task_binding_commands_round_trip_through_dispatch() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("team-command-parity")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::TeamInit {
+        team_id: "alpha".to_string(),
+        repo_id: repo_id.clone(),
+        objective: "Exercise dispatch-backed team mutations".to_string(),
+        lead_runtime: None,
+        lead_model: None,
+        execution_mode: "external_slots".to_string(),
+        fallback_runtime: None,
+        fallback_model: None,
+        routing_preferences: None,
+        force: false,
+    })?;
+    core.dispatch(Command::TeamMemberAdd {
+        team_id: "alpha".to_string(),
+        member: awo_core::TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: Some("shell-default".to_string()),
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    })?;
+    core.dispatch(Command::TeamMemberAdd {
+        team_id: "alpha".to_string(),
+        member: awo_core::TeamMember {
+            member_id: "worker-b".to_string(),
+            role: "reviewer".to_string(),
+            runtime: Some("claude".to_string()),
+            model: Some("sonnet".to_string()),
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    })?;
+
+    let update = core.dispatch(Command::TeamMemberUpdate {
+        team_id: "alpha".to_string(),
+        member_id: "worker-a".to_string(),
+        runtime: None,
+        model: Some("shell-fast".to_string()),
+        fallback_runtime: Some("gemini".to_string()),
+        fallback_model: Some("flash".to_string()),
+        clear_fallback: false,
+        routing_preferences: Some(awo_core::routing::RoutingPreferences {
+            prefer_local: true,
+            avoid_metered: false,
+            max_cost_tier: Some(CostTier::Standard),
+            allow_fallback: true,
+        }),
+        clear_routing_preferences: false,
+    })?;
+    assert!(update.summary.contains("Updated member `worker-a`"));
+    assert!(matches!(
+        update.events.first(),
+        Some(awo_core::DomainEvent::TeamMemberUpdated { member_id, .. }) if member_id == "worker-a"
+    ));
+
+    core.dispatch(Command::TeamTaskAdd {
+        team_id: "alpha".to_string(),
+        task: awo_core::TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Implement".to_string(),
+            summary: "Bind a task to a slot".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: None,
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Patch".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            superseded_by_task_id: None,
+        },
+    })?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id,
+        task_name: "binding task".to_string(),
+        strategy: SlotStrategy::Fresh,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.task_name == "binding task")
+        .context("missing acquired slot")?;
+
+    let assign = core.dispatch(Command::TeamMemberAssignSlot {
+        team_id: "alpha".to_string(),
+        member_id: "worker-a".to_string(),
+        slot_id: slot.id.clone(),
+    })?;
+    assert!(assign.summary.contains("Assigned slot"));
+    assert!(matches!(
+        assign.events.first(),
+        Some(awo_core::DomainEvent::TeamMemberSlotAssigned { member_id, slot_id, .. })
+            if member_id == "worker-a" && slot_id == &slot.id
+    ));
+
+    let bind = core.dispatch(Command::TeamTaskBindSlot {
+        team_id: "alpha".to_string(),
+        task_id: "task-1".to_string(),
+        slot_id: slot.id.clone(),
+    })?;
+    assert!(bind.summary.contains("Bound slot"));
+    assert!(matches!(
+        bind.events.first(),
+        Some(awo_core::DomainEvent::TeamTaskSlotBound { task_id, slot_id, .. })
+            if task_id == "task-1" && slot_id == &slot.id
+    ));
+
+    let remove = core.dispatch(Command::TeamMemberRemove {
+        team_id: "alpha".to_string(),
+        member_id: "worker-b".to_string(),
+    })?;
+    assert!(remove.summary.contains("Removed member `worker-b`"));
+    assert!(matches!(
+        remove.events.first(),
+        Some(awo_core::DomainEvent::TeamMemberRemoved { member_id, .. }) if member_id == "worker-b"
+    ));
+
+    let manifest = core.load_team_manifest("alpha")?;
+    let worker = manifest.member("worker-a").context("worker-a missing")?;
+    assert_eq!(worker.model.as_deref(), Some("shell-fast"));
+    assert_eq!(worker.fallback_runtime.as_deref(), Some("gemini"));
+    assert_eq!(worker.fallback_model.as_deref(), Some("flash"));
+    assert_eq!(worker.slot_id.as_deref(), Some(slot.id.as_str()));
+    assert_eq!(
+        worker.branch_name.as_deref(),
+        Some(slot.branch_name.as_str())
+    );
+    assert!(manifest.member("worker-b").is_none());
+    let task = manifest.task("task-1").context("task-1 missing")?;
+    assert_eq!(task.slot_id.as_deref(), Some(slot.id.as_str()));
+    assert_eq!(task.branch_name.as_deref(), Some(slot.branch_name.as_str()));
 
     Ok(())
 }

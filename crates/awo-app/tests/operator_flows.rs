@@ -1574,6 +1574,135 @@ fn team_member_update_clear_routing_defaults_removes_prefs() {
 }
 
 #[test]
+fn team_member_assign_slot_bind_task_slot_and_remove_flow_are_dispatch_backed() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("member-slot-bind-repo");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "bind-team",
+        "Exercise slot binding commands",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "bind-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "shell",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "bind-team",
+        "worker-b",
+        "reviewer",
+        "--runtime",
+        "claude",
+    ]);
+    env.run(&[
+        "team",
+        "task",
+        "add",
+        "bind-team",
+        "task-1",
+        "worker-a",
+        "Implement feature",
+        "Bind a task to a slot",
+        "--deliverable",
+        "Patch",
+    ]);
+
+    let acquire = env.run(&[
+        "slot",
+        "acquire",
+        &repo_id,
+        "bind-task",
+        "--strategy",
+        "fresh",
+    ]);
+    assert_eq!(acquire["ok"], true, "slot acquire failed: {acquire}");
+    let slot_id = acquire["data"]
+        .as_array()
+        .and_then(|slots| {
+            slots
+                .iter()
+                .find(|slot| slot["task_name"] == "bind-task")
+                .or_else(|| slots.first())
+        })
+        .and_then(|slot| slot["id"].as_str())
+        .expect("slot acquire should return a slot list containing an id")
+        .to_string();
+
+    let assign = env.run(&[
+        "team",
+        "member",
+        "assign-slot",
+        "bind-team",
+        "worker-a",
+        &slot_id,
+    ]);
+    assert_eq!(assign["ok"], true, "assign slot failed: {assign}");
+    let assign_events = assign["events"]
+        .as_array()
+        .expect("events should be an array");
+    assert!(
+        assign_events
+            .iter()
+            .any(|event| event["type"] == "team_member_slot_assigned"),
+        "expected team_member_slot_assigned in {assign_events:?}"
+    );
+
+    let bind = env.run(&["team", "task", "bind-slot", "bind-team", "task-1", &slot_id]);
+    assert_eq!(bind["ok"], true, "bind slot failed: {bind}");
+    let bind_events = bind["events"]
+        .as_array()
+        .expect("events should be an array");
+    assert!(
+        bind_events
+            .iter()
+            .any(|event| event["type"] == "team_task_slot_bound"),
+        "expected team_task_slot_bound in {bind_events:?}"
+    );
+
+    let remove = env.run(&["team", "member", "remove", "bind-team", "worker-b"]);
+    assert_eq!(remove["ok"], true, "member remove failed: {remove}");
+    let remove_events = remove["events"]
+        .as_array()
+        .expect("events should be an array");
+    assert!(
+        remove_events
+            .iter()
+            .any(|event| event["type"] == "team_member_removed"),
+        "expected team_member_removed in {remove_events:?}"
+    );
+
+    let show = env.run(&["team", "show", "bind-team"]);
+    let manifest = &show["data"];
+    let members = manifest["members"]
+        .as_array()
+        .expect("members should be an array");
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0]["member_id"], "worker-a");
+    assert_eq!(members[0]["slot_id"], slot_id);
+    let tasks = manifest["tasks"]
+        .as_array()
+        .expect("tasks should be an array");
+    assert_eq!(tasks[0]["task_id"], "task-1");
+    assert_eq!(tasks[0]["slot_id"], slot_id);
+}
+
+#[test]
 fn team_member_show_returns_member() {
     let env = TestEnv::new();
     let repo_dir = env.create_repo("member-show-repo");

@@ -2,6 +2,87 @@
 
 ## Session: 2026-03-27
 
+### Implementation Session: Broker Hardening Follow-Through
+- **Status:** complete for the current slice
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read the March 28 continuation plan and the current daemon/client paths before editing.
+  - Hardened daemon health classification so `healthy` now requires a successful bounded JSON-RPC health check instead of only a successful socket connect.
+  - Added a new degraded issue state for brokers that accept connections but never answer RPC requests:
+    - `RpcUnresponsive`
+  - Implemented the health probe using a short `events.poll` roundtrip over the daemon socket.
+  - Added regression coverage for:
+    - a daemon socket that accepts a connection but never responds
+    - existing handler-facing daemon status rendering still behaving correctly
+  - Re-ran verification and confirmed the workspace still passes cleanly.
+- Files created/modified:
+  - `crates/awo-core/src/daemon.rs`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo test -q daemon::tests::daemon_status_reports_degraded_when_rpc_health_check_fails`
+  - `cargo test -q daemon_status_payload_reports_health_fields`
+  - `cargo test -q daemon_status_text_distinguishes_starting_and_healthy`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+  - note: full `cargo test` still emits expected negative-path `git` and `r2d2` error lines while finishing green
+
+### Implementation Session: TUI Responsiveness And Event-Bus Hardening
+- **Status:** complete for the current slice
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the post-audit continuation plan, and the in-progress TUI responsiveness changes before continuing.
+  - Finished the TUI background-refresh slice:
+    - initial snapshot still loads synchronously for startup correctness
+    - later `snapshot()` refreshes now run on a background worker instead of the main render loop
+    - Team Dashboard selection is preserved by team id when refreshed data arrives
+  - Reduced TUI router maintenance pressure with a bounded structural split:
+    - extracted dialog, form submission, confirm handling, and enter-key detail behavior into `crates/awo-app/src/tui/action_router/dialogs.rs`
+    - kept key routing and navigation in the main `action_router.rs`
+  - Hardened broker synchronization behavior:
+    - replaced production `unwrap()`-based `EventBus` mutex/condvar handling with poison-recovery plus warnings
+    - added regression coverage proving the event bus still works after a poisoned mutex
+  - Ran a full verification pass and reviewed the resulting structure for regressions.
+- Files created/modified:
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/action_router/dialogs.rs`
+  - `crates/awo-core/src/events.rs`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test -q event_bus_recovers_after_poisoned_mutex`
+  - `cargo test -q tui::action_router::tests::repo_add_form_submission_dispatches_background_command`
+  - `cargo test`
+  - note: full `cargo test` still emits expected negative-path `git` and `r2d2` error lines while finishing green
+
+### Planning Session: Post-Audit Next Sessions
+- **Status:** complete
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read the audit report, the refreshed development plan, and the older next-iterations plan.
+  - Converted the current residual risks into a concrete execution sequence for the next work sessions.
+  - Wrote a new post-audit continuation plan with:
+    - session order
+    - per-session goals
+    - target scope
+    - likely file ownership
+    - definitions of done
+    - recommended worktree/delegation lanes
+  - Updated the planning trace so future sessions can resume from the audit checkpoint without reconstructing priorities from chat history.
+- Files created/modified:
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - planning-only change; no build/test commands run in this turn
+
 ### Audit Session: Overall Quality Review And Roadmap Refresh
 - **Status:** complete
 - **Started:** 2026-03-28
@@ -521,6 +602,99 @@
   - Authored two new execution cards: one for the primary broker implementation lane and one for an independent external test-depth lane.
   - Created two new `codex/` branches and matching worktrees for the next parallel implementation wave.
 
+### Implementation Session: Session 1 Command-Surface Parity Sweep
+- **Status:** complete
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the post-audit next-sessions plan, and the remaining direct mutation paths before editing.
+  - Added first-class command support for:
+    - `team.member.update`
+    - `team.member.remove`
+    - `team.member.assign_slot`
+    - `team.task.bind_slot`
+  - Added matching domain events and dispatch roundtrip coverage for the new commands.
+  - Routed the remaining CLI and TUI member/task mutation flows through dispatch instead of direct `AppCore` helpers.
+  - Added core regression coverage for member update, member-slot assignment, task-slot binding, and member removal in `crates/awo-core/tests/command_flows.rs`.
+  - Added operator-flow coverage for assign-slot, bind-slot, remove-member, and member-update clear behaviors in `crates/awo-app/tests/operator_flows.rs`.
+  - Found and fixed a daemon/direct parity bug where nested `Option<Option<_>>` command fields lost clear intent when serialized through daemon/JSON transport.
+  - Replaced that brittle shape in `team.member.update` with explicit `clear_fallback` and `clear_routing_preferences` booleans plus single-layer optional payloads.
+- Files created/modified:
+  - `crates/awo-core/src/commands.rs`
+  - `crates/awo-core/src/commands/team.rs`
+  - `crates/awo-core/src/events.rs`
+  - `crates/awo-core/src/dispatch.rs`
+  - `crates/awo-core/tests/command_flows.rs`
+  - `crates/awo-app/src/handlers.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/tests/operator_flows.rs`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+  - note: the full test run still emits expected negative-path `git` and `r2d2` error lines while passing
+
+### Planning Session: External Audit Reconciliation
+- **Status:** complete
+- **Started:** 2026-03-28
+- Actions taken:
+  - Reviewed the external audit against the live codebase instead of copying it through unchanged.
+  - Confirmed that the TUI blocking-snapshot concern is still real because `crates/awo-app/src/tui.rs` calls `core.snapshot()` on the UI thread and `snapshot()` still performs runtime sync and reconciliation in `crates/awo-core/src/app.rs`.
+  - Confirmed that `crates/awo-app/src/tui/action_router.rs` has grown large enough to justify a bounded structural split.
+  - Confirmed that CI still lacks `cargo audit` and `cargo deny`.
+  - Rejected the external audit’s concrete command-parity examples as outdated because the March 28 parity sweep already closed those named gaps.
+  - Narrowed the panic-risk finding to the real remaining production concern in `crates/awo-core/src/events.rs` rather than treating all `unwrap`/`expect` hits in `awo-core` as equally risky.
+  - Updated the durable audit and roadmap docs to reflect that reconciled view.
+- Files created/modified:
+  - `planning/2026-03-28-audit-and-quality-review.md`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+### Implementation Session: Session 3 Broker Hardening Follow-Through And Session 6 CI Safety
+- **Status:** in_progress
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the next-sessions plan, and the broker/CI hardening notes before editing.
+  - Finished the high-value bounded broker hardening work:
+    - daemon health now requires a bounded RPC roundtrip instead of a bare socket connect
+    - sockets that accept but do not answer are now reported as degraded via `RpcUnresponsive`
+    - daemon clients now apply bounded read/write timeouts so sick brokers fail predictably
+    - CLI daemon status text/json now carries clearer degraded-state detail and stable issue codes
+  - Continued TUI hardening already in flight by:
+    - keeping periodic snapshots off the render loop
+    - preserving Team Dashboard selection on background refresh
+    - extracting dialog/form-confirm handling into `crates/awo-app/src/tui/action_router/dialogs.rs`
+  - Hardened the app shell against unexpected JSON serialization failure in output helpers.
+  - Added a new `security` CI job with `cargo audit` and `cargo deny`.
+  - Added a baseline `deny.toml`.
+  - Validated `cargo audit` locally and recorded the current warning about `portable-pty -> serial`.
+  - Recorded an explicit temporary ignore for `RUSTSEC-2017-0008` in `deny.toml` so CI policy is intentional.
+  - Ran a broader review pass, found a stale `convert_case` usage in daemon-status JSON output, fixed it, and added a focused regression test for `RpcUnresponsive` text output.
+  - Discovered stale background `cargo test` processes holding build/package locks, cleaned them up, and reran full verification.
+- Files created/modified:
+  - `.github/workflows/ci.yml`
+  - `deny.toml`
+  - `crates/awo-core/src/daemon.rs`
+  - `crates/awo-core/src/events.rs`
+  - `crates/awo-app/src/handlers.rs`
+  - `crates/awo-app/src/output.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/action_router/dialogs.rs`
+  - `crates/awo-app/tests/operator_flows.rs`
+  - `crates/awo-core/tests/command_flows.rs`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-28-audit-and-quality-review.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
 ## Test Results
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
@@ -543,6 +717,15 @@
 | Full workspace tests | `cargo test` | Whole workspace remains green after broker changes | Passed | ✓ |
 | Job Card Z strict linting | `cargo clippy --all-targets -- -D warnings` | New closeout/cleanup code introduces no warnings | Passed | ✓ |
 | Job Card Z full workspace tests | `cargo test -q` | Whole workspace remains green after closeout/cleanup changes | Passed | ✓ |
+| Command-parity targeted core flow | `cargo test -q team_member_and_task_binding_commands_round_trip_through_dispatch --test command_flows` | New dispatch-backed member/task binding commands behave correctly end to end | Passed | ✓ |
+| Command-parity targeted operator flow | `cargo test -q team_member_assign_slot_bind_task_slot_and_remove_flow_are_dispatch_backed --test operator_flows` | CLI/operator layer routes member assign-slot, task bind-slot, and member remove through dispatch correctly | Passed | ✓ |
+| Clear-fallback regression | `cargo test -q team_member_update_clear_fallback_removes_fields --test operator_flows` | Clear-fallback still works after routing member updates through commands | Passed | ✓ |
+| Clear-routing regression | `cargo test -q team_member_update_clear_routing_defaults_removes_prefs --test operator_flows` | Clear-routing-defaults still works after routing member updates through commands | Passed | ✓ |
+| Command-parity linting | `cargo clippy --all-targets -- -D warnings` | Workspace remains warning-free after command-surface parity changes | Passed | ✓ |
+| Command-parity full workspace tests | `cargo test` | Full workspace stays green after command-surface parity and transport-shape fixes | Passed | ✓ |
+| Local dependency audit | `cargo audit` | No vulnerability blockers; document any warnings honestly | Passed with warning (`RUSTSEC-2017-0008` via `portable-pty -> serial`) | ✓ |
+| Broker/CI hardening linting | `cargo clippy --all-targets -- -D warnings` | Workspace remains warning-free after daemon/output/CI hardening changes | Passed | ✓ |
+| Broker/CI hardening full workspace tests | `cargo test` | Full workspace stays green after broker/status/output/CI wiring changes | Passed | ✓ |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -554,12 +737,17 @@
 | 2026-03-27 | Mistyped targeted cargo invocation passed an unexpected extra argument to `cargo test` | 1 | Re-ran the intended targeted suites with separate `events`, `dispatch`, and `awo-mcp` commands |
 | 2026-03-27 | `handlers.rs` failed to compile because `TeamCommand::List` was matched as a unit variant | 1 | Updated the match arm to accept its `repo_id` field and re-ran verification |
 | 2026-03-27 | New Team Dashboard closeout actions borrowed selected task data too long for Rust ownership rules | 1 | Cloned the required slot/session ids before mutating TUI state or dispatching log/release actions |
+| 2026-03-28 | `team.member.update` lost clear intent under daemon/JSON transport because nested `Option<Option<_>>` fields collapse on `null` | 1 | Replaced the nested option shape with explicit clear flags plus single-layer optional payloads and added regression tests for both clear flows |
+| 2026-03-28 | A stale background `cargo test` process kept the package/build lock and made the fresh verification pass look hung | 1 | Identified and terminated the orphaned cargo/test child processes, then reran verification |
+| 2026-03-28 | `handlers.rs` still referenced `convert_case` without a dependency after the broker-status work settled | 1 | Replaced the dynamic conversion with an explicit daemon-issue-code helper and reran clippy/test |
+| 2026-03-28 | The new failing-serializer test helper triggered an unused-variable warning under `-D warnings` | 1 | Renamed the serializer parameter to `_serializer` |
+| 2026-03-28 | Local `cargo-deny` installation repeatedly stalled on this machine | 1 | Kept CI wiring and `deny.toml` in place, validated `cargo-audit`, and recorded local `cargo-deny` validation as remaining follow-through |
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | The current Job Card X slice is implemented and green: command-backed lead replacement, current lead session tracking, handoff-needed hints, and CLI/TUI visibility are now real |
-| Where am I going? | Toward the rest of the orchestration layer: richer task-card planning, output ingestion/capacity handling, and consolidation workflows |
+| Where am I? | The local orchestration loop is strong and verified; the current active finish-line work is broker/event maturity plus CI/security follow-through |
+| Where am I going? | Toward the remaining release blockers: broker live-event delivery, Windows parity, stronger runtime usage truth, and final release documentation/manual validation |
 | What's the goal? | Finalize Awo as a local orchestration console where a replaceable lead agent plans, dispatches, reviews, and consolidates task cards through Awo |
-| What have I learned? | The existing team model only needed a thin current-lead layer; the key follow-up was making handoff conditions visible when the lead session fails, disappears, times out, or likely exhausts tokens |
-| What have I done? | Implemented the lead-session foundation from Job Card X, extended it with command-backed replacement and lead-attention hints, and verified it with focused tests plus `cargo fmt`, `cargo clippy`, and full `cargo test` |
+| What have I learned? | The biggest remaining gaps are no longer foundational features; they are finish-line trust issues like broker live updates, platform parity, and explicit security/advisory policy |
+| What have I done? | Finished the high-value bounded broker hardening slice, tightened panic handling in the shell, added CI security wiring, validated `cargo audit`, and re-verified the workspace with `cargo fmt`, `cargo clippy`, and full `cargo test` |

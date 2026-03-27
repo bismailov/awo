@@ -4,7 +4,7 @@
 Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
 
 ## Current Phase
-Phase 13
+Phase 17
 
 ## Phases
 
@@ -136,6 +136,39 @@ Phase 13
 - [x] Commit and push the checkpoint
 - **Status:** complete
 
+### Phase 14: Post-Audit Next-Sessions Planning
+- [x] Re-read the current next-iterations plan and the March 28 audit report
+- [x] Convert the audit risks into a concrete session-by-session execution sequence
+- [x] Capture recommended worktree/delegation lanes for the next implementation wave
+- [x] Update the planning trace with the new continuation plan
+- **Status:** complete
+
+### Phase 15: TUI Responsiveness And Event-Bus Hardening
+- [x] Move periodic snapshot refresh work off the TUI render loop and into bounded background refreshes
+- [x] Preserve Team Dashboard selection across background refresh application
+- [x] Split dialog/form/confirm workflow handling out of `crates/awo-app/src/tui/action_router.rs`
+- [x] Harden `EventBus` mutex/condvar handling so poisoned synchronization primitives recover instead of panicking immediately
+- [x] Add focused regression coverage for snapshot refresh selection preservation and event-bus poison recovery
+- [x] Run formatting, clippy, targeted tests, and the full workspace test suite
+- **Status:** complete
+
+### Phase 16: Broker Hardening Follow-Through
+- [x] Strengthen daemon health probing so “healthy” requires a successful RPC response, not only a socket connect
+- [x] Add degraded-state coverage for sockets that accept connections but never answer RPC health checks
+- [x] Add more broker-mode visibility in operator surfaces where it materially helps
+- [x] Re-run formatting, clippy, targeted daemon/handler tests, and the full workspace test suite
+- [ ] Deepen live-client event delivery beyond poll/long-poll
+- **Status:** in_progress
+
+### Phase 17: Hardening And CI Safety
+- [x] Replace the remaining high-risk production panic paths in JSON output handling
+- [x] Add `cargo audit` and `cargo deny` steps to GitHub Actions
+- [x] Add a baseline `deny.toml`
+- [x] Validate `cargo audit` locally and record dependency findings
+- [x] Record the temporary policy for `RUSTSEC-2017-0008` in `deny.toml`
+- [ ] Validate `cargo deny` locally
+- **Status:** in_progress
+
 ## Key Questions
 1. What is the smallest durable lead-session model that keeps older team manifests compatible?
 2. How should Awo represent “replace the lead” without rewriting the existing structural lead profile?
@@ -176,6 +209,7 @@ Phase 13
 | Add direct navigation between actionable task cards | The cockpit should optimize for “what needs my attention now,” not only generic list browsing |
 | Treat command-surface parity as a release-level architecture objective, not a background cleanup | It directly affects daemon/direct consistency and the credibility of the core mutation rule |
 | Keep roadmap docs aligned with the real checkpoint after major slices land | Drift now hurts contributor onboarding more than feature ideation helps |
+| Use a session-by-session continuation plan after major audits, not just a broad roadmap | The remaining work is now mostly finish-line sequencing rather than feature discovery |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -197,6 +231,12 @@ Phase 13
 | `cargo test` still emits noisy `fatal: cannot change to ...` and `r2d2 unable to open database file` lines from intentional negative-path coverage | 1 | Verified the suites still finish green and left those existing diagnostics untouched in this slice |
 | The master finalization plan had machine-specific absolute links checked into the repo | 1 | Replaced them with portable relative links during the audit pass |
 | Several operator flows were still bypassing the dispatcher even when matching public commands already existed | 1 | Routed the easy cases back through dispatch and recorded the remaining command-surface gaps in the roadmap |
+| The older “next iterations” plan had drifted behind the actual checkpoint and still described already-finished work as upcoming | 1 | Wrote a fresh post-audit next-sessions plan centered on the current residual risks instead of the older backlog |
+| `TeamMemberUpdate` used nested `Option<Option<_>>` fields that lost clear-intent when serialized through daemon/JSON transport | 1 | Replaced those fields with explicit clear flags plus single-layer optional payloads so direct and daemon-backed updates behave identically |
+| A stale `cargo test` process from an older session kept the package/build lock and made the fresh verification pass look hung | 1 | Located and terminated the orphaned cargo/test child processes, then reran the full suite |
+| `handlers.rs` was still using `convert_case` without a workspace dependency, which broke the first combined clippy/test pass | 1 | Replaced the dynamic case conversion with a tiny explicit daemon-issue-code helper |
+| The new failing-serializer test helper triggered an unused-variable warning under `-D warnings` | 1 | Renamed the serializer parameter to `_serializer` |
+| `cargo-deny` local installation stalled repeatedly on this machine | 1 | Kept the CI wiring and baseline config in place, validated `cargo-audit` locally, and recorded local `cargo-deny` validation as the remaining gap |
 
 ## Notes
 - The orchestration planning package created earlier in this line of work is:
@@ -214,3 +254,13 @@ Phase 13
   - current lead handoff-needed attention strings for failed/missing sessions
   - TUI promotion control
   - task-card terminology cleanup in the operator surfaces and docs
+- The March 28 command-parity sweep is now complete:
+  - `team.member.update`
+  - `team.member.remove`
+  - `team.member.assign_slot`
+  - `team.task.bind_slot`
+  - CLI and TUI flows now route those mutations through dispatch
+  - regression coverage exists in both `crates/awo-core/tests/command_flows.rs` and `crates/awo-app/tests/operator_flows.rs`
+- A later external audit was incorporated selectively rather than copied literally:
+  - valid remaining issues: TUI-thread snapshot blocking, `action_router.rs` size, CI security checks, and production event-bus panic hardening
+  - outdated examples: the specific command-parity gaps it named were already closed by the March 28 parity sweep

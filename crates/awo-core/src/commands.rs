@@ -148,6 +148,26 @@ pub enum Command {
     },
     #[serde(rename = "team.member.add")]
     TeamMemberAdd { team_id: String, member: TeamMember },
+    #[serde(rename = "team.member.update")]
+    TeamMemberUpdate {
+        team_id: String,
+        member_id: String,
+        runtime: Option<String>,
+        model: Option<String>,
+        fallback_runtime: Option<String>,
+        fallback_model: Option<String>,
+        clear_fallback: bool,
+        routing_preferences: Option<crate::routing::RoutingPreferences>,
+        clear_routing_preferences: bool,
+    },
+    #[serde(rename = "team.member.remove")]
+    TeamMemberRemove { team_id: String, member_id: String },
+    #[serde(rename = "team.member.assign_slot")]
+    TeamMemberAssignSlot {
+        team_id: String,
+        member_id: String,
+        slot_id: String,
+    },
     #[serde(rename = "team.lead.replace")]
     TeamLeadReplace { team_id: String, member_id: String },
     #[serde(rename = "team.plan.add")]
@@ -162,6 +182,12 @@ pub enum Command {
     },
     #[serde(rename = "team.task.add")]
     TeamTaskAdd { team_id: String, task: TaskCard },
+    #[serde(rename = "team.task.bind_slot")]
+    TeamTaskBindSlot {
+        team_id: String,
+        task_id: String,
+        slot_id: String,
+    },
     #[serde(rename = "team.task.state")]
     TeamTaskState {
         team_id: String,
@@ -241,11 +267,15 @@ impl Command {
             Self::TeamShow { .. } => "team.show",
             Self::TeamInit { .. } => "team.init",
             Self::TeamMemberAdd { .. } => "team.member.add",
+            Self::TeamMemberUpdate { .. } => "team.member.update",
+            Self::TeamMemberRemove { .. } => "team.member.remove",
+            Self::TeamMemberAssignSlot { .. } => "team.member.assign_slot",
             Self::TeamLeadReplace { .. } => "team.lead.replace",
             Self::TeamPlanAdd { .. } => "team.plan.add",
             Self::TeamPlanApprove { .. } => "team.plan.approve",
             Self::TeamPlanGenerate { .. } => "team.plan.generate",
             Self::TeamTaskAdd { .. } => "team.task.add",
+            Self::TeamTaskBindSlot { .. } => "team.task.bind_slot",
             Self::TeamTaskState { .. } => "team.task.state",
             Self::TeamTaskAccept { .. } => "team.task.accept",
             Self::TeamTaskRework { .. } => "team.task.rework",
@@ -502,6 +532,35 @@ impl<'a> CommandRunner<'a> {
                 force,
             ),
             Command::TeamMemberAdd { team_id, member } => self.run_team_member_add(team_id, member),
+            Command::TeamMemberUpdate {
+                team_id,
+                member_id,
+                runtime,
+                model,
+                fallback_runtime,
+                fallback_model,
+                clear_fallback,
+                routing_preferences,
+                clear_routing_preferences,
+            } => self.run_team_member_update(
+                team_id,
+                member_id,
+                runtime,
+                model,
+                fallback_runtime,
+                fallback_model,
+                clear_fallback,
+                routing_preferences,
+                clear_routing_preferences,
+            ),
+            Command::TeamMemberRemove { team_id, member_id } => {
+                self.run_team_member_remove(team_id, member_id)
+            }
+            Command::TeamMemberAssignSlot {
+                team_id,
+                member_id,
+                slot_id,
+            } => self.run_team_member_assign_slot(team_id, member_id, slot_id),
             Command::TeamLeadReplace { team_id, member_id } => {
                 self.run_team_lead_replace(team_id, member_id)
             }
@@ -515,6 +574,11 @@ impl<'a> CommandRunner<'a> {
                 task,
             } => self.run_team_plan_generate(team_id, plan_id, task),
             Command::TeamTaskAdd { team_id, task } => self.run_team_task_add(team_id, task),
+            Command::TeamTaskBindSlot {
+                team_id,
+                task_id,
+                slot_id,
+            } => self.run_team_task_bind_slot(team_id, task_id, slot_id),
             Command::TeamTaskState {
                 team_id,
                 task_id,

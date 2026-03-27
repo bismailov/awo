@@ -230,12 +230,27 @@ fn format_daemon_issues(issues: &[awo_core::daemon::DaemonHealthIssue]) -> Strin
 }
 
 #[cfg(unix)]
+fn daemon_issue_code(issue: &awo_core::daemon::DaemonHealthIssue) -> &'static str {
+    match issue {
+        awo_core::daemon::DaemonHealthIssue::SocketMissing => "socket_missing",
+        awo_core::daemon::DaemonHealthIssue::SocketUnreachable => "socket_unreachable",
+        awo_core::daemon::DaemonHealthIssue::RpcUnresponsive => "rpc_unresponsive",
+    }
+}
+
+#[cfg(unix)]
 fn daemon_status_payload(status: &DaemonStatus) -> serde_json::Value {
     json!({
         "status": status.state_label(),
         "running": status.is_running(),
         "healthy": status.is_healthy(),
         "pid": status.pid(),
+        "detail": status.detail_message(),
+        "issue_codes": status
+            .issues()
+            .iter()
+            .map(daemon_issue_code)
+            .collect::<Vec<_>>(),
         "issues": status
             .issues()
             .iter()
@@ -249,7 +264,7 @@ fn daemon_status_text(status: &DaemonStatus) -> String {
     match status {
         DaemonStatus::NotRunning => "not running".to_string(),
         DaemonStatus::Healthy { pid } => {
-            format!("healthy (pid {pid}, socket accepting connections)")
+            format!("healthy (pid {pid}, RPC health checks passing)")
         }
         DaemonStatus::Starting { pid, issues } => {
             format!(
@@ -1015,54 +1030,55 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 clear_routing_defaults,
             } => {
                 let runtime_update = match runtime {
-                    Some(value) => Some(parse_optional_runtime(Some(&value))?),
+                    Some(value) => parse_optional_runtime(Some(&value))?,
                     None => None,
                 };
-                let model_update = model.map(Some);
-                let fallback_runtime_update = if clear_fallback {
-                    Some(None)
-                } else {
-                    match fallback_runtime {
-                        Some(value) => Some(parse_optional_runtime(Some(&value))?),
-                        None => None,
-                    }
+                let fallback_runtime_update = match fallback_runtime {
+                    Some(value) => parse_optional_runtime(Some(&value))?,
+                    None => None,
                 };
-                let fallback_model_update = if clear_fallback {
-                    Some(None)
-                } else {
-                    fallback_model.map(Some)
-                };
-                let routing_preferences_update = if clear_routing_defaults {
-                    Some(None)
-                } else {
-                    parse_routing_preferences(
-                        prefer_local,
-                        avoid_metered,
-                        max_cost_tier.as_deref(),
-                        no_fallback,
-                    )?
-                    .map(Some)
-                };
-                let manifest = core.update_team_member_policy(
-                    &team_id,
-                    &member_id,
-                    runtime_update,
-                    model_update,
-                    fallback_runtime_update,
-                    fallback_model_update,
-                    routing_preferences_update,
+                let routing_preferences_update = parse_routing_preferences(
+                    prefer_local,
+                    avoid_metered,
+                    max_cost_tier.as_deref(),
+                    no_fallback,
+                )?;
+                let outcome = backend.dispatch(Command::TeamMemberUpdate {
+                    team_id,
+                    member_id,
+                    runtime: runtime_update,
+                    model,
+                    fallback_runtime: fallback_runtime_update,
+                    fallback_model,
+                    clear_fallback,
+                    routing_preferences: routing_preferences_update,
+                    clear_routing_preferences: clear_routing_defaults,
+                })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
                 )?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&manifest, Some(&outcome));
                 } else {
+                    print_outcome(&outcome);
                     print_team_manifest(&manifest);
                 }
             }
             TeamMemberCommand::Remove { team_id, member_id } => {
-                let manifest = core.remove_team_member(&team_id, &member_id)?;
+                let outcome = backend.dispatch(Command::TeamMemberRemove { team_id, member_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&manifest, Some(&outcome));
                 } else {
+                    print_outcome(&outcome);
                     print_team_manifest(&manifest);
                 }
             }
@@ -1079,10 +1095,21 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 member_id,
                 slot_id,
             } => {
-                let manifest = core.assign_team_member_slot(&team_id, &member_id, &slot_id)?;
+                let outcome = backend.dispatch(Command::TeamMemberAssignSlot {
+                    team_id,
+                    member_id,
+                    slot_id,
+                })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&manifest, Some(&outcome));
                 } else {
+                    print_outcome(&outcome);
                     print_team_manifest(&manifest);
                 }
             }
@@ -1229,10 +1256,21 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 task_id,
                 slot_id,
             } => {
-                let manifest = core.bind_team_task_slot(&team_id, &task_id, &slot_id)?;
+                let outcome = backend.dispatch(Command::TeamTaskBindSlot {
+                    team_id,
+                    task_id,
+                    slot_id,
+                })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&manifest, Some(&outcome));
                 } else {
+                    print_outcome(&outcome);
                     print_team_manifest(&manifest);
                 }
             }
@@ -1725,6 +1763,13 @@ mod tests {
         assert_eq!(payload["running"], true);
         assert_eq!(payload["healthy"], false);
         assert_eq!(payload["pid"], 4242);
+        assert_eq!(payload["issue_codes"][0], "socket_unreachable");
+        assert!(
+            payload["detail"]
+                .as_str()
+                .unwrap()
+                .contains("daemon degraded")
+        );
         assert_eq!(
             payload["issues"].as_array().unwrap(),
             &vec![serde_json::Value::String(
@@ -1745,6 +1790,18 @@ mod tests {
 
         let healthy = daemon_status_text(&DaemonStatus::Healthy { pid: 200 });
         assert!(healthy.contains("healthy"));
-        assert!(healthy.contains("socket accepting connections"));
+        assert!(healthy.contains("RPC health checks passing"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_text_describes_rpc_unresponsive_broker() {
+        let degraded = daemon_status_text(&DaemonStatus::Degraded {
+            pid: 300,
+            issues: vec![awo_core::daemon::DaemonHealthIssue::RpcUnresponsive],
+        });
+
+        assert!(degraded.contains("degraded"));
+        assert!(degraded.contains("RPC health checks"));
     }
 }

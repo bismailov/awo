@@ -8,7 +8,7 @@
 use crate::app::AppPaths;
 use crate::dispatch::Dispatcher;
 #[cfg(unix)]
-use crate::dispatch::{RpcResponse, dispatch_rpc, parse_rpc_request};
+use crate::dispatch::{RpcRequest, RpcResponse, dispatch_rpc, parse_rpc_request};
 use crate::error::{AwoError, AwoResult};
 use fs2::FileExt;
 use serde::Serialize;
@@ -23,6 +23,10 @@ use std::time::Duration;
 
 #[cfg(unix)]
 const DAEMON_STARTUP_GRACE: Duration = Duration::from_secs(3);
+#[cfg(unix)]
+const DAEMON_HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(unix)]
+const DAEMON_CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Daemon state: manages the socket, lock file, and shutdown signal.
 pub struct DaemonServer {
@@ -258,6 +262,7 @@ pub fn daemon_is_running(paths: &AppPaths) -> bool {
 pub enum DaemonHealthIssue {
     SocketMissing,
     SocketUnreachable,
+    RpcUnresponsive,
 }
 
 impl DaemonHealthIssue {
@@ -266,6 +271,9 @@ impl DaemonHealthIssue {
         match self {
             Self::SocketMissing => "socket file missing",
             Self::SocketUnreachable => "socket not accepting connections",
+            Self::RpcUnresponsive => {
+                "socket accepts connections but daemon is not answering RPC health checks"
+            }
         }
     }
 }
@@ -371,7 +379,8 @@ pub fn get_daemon_status(paths: &AppPaths) -> DaemonStatus {
             return DaemonStatus::NotRunning;
         }
 
-        let issues = probe_daemon_connectivity(&paths.daemon_socket_path());
+        let issues =
+            probe_daemon_connectivity(&paths.daemon_socket_path(), DAEMON_HEALTH_PROBE_TIMEOUT);
         if issues.is_empty() {
             return DaemonStatus::Healthy { pid };
         }
@@ -550,6 +559,12 @@ impl DaemonClient {
         use std::os::unix::net::UnixStream;
         let stream = UnixStream::connect(socket_path)
             .map_err(|source| AwoError::io("connect to daemon socket", socket_path, source))?;
+        stream
+            .set_read_timeout(Some(DAEMON_CLIENT_IO_TIMEOUT))
+            .map_err(|source| AwoError::io("set daemon read timeout", socket_path, source))?;
+        stream
+            .set_write_timeout(Some(DAEMON_CLIENT_IO_TIMEOUT))
+            .map_err(|source| AwoError::io("set daemon write timeout", socket_path, source))?;
         let reader = BufReader::new(
             stream
                 .try_clone()
@@ -590,6 +605,11 @@ impl DaemonClient {
         self.reader.read_line(&mut line).map_err(|source| {
             AwoError::io("read from daemon socket", Path::new("<socket>"), source)
         })?;
+        if line.trim().is_empty() {
+            return Err(AwoError::supervisor(
+                "daemon closed the connection without returning a response",
+            ));
+        }
 
         serde_json::from_str::<RpcResponse>(&line)
             .map_err(|e| AwoError::supervisor(format!("malformed daemon response: {e}")))
@@ -618,15 +638,56 @@ impl crate::dispatch::Dispatcher for DaemonClient {
 }
 
 #[cfg(unix)]
-fn probe_daemon_connectivity(socket_path: &Path) -> Vec<DaemonHealthIssue> {
+fn probe_daemon_connectivity(socket_path: &Path, timeout: Duration) -> Vec<DaemonHealthIssue> {
+    use std::os::unix::net::UnixStream;
+
     if !socket_path.exists() {
         return vec![DaemonHealthIssue::SocketMissing];
     }
 
-    if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
-        Vec::new()
-    } else {
-        vec![DaemonHealthIssue::SocketUnreachable]
+    let mut stream = match UnixStream::connect(socket_path) {
+        Ok(stream) => stream,
+        Err(_) => return vec![DaemonHealthIssue::SocketUnreachable],
+    };
+
+    if stream.set_read_timeout(Some(timeout)).is_err()
+        || stream.set_write_timeout(Some(timeout)).is_err()
+    {
+        return vec![DaemonHealthIssue::RpcUnresponsive];
+    }
+
+    let request = match RpcRequest::from_command(
+        &crate::commands::Command::EventsPoll {
+            since_seq: Some(0),
+            limit: Some(1),
+        },
+        serde_json::Value::Number(1_u64.into()),
+    ) {
+        Ok(request) => request,
+        Err(_) => return vec![DaemonHealthIssue::RpcUnresponsive],
+    };
+
+    let request_bytes = match serde_json::to_vec(&request) {
+        Ok(bytes) => bytes,
+        Err(_) => return vec![DaemonHealthIssue::RpcUnresponsive],
+    };
+
+    if std::io::Write::write_all(&mut stream, &request_bytes).is_err()
+        || std::io::Write::write_all(&mut stream, b"\n").is_err()
+        || std::io::Write::flush(&mut stream).is_err()
+    {
+        return vec![DaemonHealthIssue::RpcUnresponsive];
+    }
+
+    let mut line = String::new();
+    let mut reader = BufReader::new(stream);
+    match reader.read_line(&mut line) {
+        Ok(0) => vec![DaemonHealthIssue::RpcUnresponsive],
+        Ok(_) => match serde_json::from_str::<RpcResponse>(&line) {
+            Ok(response) if response.error.is_none() && response.result.is_some() => Vec::new(),
+            _ => vec![DaemonHealthIssue::RpcUnresponsive],
+        },
+        Err(_) => vec![DaemonHealthIssue::RpcUnresponsive],
     }
 }
 
@@ -806,6 +867,30 @@ mod tests {
         // Shut down
         shutdown.request_shutdown();
         server_thread.join().unwrap().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_client_connect_applies_io_timeouts() {
+        use std::os::unix::net::UnixListener;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("timeouts.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let accept_thread = std::thread::spawn(move || listener.accept());
+
+        let client = DaemonClient::connect(&socket_path).unwrap();
+        assert_eq!(
+            client.writer.read_timeout().unwrap(),
+            Some(DAEMON_CLIENT_IO_TIMEOUT)
+        );
+        assert_eq!(
+            client.writer.write_timeout().unwrap(),
+            Some(DAEMON_CLIENT_IO_TIMEOUT)
+        );
+
+        drop(client);
+        let _ = accept_thread.join();
     }
 
     #[cfg(unix)]
@@ -1019,5 +1104,54 @@ mod tests {
         assert!(!paths.daemon_pid_path().exists());
         assert!(!paths.daemon_socket_path().exists());
         assert!(!paths.daemon_lock_path().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_reports_degraded_when_rpc_health_check_fails() {
+        use std::os::unix::net::UnixListener;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let socket_path = paths.daemon_socket_path();
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let accept_thread = std::thread::spawn(move || {
+            if let Ok((_stream, _addr)) = listener.accept() {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        });
+
+        let pid = std::process::id();
+        let pid_path = paths.daemon_pid_path();
+        fs::write(&pid_path, pid.to_string()).unwrap();
+        let old_time = FileTime::from_unix_time(
+            (std::time::SystemTime::now() - DAEMON_STARTUP_GRACE - Duration::from_secs(1))
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            0,
+        );
+        set_file_mtime(&pid_path, old_time).unwrap();
+
+        let status = get_daemon_status(&paths);
+        assert_eq!(
+            status,
+            DaemonStatus::Degraded {
+                pid,
+                issues: vec![DaemonHealthIssue::RpcUnresponsive],
+            }
+        );
+
+        let _ = accept_thread.join();
     }
 }

@@ -517,6 +517,26 @@ mod tests {
                     routing_preferences: None,
                 },
             },
+            Command::TeamMemberUpdate {
+                team_id: "team".to_string(),
+                member_id: "m".to_string(),
+                runtime: Some("codex".to_string()),
+                model: Some("mini".to_string()),
+                fallback_runtime: None,
+                fallback_model: None,
+                clear_fallback: true,
+                routing_preferences: None,
+                clear_routing_preferences: true,
+            },
+            Command::TeamMemberRemove {
+                team_id: "team".to_string(),
+                member_id: "m".to_string(),
+            },
+            Command::TeamMemberAssignSlot {
+                team_id: "team".to_string(),
+                member_id: "m".to_string(),
+                slot_id: "slot".to_string(),
+            },
             Command::TeamLeadReplace {
                 team_id: "team".to_string(),
                 member_id: "worker-a".to_string(),
@@ -594,6 +614,11 @@ mod tests {
                     output_log_path: None,
                     superseded_by_task_id: None,
                 },
+            },
+            Command::TeamTaskBindSlot {
+                team_id: "team".to_string(),
+                task_id: "t".to_string(),
+                slot_id: "slot".to_string(),
             },
             Command::TeamTaskStart {
                 options: TeamTaskStartOptions {

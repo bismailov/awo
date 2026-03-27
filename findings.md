@@ -90,6 +90,7 @@
 - The biggest remaining architecture risk is no longer “missing features,” but partial command-surface parity: some mutating team-management flows still bypass the dispatcher because the command layer does not expose them yet.
 - Roadmap drift is now a real maintenance cost: the product has outgrown parts of the older development plan, and contributors would get a less accurate picture if the plan were not refreshed.
 - Open-source safety needs active enforcement in planning docs too; roadmap markdown had started to accumulate local absolute filesystem links.
+- After the audit, the most useful continuation artifact is no longer another feature backlog; it is a session-by-session execution plan tied to the remaining release risks.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -121,6 +122,7 @@
 | Expand runtime capability descriptors with budget and session-lifetime support flags | Operators need to know whether a runtime can actually help with cost and capacity management |
 | Route operator flows through `Command` dispatch whenever a public command already exists | This keeps daemon/direct behavior aligned and enforces the architectural contract in practice |
 | Treat development-plan refresh as part of product finalization work | The roadmap is now one of the main onboarding surfaces for future contributors and agents |
+| Plan the next implementation wave as explicit sessions after major audits | The remaining work benefits more from crisp sequencing and scope control than from another generic backlog |
 
 ## Issues Encountered
 | Issue | Resolution |
@@ -139,6 +141,21 @@
 | Full `cargo test` remains noisy because negative-path store/git coverage intentionally hits missing directories and invalid SQLite paths | Treated the logs as expected noise after verifying the full suite still finishes green |
 | The master finalization plan had checked-in `/Users/...` links, which violated the repo’s open-source safety guidance | Replaced them with relative links during the audit pass |
 | Several CLI/TUI flows still bypassed the dispatcher despite equivalent public commands already existing | Routed the concrete easy cases back through dispatch and recorded the remaining missing command surfaces in the roadmap |
+| The March 27 “next iterations” document no longer matched the actual product checkpoint after the audit | Replaced it for practical planning purposes with a new March 28 next-sessions plan keyed to the audit risks |
+| Nested `Option<Option<_>>` command fields are not safe for clear-intent across daemon/JSON transport | `team.member.update` needed explicit `clear_fallback` and `clear_routing_preferences` booleans because JSON `null` collapses the outer `Option` |
+| The command-surface parity risk is materially smaller now | Member update/remove/assign-slot and task bind-slot all have first-class commands, domain events, CLI/TUI routing, and regression coverage |
+| The external audit was directionally useful but not fully current | Its TUI responsiveness, module-bloat, and CI-hardening findings still apply; its concrete command-parity examples were already closed by the March 28 parity sweep |
+| Production panic risk is narrower than the external audit implied | The real remaining concern is mostly `EventBus` mutex/condvar `unwrap()` handling in `crates/awo-core/src/events.rs`, while most other `unwrap`/`expect` hits in `awo-core` are test-only |
+| Background snapshot refresh is a good bounded answer to the TUI stutter risk | The TUI now loads its first snapshot synchronously, then applies later `snapshot()` refreshes from a background worker and preserves Team Dashboard selection by team id |
+| Dialog/form workflow was the cleanest next seam in `action_router.rs` | Extracting it into `crates/awo-app/src/tui/action_router/dialogs.rs` reduced the main router from 2,329 lines to 1,516 while keeping behavior stable |
+| `EventBus` poison recovery can be improved without changing public APIs | Recovering the inner guard and warning is a safer broker failure mode than panicking immediately on poisoned mutex or condvar state |
+| Daemon health should be defined at the RPC layer, not just the socket layer | A live socket can still be a bad broker if it never answers JSON-RPC, so the health probe now uses a bounded `events.poll` roundtrip |
+| A short RPC health probe is a good degraded-state discriminator | Sockets that accept connections but never answer are now classified as `RpcUnresponsive`, which is more actionable than treating them as healthy |
+| Daemon clients also need bounded stream timeouts, not only a healthier status probe | A good status check does not help if an already-connected client can still hang forever on an unresponsive broker |
+| The remaining production panic surface in the app shell was small and easy to miss | `print_json_response` and `json_error_string` were still using unconditional JSON serialization success assumptions until this pass |
+| CI security hardening is now mostly a policy/config problem rather than a code-architecture problem | The workflow and baseline `deny.toml` are easy to add; the real follow-through is validating `cargo-deny` locally |
+| `cargo audit` currently reports a single ecosystem warning rather than a vulnerability blocker | `RUSTSEC-2017-0008` reaches this workspace through `portable-pty -> serial`, and `deny.toml` now records that temporary ignore explicitly so CI behavior is intentional |
+| Long-lived orphaned cargo test binaries can distort local verification signal | The apparent “hung test suite” in this session was caused by stale background test processes holding locks, not by the current code under test |
 
 ## Resources
 - `/Users/bismailov/Documents/chaban/project.md`
@@ -162,6 +179,7 @@
 - `/Users/bismailov/Documents/chaban/planning/2026-03-22-development-plan.md`
 - `/Users/bismailov/Documents/chaban/planning/2026-03-27-master-finalization-plan.md`
 - `/Users/bismailov/Documents/chaban/planning/2026-03-28-audit-and-quality-review.md`
+- `/Users/bismailov/Documents/chaban/planning/2026-03-28-next-sessions-plan.md`
 - [OpenAI Managing costs](https://platform.openai.com/docs/guides/realtime-costs)
 - [Anthropic Administration API](https://docs.anthropic.com/en/api/administration-api)
 - [Anthropic Messages usage report](https://docs.anthropic.com/en/api/admin-api/usage-cost/get-messages-usage-report)

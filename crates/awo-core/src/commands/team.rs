@@ -132,6 +132,113 @@ impl CommandRunner<'_> {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_team_member_update(
+        &self,
+        team_id: String,
+        member_id: String,
+        runtime: Option<String>,
+        model: Option<String>,
+        fallback_runtime: Option<String>,
+        fallback_model: Option<String>,
+        clear_fallback: bool,
+        routing_preferences: Option<crate::routing::RoutingPreferences>,
+        clear_routing_preferences: bool,
+    ) -> AwoResult<CommandOutcome> {
+        if let Some(ref value) = runtime {
+            value
+                .parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("runtime", value))?;
+        }
+        if let Some(ref value) = fallback_runtime {
+            value
+                .parse::<crate::runtime::RuntimeKind>()
+                .map_err(|_| AwoError::unsupported("fallback runtime", value))?;
+        }
+
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().update_member_policy(
+            &member_id,
+            runtime.map(Some),
+            model.map(Some),
+            if clear_fallback {
+                Some(None)
+            } else {
+                fallback_runtime.map(Some)
+            },
+            if clear_fallback {
+                Some(None)
+            } else {
+                fallback_model.map(Some)
+            },
+            if clear_routing_preferences {
+                Some(None)
+            } else {
+                routing_preferences.map(Some)
+            },
+        )?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!("Updated member `{}` in team `{}`.", member_id, team_id),
+            vec![DomainEvent::TeamMemberUpdated { team_id, member_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_member_remove(
+        &self,
+        team_id: String,
+        member_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().remove_member(&member_id)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!("Removed member `{}` from team `{}`.", member_id, team_id),
+            vec![DomainEvent::TeamMemberRemoved { team_id, member_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_member_assign_slot(
+        &self,
+        team_id: String,
+        member_id: String,
+        slot_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        let slot = self
+            .store
+            .get_slot(&slot_id)?
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
+        if slot.repo_id != guard.manifest().repo_id {
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
+                slot.repo_id,
+                guard.manifest().repo_id
+            )));
+        }
+        guard
+            .manifest_mut()
+            .assign_member_slot(&member_id, &slot.id, &slot.branch_name)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!(
+                "Assigned slot `{}` to member `{}` in team `{}`.",
+                slot.id, member_id, team_id
+            ),
+            vec![DomainEvent::TeamMemberSlotAssigned {
+                team_id,
+                member_id,
+                slot_id: slot.id,
+            }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
     pub(super) fn run_team_lead_replace(
         &self,
         team_id: String,
@@ -224,6 +331,43 @@ impl CommandRunner<'_> {
         Ok(CommandOutcome::with_all(
             format!("Added task `{}` to team `{}`.", task_id, team_id),
             vec![DomainEvent::TeamTaskAdded { team_id, task_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_task_bind_slot(
+        &self,
+        team_id: String,
+        task_id: String,
+        slot_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        let slot = self
+            .store
+            .get_slot(&slot_id)?
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
+        if slot.repo_id != guard.manifest().repo_id {
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` belongs to repo `{}`, not team repo `{}`",
+                slot.repo_id,
+                guard.manifest().repo_id
+            )));
+        }
+        guard
+            .manifest_mut()
+            .bind_task_slot(&task_id, &slot.id, &slot.branch_name)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!(
+                "Bound slot `{}` to task `{}` in team `{}`.",
+                slot.id, task_id, team_id
+            ),
+            vec![DomainEvent::TeamTaskSlotBound {
+                team_id,
+                task_id,
+                slot_id: slot.id,
+            }],
             serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
         ))
     }

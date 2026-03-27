@@ -31,6 +31,12 @@ pub(crate) struct BackgroundResult {
     error: Option<String>,
 }
 
+pub(crate) struct SnapshotRefreshResult {
+    snapshot: Option<AppSnapshot>,
+    teams: Vec<TeamManifest>,
+    error: Option<String>,
+}
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -115,6 +121,7 @@ pub(crate) struct TuiState {
     team_dashboard: TeamDashboardState,
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<std::time::Instant>,
+    snapshot_refresh_in_flight: bool,
 }
 
 pub fn run_tui() -> Result<()> {
@@ -158,9 +165,15 @@ pub fn run_tui() -> Result<()> {
         },
         last_snapshot: None,
         last_snapshot_time: None,
+        snapshot_refresh_in_flight: false,
     };
 
     let (tx, rx) = crossbeam_channel::unbounded::<BackgroundResult>();
+    let (snapshot_tx, snapshot_rx) = crossbeam_channel::unbounded::<SnapshotRefreshResult>();
+
+    state.last_snapshot = Some(core.snapshot()?);
+    state.last_snapshot_time = Some(std::time::Instant::now());
+    refresh_team_dashboard_data(core.paths(), &mut state);
 
     info!("TUI started");
 
@@ -184,14 +197,18 @@ pub fn run_tui() -> Result<()> {
             state.last_snapshot_time = None;
         }
 
+        while let Ok(result) = snapshot_rx.try_recv() {
+            apply_snapshot_refresh_result(&mut state, result);
+        }
+
         let needs_refresh = state.last_snapshot.is_none()
             || state
                 .last_snapshot_time
                 .is_none_or(|t| t.elapsed() > Duration::from_secs(5));
 
-        if needs_refresh {
-            state.last_snapshot = Some(core.snapshot()?);
-            state.last_snapshot_time = Some(std::time::Instant::now());
+        if needs_refresh && !state.snapshot_refresh_in_flight {
+            state.snapshot_refresh_in_flight = true;
+            request_snapshot_refresh(core.paths().clone(), snapshot_tx.clone());
         }
 
         let Some(snapshot) = state.last_snapshot.clone() else {
@@ -209,10 +226,6 @@ pub fn run_tui() -> Result<()> {
                 fetch_session_log(&mut core, &mut state, &session_id);
                 state.last_snapshot_time = None; // Force refresh after log fetch
             }
-        }
-
-        if state.focus == TuiFocus::TeamDashboard && needs_refresh {
-            refresh_team_dashboard_data(&core, &mut state);
         }
 
         terminal.draw(|frame| render(frame, &snapshot, &state))?;
@@ -528,16 +541,85 @@ pub(crate) fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, tea
     apply_team_task_start(core, state, options);
 }
 
-pub(crate) fn refresh_team_dashboard_data(core: &AppCore, state: &mut TuiState) {
-    if let Ok(paths) = awo_core::team::list_team_manifest_paths(core.paths()) {
-        let mut teams = Vec::new();
-        for path in paths {
-            if let Ok(manifest) = awo_core::team::load_team_manifest(&path) {
-                teams.push(manifest);
-            }
-        }
-        state.team_dashboard.teams = teams;
+fn load_team_dashboard_manifests(paths: &awo_core::app::AppPaths) -> Vec<TeamManifest> {
+    let Ok(manifest_paths) = awo_core::team::list_team_manifest_paths(paths) else {
+        return Vec::new();
+    };
+
+    manifest_paths
+        .into_iter()
+        .filter_map(|path| awo_core::team::load_team_manifest(&path).ok())
+        .collect()
+}
+
+fn preserve_team_dashboard_selection(state: &mut TuiState, previous_team_id: Option<String>) {
+    if let Some(team_id) = previous_team_id {
+        state.team_dashboard.selected_team_idx = state
+            .team_dashboard
+            .teams
+            .iter()
+            .position(|team| team.team_id == team_id)
+            .unwrap_or(0);
     }
+}
+
+fn apply_snapshot_refresh_result(state: &mut TuiState, result: SnapshotRefreshResult) {
+    state.snapshot_refresh_in_flight = false;
+
+    if let Some(error) = result.error {
+        let message = format!("Error: {error}");
+        state.status = message.clone();
+        state.messages.push(message);
+        return;
+    }
+
+    let previous_team_id = state
+        .team_dashboard
+        .teams
+        .get(state.team_dashboard.selected_team_idx)
+        .map(|team| team.team_id.clone());
+
+    if let Some(snapshot) = result.snapshot {
+        state.last_snapshot = Some(snapshot);
+        state.last_snapshot_time = Some(std::time::Instant::now());
+    }
+    state.team_dashboard.teams = result.teams;
+    preserve_team_dashboard_selection(state, previous_team_id);
+}
+
+fn request_snapshot_refresh(paths: awo_core::app::AppPaths, tx: Sender<SnapshotRefreshResult>) {
+    thread::spawn(move || {
+        let result = match AppCore::with_dirs(paths.config_dir.clone(), paths.data_dir.clone()) {
+            Ok(bg_core) => match bg_core.snapshot() {
+                Ok(snapshot) => SnapshotRefreshResult {
+                    snapshot: Some(snapshot),
+                    teams: load_team_dashboard_manifests(bg_core.paths()),
+                    error: None,
+                },
+                Err(error) => SnapshotRefreshResult {
+                    snapshot: None,
+                    teams: Vec::new(),
+                    error: Some(error.to_string()),
+                },
+            },
+            Err(error) => SnapshotRefreshResult {
+                snapshot: None,
+                teams: Vec::new(),
+                error: Some(format!("failed to open background core: {error}")),
+            },
+        };
+        let _ = tx.send(result);
+    });
+}
+
+pub(crate) fn refresh_team_dashboard_data(paths: &awo_core::app::AppPaths, state: &mut TuiState) {
+    let previous_team_id = state
+        .team_dashboard
+        .teams
+        .get(state.team_dashboard.selected_team_idx)
+        .map(|team| team.team_id.clone());
+    state.team_dashboard.teams = load_team_dashboard_manifests(paths);
+    preserve_team_dashboard_selection(state, previous_team_id);
 }
 
 pub(crate) fn start_team_task_explicit(
@@ -1803,6 +1885,7 @@ mod tests {
             },
             last_snapshot: None,
             last_snapshot_time: None,
+            snapshot_refresh_in_flight: false,
         }
     }
 
@@ -1847,6 +1930,89 @@ mod tests {
         assert_eq!(state.team_dashboard.selected_team_idx, 0);
         assert_eq!(state.team_dashboard.selected_member_idx, 1);
         assert_eq!(state.team_dashboard.selected_task_idx, 0);
+    }
+
+    #[test]
+    fn apply_snapshot_refresh_result_preserves_selected_team_by_id() {
+        let mut state = base_state();
+        state.snapshot_refresh_in_flight = true;
+        state.team_dashboard.teams = vec![
+            TeamManifest {
+                version: 1,
+                team_id: "alpha".to_string(),
+                repo_id: "repo-1".to_string(),
+                objective: "Alpha".to_string(),
+                status: awo_core::TeamStatus::Planning,
+                routing_preferences: None,
+                lead: test_member("lead", "lead", None, true),
+                current_lead_member_id: Some("lead".to_string()),
+                current_lead_session_id: None,
+                plan_items: Vec::new(),
+                members: Vec::new(),
+                tasks: Vec::new(),
+            },
+            TeamManifest {
+                version: 1,
+                team_id: "beta".to_string(),
+                repo_id: "repo-2".to_string(),
+                objective: "Beta".to_string(),
+                status: awo_core::TeamStatus::Planning,
+                routing_preferences: None,
+                lead: test_member("lead", "lead", None, true),
+                current_lead_member_id: Some("lead".to_string()),
+                current_lead_session_id: None,
+                plan_items: Vec::new(),
+                members: Vec::new(),
+                tasks: Vec::new(),
+            },
+        ];
+        state.team_dashboard.selected_team_idx = 1;
+
+        apply_snapshot_refresh_result(
+            &mut state,
+            SnapshotRefreshResult {
+                snapshot: Some(empty_snapshot()),
+                teams: vec![
+                    TeamManifest {
+                        version: 1,
+                        team_id: "gamma".to_string(),
+                        repo_id: "repo-3".to_string(),
+                        objective: "Gamma".to_string(),
+                        status: awo_core::TeamStatus::Planning,
+                        routing_preferences: None,
+                        lead: test_member("lead", "lead", None, true),
+                        current_lead_member_id: Some("lead".to_string()),
+                        current_lead_session_id: None,
+                        plan_items: Vec::new(),
+                        members: Vec::new(),
+                        tasks: Vec::new(),
+                    },
+                    TeamManifest {
+                        version: 1,
+                        team_id: "beta".to_string(),
+                        repo_id: "repo-2".to_string(),
+                        objective: "Beta refreshed".to_string(),
+                        status: awo_core::TeamStatus::Planning,
+                        routing_preferences: None,
+                        lead: test_member("lead", "lead", None, true),
+                        current_lead_member_id: Some("lead".to_string()),
+                        current_lead_session_id: None,
+                        plan_items: Vec::new(),
+                        members: Vec::new(),
+                        tasks: Vec::new(),
+                    },
+                ],
+                error: None,
+            },
+        );
+
+        assert!(!state.snapshot_refresh_in_flight);
+        assert_eq!(
+            state.team_dashboard.teams[state.team_dashboard.selected_team_idx].team_id,
+            "beta"
+        );
+        assert!(state.last_snapshot.is_some());
+        assert!(state.last_snapshot_time.is_some());
     }
 
     #[test]

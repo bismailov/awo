@@ -40,14 +40,15 @@ pub fn merge_command_outcomes(outcomes: Vec<CommandOutcome>) -> CommandOutcome {
 }
 
 pub fn print_json_response<T: Serialize>(data: &T, outcome: Option<&CommandOutcome>) {
-    let envelope = JsonEnvelope {
-        ok: true,
-        summary: outcome.map(|o| o.summary.clone()).or(None), // T is often the data itself
-        error: None,
-        events: outcome.map(|o| o.events.clone()).unwrap_or_default(),
-        data: Some(data),
-    };
-    println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+    match json_response_string(data, outcome) {
+        Ok(json) => println!("{json}"),
+        Err(error) => {
+            eprintln!("failed to serialize JSON response: {error}");
+            println!(
+                "{{\"ok\":false,\"summary\":null,\"error\":\"failed to serialize response\",\"events\":[],\"data\":null}}"
+            );
+        }
+    }
 }
 
 pub fn print_json_error(error: &Error) {
@@ -841,13 +842,32 @@ fn json_error_string(error: &Error) -> String {
         events: vec![],
         data: None,
     };
-    serde_json::to_string_pretty(&envelope).expect("json serialization should succeed")
+    serde_json::to_string_pretty(&envelope).unwrap_or_else(|serialize_error| {
+        eprintln!("failed to serialize JSON error response: {serialize_error}");
+        "{\"ok\":false,\"summary\":null,\"error\":\"failed to serialize error\",\"events\":[],\"data\":null}".to_string()
+    })
+}
+
+fn json_response_string<T: Serialize>(
+    data: &T,
+    outcome: Option<&CommandOutcome>,
+) -> serde_json::Result<String> {
+    let envelope = JsonEnvelope {
+        ok: true,
+        summary: outcome.map(|o| o.summary.clone()).or(None), // T is often the data itself
+        error: None,
+        events: outcome.map(|o| o.events.clone()).unwrap_or_default(),
+        data: Some(data),
+    };
+    serde_json::to_string_pretty(&envelope)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use awo_core::DomainEvent;
+    use serde::Serialize;
+    use serde::ser::Error as _;
     use serde_json::Value;
 
     #[test]
@@ -880,6 +900,24 @@ mod tests {
         assert_eq!(parsed["events"].as_array().map(std::vec::Vec::len), Some(1));
         assert_eq!(parsed["events"][0]["type"], "command_received");
         assert_eq!(parsed["events"][0]["command"], "repo_list");
+    }
+
+    #[derive(Debug)]
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(S::Error::custom("intentional test failure"))
+        }
+    }
+
+    #[test]
+    fn json_response_string_propagates_serialization_errors() {
+        let error = json_response_string(&FailingSerialize, None).unwrap_err();
+        assert!(error.to_string().contains("intentional test failure"));
     }
 
     #[test]

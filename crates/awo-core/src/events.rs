@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
+use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -156,6 +157,19 @@ pub enum DomainEvent {
         team_id: String,
         member_id: String,
     },
+    TeamMemberUpdated {
+        team_id: String,
+        member_id: String,
+    },
+    TeamMemberRemoved {
+        team_id: String,
+        member_id: String,
+    },
+    TeamMemberSlotAssigned {
+        team_id: String,
+        member_id: String,
+        slot_id: String,
+    },
     TeamLeadReplaced {
         team_id: String,
         member_id: String,
@@ -176,6 +190,11 @@ pub enum DomainEvent {
     TeamTaskAdded {
         team_id: String,
         task_id: String,
+    },
+    TeamTaskSlotBound {
+        team_id: String,
+        task_id: String,
+        slot_id: String,
     },
     TeamTaskAccepted {
         team_id: String,
@@ -402,6 +421,19 @@ impl DomainEvent {
             Self::TeamMemberAdded { team_id, member_id } => {
                 format!("Added member `{member_id}` to team `{team_id}`")
             }
+            Self::TeamMemberUpdated { team_id, member_id } => {
+                format!("Updated member `{member_id}` in team `{team_id}`")
+            }
+            Self::TeamMemberRemoved { team_id, member_id } => {
+                format!("Removed member `{member_id}` from team `{team_id}`")
+            }
+            Self::TeamMemberSlotAssigned {
+                team_id,
+                member_id,
+                slot_id,
+            } => {
+                format!("Assigned slot `{slot_id}` to member `{member_id}` in team `{team_id}`")
+            }
             Self::TeamLeadReplaced { team_id, member_id } => {
                 format!("Current lead for team `{team_id}` is now `{member_id}`")
             }
@@ -420,6 +452,13 @@ impl DomainEvent {
             }
             Self::TeamTaskAdded { team_id, task_id } => {
                 format!("Added task `{task_id}` to team `{team_id}`")
+            }
+            Self::TeamTaskSlotBound {
+                team_id,
+                task_id,
+                slot_id,
+            } => {
+                format!("Bound slot `{slot_id}` to task `{task_id}` in team `{team_id}`")
             }
             Self::TeamTaskAccepted { team_id, task_id } => {
                 format!("Accepted task `{task_id}` in team `{team_id}`")
@@ -543,7 +582,7 @@ struct EventBusShared {
 
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let inner = self.shared.inner.lock().unwrap();
+        let inner = self.lock_inner("debug");
         f.debug_struct("EventBus")
             .field("head_seq", &inner.head_seq())
             .field("buffered", &inner.ring.len())
@@ -574,12 +613,48 @@ impl EventBus {
         }
     }
 
+    fn lock_inner(&self, context: &'static str) -> MutexGuard<'_, EventBusInner> {
+        match self.shared.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                warn!(
+                    context = context,
+                    "event bus mutex poisoned; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn wait_for_change<'a>(
+        &self,
+        inner: MutexGuard<'a, EventBusInner>,
+        since_seq: u64,
+        timeout: Duration,
+    ) -> MutexGuard<'a, EventBusInner> {
+        match self
+            .shared
+            .changed
+            .wait_timeout_while(inner, timeout, |state| state.head_seq() <= since_seq)
+        {
+            Ok((locked, _)) => locked,
+            Err(poisoned) => {
+                warn!(
+                    context = "wait",
+                    "event bus condvar wait encountered poisoned state; recovering"
+                );
+                let (locked, _) = poisoned.into_inner();
+                locked
+            }
+        }
+    }
+
     /// Publish a batch of events to the bus, assigning sequence numbers.
     pub fn publish(&self, events: &[DomainEvent]) {
         if events.is_empty() {
             return;
         }
-        let mut inner = self.shared.inner.lock().unwrap();
+        let mut inner = self.lock_inner("publish");
         inner.publish(events);
         drop(inner);
         self.shared.changed.notify_all();
@@ -587,19 +662,14 @@ impl EventBus {
 
     /// Poll for events newer than `since_seq`, up to `limit` entries.
     pub fn poll(&self, since_seq: u64, limit: usize) -> EventPollResult {
-        self.shared.inner.lock().unwrap().poll(since_seq, limit)
+        self.lock_inner("poll").poll(since_seq, limit)
     }
 
     /// Wait for events newer than `since_seq`, up to `limit` entries, or until `timeout`.
     pub fn wait(&self, since_seq: u64, limit: usize, timeout: Duration) -> EventPollResult {
-        let mut inner = self.shared.inner.lock().unwrap();
+        let mut inner = self.lock_inner("wait");
         if inner.head_seq() <= since_seq && !timeout.is_zero() {
-            let (locked, _) = self
-                .shared
-                .changed
-                .wait_timeout_while(inner, timeout, |state| state.head_seq() <= since_seq)
-                .unwrap();
-            inner = locked;
+            inner = self.wait_for_change(inner, since_seq, timeout);
         }
 
         inner.poll(since_seq, limit)
@@ -607,7 +677,7 @@ impl EventBus {
 
     /// Return the current head sequence number without fetching events.
     pub fn head_seq(&self) -> u64 {
-        self.shared.inner.lock().unwrap().head_seq()
+        self.lock_inner("head_seq").head_seq()
     }
 }
 
@@ -765,5 +835,28 @@ mod tests {
 
         let result = bus2.poll(0, 100);
         assert_eq!(result.entries.len(), 1);
+    }
+
+    #[test]
+    fn event_bus_recovers_after_poisoned_mutex() {
+        let bus = EventBus::new();
+        let poisoned_bus = bus.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned_bus.shared.inner.lock().unwrap();
+            panic!("poison event bus");
+        })
+        .join();
+
+        bus.publish(&[DomainEvent::CommandReceived {
+            command: "recovered".to_string(),
+        }]);
+
+        assert_eq!(bus.head_seq(), 1);
+        let result = bus.poll(0, 10);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.entries[0].event.to_message(),
+            "Command received: recovered"
+        );
     }
 }
