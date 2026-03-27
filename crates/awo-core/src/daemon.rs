@@ -11,12 +11,18 @@ use crate::dispatch::Dispatcher;
 use crate::dispatch::{RpcResponse, dispatch_rpc, parse_rpc_request};
 use crate::error::{AwoError, AwoResult};
 use fs2::FileExt;
+use serde::Serialize;
 use std::fs;
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::time::Duration;
+
+#[cfg(unix)]
+const DAEMON_STARTUP_GRACE: Duration = Duration::from_secs(3);
 
 /// Daemon state: manages the socket, lock file, and shutdown signal.
 pub struct DaemonServer {
@@ -247,15 +253,93 @@ pub fn daemon_is_running(paths: &AppPaths) -> bool {
 }
 
 /// Status of the daemon process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonHealthIssue {
+    SocketMissing,
+    SocketUnreachable,
+}
+
+impl DaemonHealthIssue {
+    #[must_use]
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SocketMissing => "socket file missing",
+            Self::SocketUnreachable => "socket not accepting connections",
+        }
+    }
+}
+
+/// Status of the daemon process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonStatus {
     NotRunning,
-    Running { pid: u32, socket_ok: bool },
+    Starting {
+        pid: u32,
+        issues: Vec<DaemonHealthIssue>,
+    },
+    Healthy {
+        pid: u32,
+    },
+    Degraded {
+        pid: u32,
+        issues: Vec<DaemonHealthIssue>,
+    },
 }
 
 impl DaemonStatus {
+    #[must_use]
     pub fn is_running(&self) -> bool {
-        matches!(self, Self::Running { .. })
+        !matches!(self, Self::NotRunning)
+    }
+
+    #[must_use]
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy { .. })
+    }
+
+    #[must_use]
+    pub fn state_label(&self) -> &'static str {
+        match self {
+            Self::NotRunning => "not_running",
+            Self::Starting { .. } => "starting",
+            Self::Healthy { .. } => "healthy",
+            Self::Degraded { .. } => "degraded",
+        }
+    }
+
+    #[must_use]
+    pub fn pid(&self) -> Option<u32> {
+        match self {
+            Self::NotRunning => None,
+            Self::Starting { pid, .. } | Self::Healthy { pid } | Self::Degraded { pid, .. } => {
+                Some(*pid)
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn issues(&self) -> &[DaemonHealthIssue] {
+        match self {
+            Self::Starting { issues, .. } | Self::Degraded { issues, .. } => issues.as_slice(),
+            Self::NotRunning | Self::Healthy { .. } => &[],
+        }
+    }
+
+    #[must_use]
+    pub fn detail_message(&self) -> String {
+        match self {
+            Self::NotRunning => "daemon not running".to_string(),
+            Self::Healthy { pid } => format!("daemon healthy (pid {pid})"),
+            Self::Starting { pid, issues } => format!(
+                "daemon starting (pid {pid}, {})",
+                format_daemon_issues(issues)
+            ),
+            Self::Degraded { pid, issues } => format!(
+                "daemon degraded (pid {pid}, {})",
+                format_daemon_issues(issues)
+            ),
+        }
     }
 }
 
@@ -283,18 +367,20 @@ pub fn get_daemon_status(paths: &AppPaths) -> DaemonStatus {
 
         // Check if process is alive using kill(pid, 0)
         if kill(Pid::from_raw(pid as i32), None).is_err() {
+            cleanup_stale_daemon_artifacts(paths);
             return DaemonStatus::NotRunning;
         }
 
-        // Check connectability
-        let socket_path = paths.daemon_socket_path();
-        let socket_ok = if socket_path.exists() {
-            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
-        } else {
-            false
-        };
+        let issues = probe_daemon_connectivity(&paths.daemon_socket_path());
+        if issues.is_empty() {
+            return DaemonStatus::Healthy { pid };
+        }
 
-        DaemonStatus::Running { pid, socket_ok }
+        if pid_file_is_within_grace_period(&pid_path, DAEMON_STARTUP_GRACE) {
+            return DaemonStatus::Starting { pid, issues };
+        }
+
+        DaemonStatus::Degraded { pid, issues }
     }
 
     #[cfg(not(unix))]
@@ -313,7 +399,9 @@ pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
 
     let status = get_daemon_status(paths);
     let pid = match status {
-        DaemonStatus::Running { pid, .. } => pid,
+        DaemonStatus::Starting { pid, .. }
+        | DaemonStatus::Healthy { pid }
+        | DaemonStatus::Degraded { pid, .. } => pid,
         DaemonStatus::NotRunning => return Ok("daemon not running".to_string()),
     };
 
@@ -328,11 +416,11 @@ pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
     while start.elapsed() < timeout {
         // Check if the process is still alive
         if kill(Pid::from_raw(pid as i32), None).is_err() {
-            // Process is gone — clean up any leftover pidfile as a safety net
-            let _ = fs::remove_file(&pid_path);
+            cleanup_stale_daemon_artifacts(paths);
             return Ok(format!("daemon (pid {}) stopped", pid));
         }
         if !pid_path.exists() {
+            cleanup_stale_daemon_artifacts(paths);
             return Ok(format!("daemon (pid {}) stopped cleanly", pid));
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -340,10 +428,7 @@ pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
 
     // Force kill if still alive
     let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
-    // Clean up stale files
-    let _ = fs::remove_file(&pid_path);
-    let _ = fs::remove_file(paths.daemon_socket_path());
-    let _ = fs::remove_file(paths.daemon_lock_path());
+    cleanup_stale_daemon_artifacts(paths);
     Ok(format!("daemon (pid {}) force-killed after timeout", pid))
 }
 
@@ -359,6 +444,20 @@ pub fn stop_daemon(paths: &AppPaths) -> AwoResult<String> {
 /// Returns Ok(pid) on success.
 #[cfg(unix)]
 pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
+    match get_daemon_status(paths) {
+        DaemonStatus::Healthy { pid } => return Ok(pid),
+        DaemonStatus::Starting { pid, .. } => {
+            return wait_for_existing_daemon_start(paths, pid, DAEMON_STARTUP_GRACE);
+        }
+        DaemonStatus::Degraded { pid, issues } => {
+            return Err(AwoError::supervisor(format!(
+                "awod daemon is degraded (pid {pid}, {}); stop it before restarting",
+                format_daemon_issues(&issues)
+            )));
+        }
+        DaemonStatus::NotRunning => {}
+    }
+
     let awo_exe = std::env::current_exe()
         .map_err(|e| AwoError::supervisor(format!("failed to get current executable path: {e}")))?;
     let awod_exe = awo_exe.with_file_name("awod");
@@ -389,9 +488,18 @@ pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
     let interval = std::time::Duration::from_millis(100);
 
     while start.elapsed() < timeout {
-        if daemon_is_running(paths) {
-            tracing::info!(pid, "spawned awod daemon process");
-            return Ok(pid);
+        match get_daemon_status(paths) {
+            DaemonStatus::Healthy { .. } => {
+                tracing::info!(pid, "spawned awod daemon process");
+                return Ok(pid);
+            }
+            DaemonStatus::Starting { .. } | DaemonStatus::NotRunning => {}
+            DaemonStatus::Degraded { issues, .. } => {
+                return Err(AwoError::supervisor(format!(
+                    "awod daemon started in degraded state: {}",
+                    format_daemon_issues(&issues)
+                )));
+            }
         }
 
         // Check if child exited prematurely
@@ -509,9 +617,84 @@ impl crate::dispatch::Dispatcher for DaemonClient {
     }
 }
 
+#[cfg(unix)]
+fn probe_daemon_connectivity(socket_path: &Path) -> Vec<DaemonHealthIssue> {
+    if !socket_path.exists() {
+        return vec![DaemonHealthIssue::SocketMissing];
+    }
+
+    if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+        Vec::new()
+    } else {
+        vec![DaemonHealthIssue::SocketUnreachable]
+    }
+}
+
+#[cfg(unix)]
+fn pid_file_is_within_grace_period(pid_path: &Path, grace: Duration) -> bool {
+    fs::metadata(pid_path)
+        .and_then(|metadata| metadata.modified())
+        .and_then(|modified| modified.elapsed().map_err(std::io::Error::other))
+        .is_ok_and(|elapsed| elapsed <= grace)
+}
+
+#[cfg(unix)]
+fn cleanup_stale_daemon_artifacts(paths: &AppPaths) {
+    for path in [
+        paths.daemon_pid_path(),
+        paths.daemon_socket_path(),
+        paths.daemon_lock_path(),
+    ] {
+        if let Err(err) = fs::remove_file(&path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(%err, path = %path.display(), "failed to clean stale daemon artifact");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_existing_daemon_start(paths: &AppPaths, pid: u32, timeout: Duration) -> AwoResult<u32> {
+    let start = std::time::Instant::now();
+    let interval = Duration::from_millis(100);
+
+    while start.elapsed() < timeout {
+        match get_daemon_status(paths) {
+            DaemonStatus::Healthy { pid: healthy_pid } => return Ok(healthy_pid),
+            DaemonStatus::Starting { .. } => std::thread::sleep(interval),
+            DaemonStatus::Degraded { issues, .. } => {
+                return Err(AwoError::supervisor(format!(
+                    "awod daemon is degraded while starting (pid {pid}, {})",
+                    format_daemon_issues(&issues)
+                )));
+            }
+            DaemonStatus::NotRunning => {
+                return Err(AwoError::supervisor(format!(
+                    "awod daemon stopped before becoming healthy (pid {pid})"
+                )));
+            }
+        }
+    }
+
+    Err(AwoError::supervisor(format!(
+        "awod daemon did not become healthy within {}s (pid {pid})",
+        timeout.as_secs()
+    )))
+}
+
+fn format_daemon_issues(issues: &[DaemonHealthIssue]) -> String {
+    issues
+        .iter()
+        .map(DaemonHealthIssue::description)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use filetime::{FileTime, set_file_mtime};
 
     #[test]
     fn daemon_options_from_paths() {
@@ -646,7 +829,7 @@ mod tests {
 
             let status = get_daemon_status(&paths);
             assert!(status.is_running());
-            if let DaemonStatus::Running { pid, .. } = status {
+            if let DaemonStatus::Starting { pid, .. } | DaemonStatus::Healthy { pid } = status {
                 assert_eq!(pid, std::process::id());
             }
         }
@@ -680,7 +863,7 @@ mod tests {
         // Mock the daemon state
         fs::write(paths.daemon_pid_path(), pid.to_string()).unwrap();
         // Socket doesn't need to be fully functional for stop_daemon to send the signal,
-        // but get_daemon_status will report socket_ok: false.
+        // so get_daemon_status should report a transitional state.
 
         // Ensure status sees it as running
         let status = get_daemon_status(&paths);
@@ -719,5 +902,114 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("awod binary not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_reports_starting_when_process_alive_but_socket_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        fs::write(paths.daemon_pid_path(), pid.to_string()).unwrap();
+
+        let status = get_daemon_status(&paths);
+        assert_eq!(
+            status,
+            DaemonStatus::Starting {
+                pid,
+                issues: vec![DaemonHealthIssue::SocketMissing],
+            }
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_reports_degraded_after_startup_grace() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let pid_path = paths.daemon_pid_path();
+        fs::write(&pid_path, pid.to_string()).unwrap();
+        let old_time = FileTime::from_unix_time(
+            (std::time::SystemTime::now() - DAEMON_STARTUP_GRACE - Duration::from_secs(1))
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            0,
+        );
+        set_file_mtime(&pid_path, old_time).unwrap();
+
+        let status = get_daemon_status(&paths);
+        assert_eq!(
+            status,
+            DaemonStatus::Degraded {
+                pid,
+                issues: vec![DaemonHealthIssue::SocketMissing],
+            }
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_cleans_stale_artifacts_when_process_is_gone() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            state_db_path: temp_dir.path().join("state.sqlite3"),
+            logs_dir: temp_dir.path().join("logs"),
+            repos_dir: temp_dir.path().join("repos"),
+            clones_dir: temp_dir.path().join("clones"),
+            teams_dir: temp_dir.path().join("teams"),
+        };
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.1")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let _ = child.wait();
+
+        fs::write(paths.daemon_pid_path(), pid.to_string()).unwrap();
+        fs::write(paths.daemon_socket_path(), "").unwrap();
+        fs::write(paths.daemon_lock_path(), "").unwrap();
+
+        let status = get_daemon_status(&paths);
+        assert_eq!(status, DaemonStatus::NotRunning);
+        assert!(!paths.daemon_pid_path().exists());
+        assert!(!paths.daemon_socket_path().exists());
+        assert!(!paths.daemon_lock_path().exists());
     }
 }

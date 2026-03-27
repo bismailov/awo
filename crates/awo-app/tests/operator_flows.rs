@@ -781,6 +781,85 @@ fn team_member_add_and_task_add_appear_in_show() {
 }
 
 #[test]
+fn team_task_delegate_supports_no_auto_start_without_launching_session() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("delegate-no-auto-start");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "delegate-team",
+        "Test delegation without starting",
+    ]);
+    env.run(&[
+        "team",
+        "member",
+        "add",
+        "delegate-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "shell",
+    ]);
+    env.run(&[
+        "team",
+        "task",
+        "add",
+        "delegate-team",
+        "task-1",
+        "lead",
+        "Delegate task",
+        "echo hi",
+        "--runtime",
+        "shell",
+        "--deliverable",
+        "Output",
+    ]);
+
+    let delegate_result = env.run(&[
+        "team",
+        "task",
+        "delegate",
+        "delegate-team",
+        "task-1",
+        "worker-a",
+        "--no-auto-start",
+    ]);
+    assert_eq!(
+        delegate_result["ok"], true,
+        "delegate failed: {delegate_result}"
+    );
+    assert_eq!(
+        delegate_result["data"]["manifest"]["tasks"][0]["owner_id"],
+        "worker-a"
+    );
+    assert_eq!(
+        delegate_result["data"]["manifest"]["tasks"][0]["state"],
+        "todo"
+    );
+    assert_eq!(delegate_result["data"]["execution"]["acquired_slot"], false);
+    assert_eq!(
+        delegate_result["data"]["execution"]["session_status"],
+        "prepared"
+    );
+
+    let slot_list = env.run(&["slot", "list"]);
+    assert_eq!(
+        slot_list["data"]
+            .as_array()
+            .expect("slot list should be an array")
+            .len(),
+        0
+    );
+}
+
+#[test]
 fn team_archive_requires_terminal_tasks() {
     let env = TestEnv::new();
     let repo_dir = env.create_repo("archive-repo");

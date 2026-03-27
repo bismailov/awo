@@ -203,6 +203,25 @@ impl Dispatcher for AppCore {
             ));
         }
 
+        if let Command::EventsWait {
+            since_seq,
+            limit,
+            timeout_ms,
+        } = &command
+        {
+            let result = self.event_bus.wait(
+                since_seq.unwrap_or(0),
+                limit.unwrap_or(100),
+                std::time::Duration::from_millis(timeout_ms.unwrap_or(30_000)),
+            );
+            return Ok(CommandOutcome::with_data(
+                "Events waited.",
+                serde_json::to_value(&result).map_err(|e| {
+                    crate::error::AwoError::unsupported("event wait serialization", e.to_string())
+                })?,
+            ));
+        }
+
         // Intercept TeamTaskStart and TeamTaskDelegate — they need full AppCore access
         // and return complex payloads.
         match command {

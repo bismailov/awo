@@ -249,6 +249,23 @@ impl McpServer {
                     text: events_json,
                 })
             }
+            "awo://events" => {
+                let command = awo_core::Command::EventsPoll {
+                    since_seq: Some(0),
+                    limit: Some(100),
+                };
+                let outcome = self
+                    .dispatcher
+                    .dispatch(command)
+                    .map_err(|e| e.to_string())?;
+                let payload_json = serde_json::to_string_pretty(&outcome.data)
+                    .unwrap_or_else(|_| "null".to_string());
+                Ok(ResourceContent {
+                    uri: uri.to_string(),
+                    mime_type: "application/json".to_string(),
+                    text: payload_json,
+                })
+            }
             _ => Err(format!("unknown resource URI: {uri}")),
         }
     }
@@ -708,6 +725,30 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                 },
             }),
         },
+        ToolDefinition {
+            name: "wait_events".to_string(),
+            description: "Long-poll the event bus until new domain events arrive or a timeout elapses. Returns the same payload shape as poll_events.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "since_seq": {
+                        "type": "integer",
+                        "description": "Sequence number cursor. Returns events with seq > since_seq.",
+                        "default": 0
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of events to return.",
+                        "default": 100
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Maximum time to wait before returning, even if no new events arrive.",
+                        "default": 30000
+                    }
+                },
+            }),
+        },
     ]
 }
 
@@ -745,6 +786,12 @@ fn resource_definitions() -> Vec<ResourceDefinition> {
             uri: "awo://teams".to_string(),
             name: "Team List".to_string(),
             description: "All team manifests.".to_string(),
+            mime_type: "application/json".to_string(),
+        },
+        ResourceDefinition {
+            uri: "awo://events".to_string(),
+            name: "Event Bus Tail".to_string(),
+            description: "The currently buffered local broker events.".to_string(),
             mime_type: "application/json".to_string(),
         },
     ]
@@ -979,6 +1026,19 @@ fn map_tool_to_command(
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize);
             Ok(awo_core::Command::EventsPoll { since_seq, limit })
+        }
+        "wait_events" => {
+            let since_seq = args.get("since_seq").and_then(|v| v.as_u64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_u64());
+            Ok(awo_core::Command::EventsWait {
+                since_seq,
+                limit,
+                timeout_ms,
+            })
         }
         _ => Err(format!("unknown tool: {tool_name}")),
     }
@@ -1239,6 +1299,7 @@ mod tests {
         assert!(uris.contains(&"awo://sessions"));
         assert!(uris.contains(&"awo://review"));
         assert!(uris.contains(&"awo://teams"));
+        assert!(uris.contains(&"awo://events"));
     }
 
     #[test]
@@ -1446,5 +1507,27 @@ mod tests {
     fn map_tool_poll_events_defaults() {
         let cmd = map_tool_to_command("poll_events", &serde_json::json!({})).unwrap();
         assert_eq!(cmd.method_name(), "events.poll");
+    }
+
+    #[test]
+    fn map_tool_wait_events_dispatches() {
+        let mut server = make_server();
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "wait_events",
+                "arguments": { "since_seq": 5, "limit": 10, "timeout_ms": 250 }
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("executed: events.wait"));
+    }
+
+    #[test]
+    fn map_tool_wait_events_defaults() {
+        let cmd = map_tool_to_command("wait_events", &serde_json::json!({})).unwrap();
+        assert_eq!(cmd.method_name(), "events.wait");
     }
 }

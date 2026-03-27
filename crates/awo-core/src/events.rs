@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -423,12 +424,17 @@ impl EventBusInner {
 /// buffer is full, the oldest events are evicted.
 #[derive(Clone)]
 pub struct EventBus {
-    inner: Arc<Mutex<EventBusInner>>,
+    shared: Arc<EventBusShared>,
+}
+
+struct EventBusShared {
+    inner: Mutex<EventBusInner>,
+    changed: Condvar,
 }
 
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.shared.inner.lock().unwrap();
         f.debug_struct("EventBus")
             .field("head_seq", &inner.head_seq())
             .field("buffered", &inner.ring.len())
@@ -452,7 +458,10 @@ impl EventBus {
     /// Create a new event bus with a custom ring buffer capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(EventBusInner::new(capacity))),
+            shared: Arc::new(EventBusShared {
+                inner: Mutex::new(EventBusInner::new(capacity)),
+                changed: Condvar::new(),
+            }),
         }
     }
 
@@ -461,17 +470,35 @@ impl EventBus {
         if events.is_empty() {
             return;
         }
-        self.inner.lock().unwrap().publish(events);
+        let mut inner = self.shared.inner.lock().unwrap();
+        inner.publish(events);
+        drop(inner);
+        self.shared.changed.notify_all();
     }
 
     /// Poll for events newer than `since_seq`, up to `limit` entries.
     pub fn poll(&self, since_seq: u64, limit: usize) -> EventPollResult {
-        self.inner.lock().unwrap().poll(since_seq, limit)
+        self.shared.inner.lock().unwrap().poll(since_seq, limit)
+    }
+
+    /// Wait for events newer than `since_seq`, up to `limit` entries, or until `timeout`.
+    pub fn wait(&self, since_seq: u64, limit: usize, timeout: Duration) -> EventPollResult {
+        let mut inner = self.shared.inner.lock().unwrap();
+        if inner.head_seq() <= since_seq && !timeout.is_zero() {
+            let (locked, _) = self
+                .shared
+                .changed
+                .wait_timeout_while(inner, timeout, |state| state.head_seq() <= since_seq)
+                .unwrap();
+            inner = locked;
+        }
+
+        inner.poll(since_seq, limit)
     }
 
     /// Return the current head sequence number without fetching events.
     pub fn head_seq(&self) -> u64 {
-        self.inner.lock().unwrap().head_seq()
+        self.shared.inner.lock().unwrap().head_seq()
     }
 }
 
@@ -516,6 +543,50 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert_eq!(result.entries[0].seq, 1);
         assert_eq!(result.entries[1].seq, 2);
+    }
+
+    #[test]
+    fn event_bus_wait_returns_existing_events_without_blocking() {
+        let bus = EventBus::new();
+        bus.publish(&[DomainEvent::CommandReceived {
+            command: "ready".to_string(),
+        }]);
+
+        let result = bus.wait(0, 100, Duration::from_secs(1));
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.entries[0].event.to_message(),
+            "Command received: ready"
+        );
+    }
+
+    #[test]
+    fn event_bus_wait_blocks_until_new_event_arrives() {
+        let bus = EventBus::new();
+        let publisher = bus.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            publisher.publish(&[DomainEvent::CommandReceived {
+                command: "later".to_string(),
+            }]);
+        });
+
+        let result = bus.wait(0, 100, Duration::from_secs(1));
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.entries[0].event.to_message(),
+            "Command received: later"
+        );
+        assert_eq!(result.head_seq, 1);
+    }
+
+    #[test]
+    fn event_bus_wait_times_out_without_new_events() {
+        let bus = EventBus::new();
+
+        let result = bus.wait(0, 100, Duration::from_millis(10));
+        assert!(result.entries.is_empty());
+        assert_eq!(result.head_seq, 0);
     }
 
     #[test]

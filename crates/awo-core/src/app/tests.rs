@@ -1886,3 +1886,142 @@ fn team_task_state_transitions() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_reconcile_released_slot_clears_bindings() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (_repo_id, slot_id) = create_team_with_bound_slot(&mut core, "team-rel", "team-rel")?;
+
+    core.dispatch(Command::SlotRelease { slot_id })?;
+
+    let manifest = core.load_team_manifest("team-rel")?;
+    let task = manifest.task("task-1").context("missing task")?;
+    assert_eq!(task.state, TaskCardState::Blocked);
+    assert!(task.slot_id.is_none());
+
+    let member = manifest.member("worker-a").context("missing worker")?;
+    assert!(member.slot_id.is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_reconcile_successful_verification_review() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (repo_id, slot_id) =
+        create_team_with_bound_slot(&mut core, "team-ver-pass", "team-ver-pass")?;
+
+    core.add_team_task(
+        "team-ver-pass",
+        TaskCard {
+            task_id: "task-2".to_string(),
+            title: "Task 2".to_string(),
+            summary: "summary".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: Some(slot_id.clone()),
+            branch_name: None,
+            read_only: false,
+            write_scope: vec![],
+            deliverable: "del".to_string(),
+            verification: vec![],
+            depends_on: vec![],
+            verification_command: Some("true".to_string()),
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::InProgress,
+        },
+    )?;
+
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-ver-pass".to_string(),
+        repo_id,
+        slot_id,
+        runtime: "shell".to_string(),
+        supervisor: None,
+        prompt: "echo done".to_string(),
+        status: SessionStatus::Completed,
+        read_only: false,
+        dry_run: false,
+        command_line: "echo done".to_string(),
+        stdout_path: None,
+        stderr_path: None,
+        exit_code: Some(0),
+        timeout_secs: None,
+        started_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let updated_manifest = core.load_team_manifest("team-ver-pass")?;
+    let updated_task = updated_manifest.task("task-2").context("missing task")?;
+    assert_eq!(updated_task.state, TaskCardState::Review);
+    assert_eq!(
+        updated_task.result_summary.as_deref(),
+        Some("Verification passed.")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_reconcile_failed_verification_blocks() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let (repo_id, slot_id) =
+        create_team_with_bound_slot(&mut core, "team-ver-fail", "team-ver-fail")?;
+
+    core.add_team_task(
+        "team-ver-fail",
+        TaskCard {
+            task_id: "task-2".to_string(),
+            title: "Task 2".to_string(),
+            summary: "summary".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: Some(slot_id.clone()),
+            branch_name: None,
+            read_only: false,
+            write_scope: vec![],
+            deliverable: "del".to_string(),
+            verification: vec![],
+            depends_on: vec![],
+            verification_command: Some("false".to_string()),
+            result_summary: None,
+            output_log_path: None,
+            state: TaskCardState::InProgress,
+        },
+    )?;
+
+    core.store.upsert_session(&SessionRecord {
+        id: "sess-ver-fail".to_string(),
+        repo_id,
+        slot_id,
+        runtime: "shell".to_string(),
+        supervisor: None,
+        prompt: "echo done".to_string(),
+        status: SessionStatus::Completed,
+        read_only: false,
+        dry_run: false,
+        command_line: "echo done".to_string(),
+        stdout_path: None,
+        stderr_path: None,
+        exit_code: Some(0),
+        timeout_secs: None,
+        started_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    })?;
+
+    let updated_manifest = core.load_team_manifest("team-ver-fail")?;
+    let updated_task = updated_manifest.task("task-2").context("missing task")?;
+    assert_eq!(updated_task.state, TaskCardState::Blocked);
+    assert!(
+        updated_task
+            .result_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Verification failed")
+    );
+
+    Ok(())
+}

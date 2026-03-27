@@ -92,6 +92,18 @@ Expose the same operations through a long-lived local process when we need:
 - long-running supervision
 - middleware use by another orchestration system
 
+Broker mode should be explicit about health:
+- `healthy`: daemon reachable and serving requests
+- `starting`: process alive but not yet fully ready
+- `degraded`: process alive but not safely usable as the broker
+- `not_running`: no usable daemon is present
+
+If the CLI falls back to direct mode, that fallback should be visible to the operator instead of being a silent transport change.
+
+For live interfaces, prefer bounded event delivery over blind polling loops:
+- cheap cursor polling when freshness is not urgent
+- broker-backed long-poll waits when a client wants to sleep until new events appear
+
 ### Layer 3: MCP Facade (Outside)
 
 Expose the broker or CLI behind MCP when we want third-party agent clients to treat `awo` as a tool provider or virtual agent backend.

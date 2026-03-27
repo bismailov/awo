@@ -587,6 +587,11 @@ mod tests {
                 since_seq: None,
                 limit: None,
             },
+            Command::EventsWait {
+                since_seq: Some(5),
+                limit: Some(25),
+                timeout_ms: Some(1_500),
+            },
         ];
 
         for cmd in variants {

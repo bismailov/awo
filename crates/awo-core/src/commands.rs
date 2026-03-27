@@ -163,6 +163,12 @@ pub enum Command {
         since_seq: Option<u64>,
         limit: Option<usize>,
     },
+    #[serde(rename = "events.wait")]
+    EventsWait {
+        since_seq: Option<u64>,
+        limit: Option<usize>,
+        timeout_ms: Option<u64>,
+    },
 }
 
 impl Command {
@@ -205,6 +211,7 @@ impl Command {
             Self::TeamTeardown { .. } => "team.teardown",
             Self::TeamDelete { .. } => "team.delete",
             Self::EventsPoll { .. } => "events.poll",
+            Self::EventsWait { .. } => "events.wait",
         }
     }
 
@@ -458,6 +465,9 @@ impl<'a> CommandRunner<'a> {
                     "events.poll requires event bus context",
                 ))
             }
+            Command::EventsWait { .. } => Ok(CommandOutcome::new(
+                "events.wait requires event bus context",
+            )),
         }
     }
 

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -243,7 +243,11 @@ pub enum TeamCommand {
         force: bool,
     },
     /// List all active teams.
-    List,
+    List {
+        /// Filter by specific repository.
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
     /// Show detailed status and tasks for a team.
     Show { team_id: String },
     /// Get routing recommendations for team members.
@@ -467,8 +471,11 @@ pub enum TeamTaskCommand {
         #[arg(long)]
         focus_file: Vec<String>,
         /// Automatically start the task after delegation.
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
         auto_start: bool,
+        /// Keep the delegated task in planning state without starting a session.
+        #[arg(long, conflicts_with = "auto_start")]
+        no_auto_start: bool,
         #[arg(long, default_value = "fresh")]
         strategy: String,
         #[arg(long)]

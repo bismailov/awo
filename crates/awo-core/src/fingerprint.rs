@@ -42,3 +42,47 @@ pub fn fingerprint_for_dir(root: &Path) -> AwoResult<Fingerprint> {
 
     Ok(Fingerprint { hash, files })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_fingerprint_missing_markers() {
+        let temp = TempDir::new().unwrap();
+        let fp = fingerprint_for_dir(temp.path()).unwrap();
+
+        assert!(
+            fp.hash.is_none(),
+            "expected no hash when no fingerprint files exist"
+        );
+        assert!(fp.files.is_empty());
+    }
+
+    #[test]
+    fn test_fingerprint_with_lockfile() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.lock"), "lock content").unwrap();
+
+        let fp = fingerprint_for_dir(temp.path()).unwrap();
+
+        assert!(
+            fp.hash.is_some(),
+            "expected hash when Cargo.lock is present"
+        );
+        assert_eq!(fp.files, vec!["Cargo.lock"]);
+    }
+
+    #[test]
+    fn test_fingerprint_multiple_files_order() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("package.json"), "pkg").unwrap();
+        fs::write(temp.path().join("yarn.lock"), "yarn").unwrap();
+
+        let fp = fingerprint_for_dir(temp.path()).unwrap();
+
+        assert!(fp.hash.is_some());
+        assert_eq!(fp.files, vec!["yarn.lock", "package.json"]);
+    }
+}

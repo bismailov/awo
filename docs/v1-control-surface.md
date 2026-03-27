@@ -11,6 +11,10 @@ V1 should behave like a workspace operations console with three access patterns:
 
 This means the command model should be primary, and the UI should mostly expose the same actions visually.
 
+The local broker/daemon should also be legible as part of the control surface:
+- `awo daemon status` should distinguish `healthy`, `starting`, `degraded`, and `not running`
+- CLI auto-start may use the daemon automatically, but transport fallback to direct mode should be visible in text-mode operator flows
+
 ## Top-Level Mental Model
 The user should think in this order:
 1. Repository

@@ -35,6 +35,17 @@ See also:
 - [docs/middleware-mode.md](../docs/middleware-mode.md)
 - [docs/subagent-orchestration.md](../docs/subagent-orchestration.md)
 
+## Product Contract Lock (Milestone 0)
+
+The roadmap is now anchored to a local-first product contract:
+
+- slot pooling is **mostly automatic, but transparent**
+- task briefs use **structured fields plus freeform notes**
+- history ownership stays bounded to **audit/debug/reporting needs**
+- remote execution stays **deferred until the local-slot model is proven**
+
+This means the finish line is not "expand into distributed orchestration quickly." The finish line is "make the local broker, local recovery model, and local operator workflows trustworthy enough for daily use."
+
 ## What We Wanted
 
 The project started with a clear V1 goal:
@@ -115,53 +126,79 @@ As the project moves toward public development, keep these repository rules in p
 - contributor-facing docs should not assume private infrastructure or private repositories
 - community-health files (`LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`) should remain accurate as the project evolves
 
-## What Is Still Missing
+## What Is Still Missing Or Not Finalized
 
-The most important remaining work falls into four buckets.
+The most important remaining work falls into six buckets.
 
-### 1. Middleware Maturity
-- Persistence scaling (connection pooling).
-- Daemon lifecycle management (`awod status`, `awod stop`, CLI auto-start).
-- JSON-RPC event bus (push notifications).
+### 1. Broker Maturity
+- production-grade daemon lifecycle and degraded-state handling
+- broker-mode concurrency validation
+- push/subscription-style event delivery for live clients
 
 ### 2. Platform Maturity
-- Windows ConPTY master/slave logic (currently a stub).
+- Windows ConPTY completion and workflow validation
 - Named Pipe transport for Windows daemon.
 
-### 3. Orchestration Intelligence
-- Lead/Worker handoff flows (delegation).
-- Automated context pack generation.
-- WASI sandboxing for adapters.
+### 3. Immutable Task Recovery
+- `task cancel`
+- `task supersede`
+- TUI/CLI flows that preserve history without task edit/delete
 
-### 4. UX & Polish
-- Embedded terminal rendering in TUI.
-- Richer result synthesis (LLM-assisted).
+### 4. Reliability And Test Depth
+- `team_ops`
+- handlers and direct-vs-daemon parity
+- fingerprinting and readiness decisions
+- reconciliation flows
+- broker/event concurrency
+
+### 5. Middleware Enrichment
+- automated context-pack generation
+- shared RPC type cleanup
+- stronger local MCP subscription semantics
+
+### 6. Orchestration Intelligence
+- deeper lead/worker handoff flows
+- richer synthesis and reporting
+- later WASI sandboxing exploration
 
 ## Recommended Next Milestones
 
-### Milestone A: Daemon Lifecycle & Stability
-Goal: make the daemon a production-grade background service.
-- Implement `awod` start/stop/status.
-- Add CLI auto-startup for the daemon.
-- Transition to a database connection pool.
+### Milestone 1: Broker Hardening
+Goal: make the daemon feel like a dependable local broker.
+- harden lifecycle/status/cleanup behavior
+- validate broker-mode concurrency
+- upgrade event delivery for live clients
 
-### Milestone B: Task Handoff & Coordination
-Goal: Move from task tracking to active delegation.
-- Implement `Command::TeamTaskDelegate` to hand off sub-tasks from a Lead slot to a Worker slot.
-- Automate context sharing between delegated slots.
+### Milestone 2: Reliability And Test Closure
+Goal: close the remaining confidence gaps in orchestration-critical paths.
+- deepen `team_ops`, handler, fingerprint, reconciliation, and event tests
+- make manual validation a confirmation step rather than a discovery step
 
-### Milestone C: Windows Completion
-Goal: achieve full platform parity.
-- Finalize ConPTY supervision.
-- Implement Named Pipes for the Windows daemon.
+### Milestone 3: Immutable Task Recovery
+Goal: make immutable tasks practical.
+- add cancel/supersede flows
+- expose them in CLI and TUI without introducing edit/delete
+
+### Milestone 4: Windows Completion
+Goal: achieve honest local parity on Windows.
+- finish ConPTY workflow parity
+- implement Named Pipes for the daemon
+
+### Milestone 5+: Local-First Enrichment
+Goal: deepen local orchestration before any remote expansion.
+- middleware subscriptions and context-pack generation
+- lead/worker handoff depth
+- richer synthesis and reporting
 
 ## Recommended Work Order
 
-1. Finalize daemon lifecycle and auto-start.
-2. Scale the database layer for high concurrency.
-3. Complete the Windows ConPTY implementation.
-4. Implement Lead/Worker handoff logic.
+1. Lock the local-first product contract in durable docs.
+2. Finalize daemon lifecycle, degraded-state handling, and broker validation.
+3. Close the high-value orchestration test gaps.
+4. Implement immutable task recovery.
+5. Complete Windows parity.
+6. Enrich local middleware and orchestration intelligence.
 
 ## Summary
 
-Awo Console has moved from concept to a hardened orchestration substrate. The focus now shifts from "making it work" to "making it scale" as a headless broker for AI agents.
+Awo Console has moved from concept to a strong local orchestration substrate. The focus now shifts from "make the features exist" to "make the local product stable, observable, recoverable, and trustworthy enough to finish."

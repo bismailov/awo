@@ -1,12 +1,16 @@
-use anyhow::{Context, Result};
+mod action_router;
+mod forms;
+mod keymap;
+mod widgets;
+
+use anyhow::Result;
 use awo_core::{
     AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
-    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, RuntimeKind, SessionLaunchMode,
-    SessionSummary, SlotStrategy, SlotSummary, TaskCardState, TeamManifest,
-    TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
+    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, SessionLaunchMode, SessionSummary,
+    SlotSummary, TaskCardState, TeamManifest, TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
 };
 use crossbeam_channel::Sender;
-use crossterm::event::{self, Event as CEvent, KeyCode};
+use crossterm::event::{self, Event as CEvent};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -20,7 +24,7 @@ use std::thread;
 use std::time::Duration;
 use tracing::info;
 
-struct BackgroundResult {
+pub(crate) struct BackgroundResult {
     summary: String,
     events: Vec<DomainEvent>,
     error: Option<String>,
@@ -53,38 +57,42 @@ enum TuiFocus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum InputMode {
+pub(crate) enum InputMode {
     Normal,
     TextInput {
         prompt_label: String,
         buffer: String,
         on_submit: InputAction,
     },
+    Form(forms::FormState),
+    Confirm(forms::ConfirmState),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum InputAction {
+pub(crate) enum InputAction {
     AcquireSlot,
     StartSession,
     SetFilter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TeamDashboardFocus {
-    TeamList,
-    TaskList,
+pub(crate) enum TeamDashboardFocus {
+    Team,
+    Member,
+    Task,
 }
 
 #[derive(Debug)]
-struct TeamDashboardState {
+pub(crate) struct TeamDashboardState {
     pub selected_team_idx: usize,
+    pub selected_member_idx: usize,
     pub selected_task_idx: usize,
     pub teams: Vec<TeamManifest>,
     pub focus: TeamDashboardFocus,
 }
 
 #[derive(Debug)]
-struct TuiState {
+pub(crate) struct TuiState {
     status: String,
     messages: Vec<String>,
     focus: TuiFocus,
@@ -139,9 +147,10 @@ pub fn run_tui() -> Result<()> {
         filter_query: None,
         team_dashboard: TeamDashboardState {
             selected_team_idx: 0,
+            selected_member_idx: 0,
             selected_task_idx: 0,
             teams: Vec::new(),
-            focus: TeamDashboardFocus::TeamList,
+            focus: TeamDashboardFocus::Team,
         },
         last_snapshot: None,
         last_snapshot_time: None,
@@ -181,7 +190,9 @@ pub fn run_tui() -> Result<()> {
             state.last_snapshot_time = Some(std::time::Instant::now());
         }
 
-        let snapshot = state.last_snapshot.as_ref().unwrap().clone();
+        let Some(snapshot) = state.last_snapshot.clone() else {
+            continue;
+        };
         clamp_selection(&mut state, &snapshot);
 
         if state.show_log_panel
@@ -196,415 +207,36 @@ pub fn run_tui() -> Result<()> {
             }
         }
 
+        if state.focus == TuiFocus::TeamDashboard && needs_refresh {
+            refresh_team_dashboard_data(&core, &mut state);
+        }
+
         terminal.draw(|frame| render(frame, &snapshot, &state))?;
 
         if event::poll(Duration::from_millis(200))?
             && let CEvent::Key(key) = event::read()?
+            && matches!(
+                action_router::handle_key_event(
+                    &mut core,
+                    &mut state,
+                    &snapshot,
+                    key.code,
+                    tx.clone()
+                ),
+                action_router::KeyOutcome::Quit
+            )
         {
-            if state.show_help {
-                state.show_help = false;
-                continue;
-            }
-            if let InputMode::TextInput {
-                prompt_label: _,
-                buffer,
-                on_submit,
-            } = &mut state.input_mode
-            {
-                match key.code {
-                    KeyCode::Enter => {
-                        let input = buffer.clone();
-                        let action = on_submit.clone();
-                        state.input_mode = InputMode::Normal;
-                        match action {
-                            InputAction::AcquireSlot => {
-                                if let Some(repo) = selected_repo(&snapshot, &state) {
-                                    state.status = "Working...".to_string();
-                                    state.pending_ops += 1;
-                                    dispatch_in_background(
-                                        Command::SlotAcquire {
-                                            repo_id: repo.id.clone(),
-                                            task_name: input,
-                                            strategy: SlotStrategy::Fresh,
-                                        },
-                                        tx.clone(),
-                                    );
-                                }
-                            }
-                            InputAction::StartSession => {
-                                let (runtime, prompt) = if let Some(colon) = input.find(':') {
-                                    let r = match &input[..colon] {
-                                        "claude" => RuntimeKind::Claude,
-                                        "codex" => RuntimeKind::Codex,
-                                        "gemini" => RuntimeKind::Gemini,
-                                        _ => RuntimeKind::Shell,
-                                    };
-                                    (r, input[colon + 1..].to_string())
-                                } else {
-                                    (RuntimeKind::Shell, input)
-                                };
-                                if let Some(slot) = selected_slot(&snapshot, &state) {
-                                    apply_command(
-                                        &mut core,
-                                        &mut state,
-                                        Command::SessionStart {
-                                            slot_id: slot.id.clone(),
-                                            runtime,
-                                            prompt,
-                                            read_only: false,
-                                            dry_run: false,
-                                            launch_mode: SessionLaunchMode::default_for_environment(
-                                            ),
-                                            attach_context: false,
-                                            timeout_secs: None,
-                                        },
-                                    );
-
-                                    // Let's get the fresh snapshot to see the newly created session
-                                    if let Ok(new_snapshot) = core.snapshot()
-                                        && let Some(session) =
-                                            visible_sessions(&new_snapshot, &state).last()
-                                    {
-                                        fetch_session_log(&mut core, &mut state, &session.id);
-                                        state.log_scroll = u16::MAX;
-                                    }
-                                }
-                            }
-                            InputAction::SetFilter => {
-                                state.filter_query = if input.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(input.trim().to_lowercase())
-                                };
-                            }
-                        }
-                    }
-                    KeyCode::Esc => {
-                        state.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Backspace => {
-                        buffer.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        buffer.push(c);
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('?') => {
-                    state.show_help = !state.show_help;
-                }
-                KeyCode::Char('/') => {
-                    state.input_mode = InputMode::TextInput {
-                        prompt_label: "Filter: ".to_string(),
-                        buffer: String::new(),
-                        on_submit: InputAction::SetFilter,
-                    };
-                }
-                KeyCode::Esc => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        state.focus = TuiFocus::Teams;
-                    } else if state.filter_query.is_some() {
-                        state.filter_query = None;
-                    } else if state.show_log_panel {
-                        state.show_log_panel = false;
-                    }
-                }
-                KeyCode::Tab => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        state.team_dashboard.focus = match state.team_dashboard.focus {
-                            TeamDashboardFocus::TeamList => TeamDashboardFocus::TaskList,
-                            TeamDashboardFocus::TaskList => TeamDashboardFocus::TeamList,
-                        };
-                    } else {
-                        state.focus = match state.focus {
-                            TuiFocus::Repos => TuiFocus::Teams,
-                            TuiFocus::Teams => TuiFocus::Slots,
-                            TuiFocus::Slots => TuiFocus::Sessions,
-                            TuiFocus::Sessions => TuiFocus::Repos,
-                            TuiFocus::TeamDashboard => TuiFocus::Repos,
-                        };
-                    }
-                }
-                KeyCode::BackTab => {
-                    state.focus = match state.focus {
-                        TuiFocus::Repos => TuiFocus::Sessions,
-                        TuiFocus::Teams => TuiFocus::Repos,
-                        TuiFocus::Slots => TuiFocus::Teams,
-                        TuiFocus::Sessions => TuiFocus::Slots,
-                        TuiFocus::TeamDashboard => TuiFocus::Teams,
-                    };
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if state.show_log_panel {
-                        state.log_scroll = state.log_scroll.saturating_sub(1);
-                    } else if state.focus == TuiFocus::TeamDashboard {
-                        match state.team_dashboard.focus {
-                            TeamDashboardFocus::TeamList => {
-                                if state.team_dashboard.selected_team_idx > 0 {
-                                    state.team_dashboard.selected_team_idx -= 1;
-                                    state.team_dashboard.selected_task_idx = 0;
-                                }
-                            }
-                            TeamDashboardFocus::TaskList => {
-                                if state.team_dashboard.selected_task_idx > 0 {
-                                    state.team_dashboard.selected_task_idx -= 1;
-                                }
-                            }
-                        }
-                    } else {
-                        match state.focus {
-                            TuiFocus::Repos => {
-                                if state.selected_repo_index > 0 {
-                                    state.selected_repo_index -= 1;
-                                }
-                            }
-                            TuiFocus::Teams => {
-                                if state.selected_team_index > 0 {
-                                    state.selected_team_index -= 1;
-                                }
-                            }
-                            TuiFocus::Slots => {
-                                if state.selected_slot_index > 0 {
-                                    state.selected_slot_index -= 1;
-                                }
-                            }
-                            TuiFocus::Sessions => {
-                                if state.selected_session_index > 0 {
-                                    state.selected_session_index -= 1;
-                                }
-                            }
-                            TuiFocus::TeamDashboard => {}
-                        }
-                    }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if state.show_log_panel {
-                        state.log_scroll = state.log_scroll.saturating_add(1);
-                    } else if state.focus == TuiFocus::TeamDashboard {
-                        match state.team_dashboard.focus {
-                            TeamDashboardFocus::TeamList => {
-                                if state.team_dashboard.selected_team_idx + 1
-                                    < state.team_dashboard.teams.len()
-                                {
-                                    state.team_dashboard.selected_team_idx += 1;
-                                    state.team_dashboard.selected_task_idx = 0;
-                                }
-                            }
-                            TeamDashboardFocus::TaskList => {
-                                if let Some(team) = state
-                                    .team_dashboard
-                                    .teams
-                                    .get(state.team_dashboard.selected_team_idx)
-                                    && state.team_dashboard.selected_task_idx + 1 < team.tasks.len()
-                                {
-                                    state.team_dashboard.selected_task_idx += 1;
-                                }
-                            }
-                        }
-                    } else {
-                        match state.focus {
-                            TuiFocus::Repos => {
-                                if state.selected_repo_index + 1 < snapshot.registered_repos.len() {
-                                    state.selected_repo_index += 1;
-                                }
-                            }
-                            TuiFocus::Teams => {
-                                if state.selected_team_index + 1
-                                    < visible_teams(&snapshot, &state).len()
-                                {
-                                    state.selected_team_index += 1;
-                                }
-                            }
-                            TuiFocus::Slots => {
-                                if state.selected_slot_index + 1
-                                    < visible_slots(&snapshot, &state).len()
-                                {
-                                    state.selected_slot_index += 1;
-                                }
-                            }
-                            TuiFocus::Sessions => {
-                                if state.selected_session_index + 1
-                                    < visible_sessions(&snapshot, &state).len()
-                                {
-                                    state.selected_session_index += 1;
-                                }
-                            }
-                            TuiFocus::TeamDashboard => {}
-                        }
-                    }
-                }
-                KeyCode::Char('s') => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        let ids = state
-                            .team_dashboard
-                            .teams
-                            .get(state.team_dashboard.selected_team_idx)
-                            .and_then(|team| {
-                                team.tasks
-                                    .get(state.team_dashboard.selected_task_idx)
-                                    .map(|task| (team.team_id.clone(), task.task_id.clone()))
-                            });
-
-                        if let Some((team_id, task_id)) = ids {
-                            start_team_task_explicit(&mut core, &mut state, &team_id, &task_id);
-                        }
-                    } else if let Some(_repo) = selected_repo(&snapshot, &state) {
-                        state.input_mode = InputMode::TextInput {
-                            prompt_label: "Task name: ".to_string(),
-                            buffer: String::new(),
-                            on_submit: InputAction::AcquireSlot,
-                        };
-                    }
-                }
-                KeyCode::Enter => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        if let Some(team) = state
-                            .team_dashboard
-                            .teams
-                            .get(state.team_dashboard.selected_team_idx)
-                            && let Some(task) =
-                                team.tasks.get(state.team_dashboard.selected_task_idx)
-                        {
-                            state.status = format!("Task: {} - {}", task.task_id, task.title);
-                        }
-                    } else if state.focus == TuiFocus::Sessions {
-                        if let Some(session) = selected_session(&snapshot, &state) {
-                            fetch_session_log(&mut core, &mut state, &session.id);
-                        }
-                    } else if let Some(_slot) = selected_slot(&snapshot, &state) {
-                        state.input_mode = InputMode::TextInput {
-                            prompt_label: "Prompt: ".to_string(),
-                            buffer: String::new(),
-                            on_submit: InputAction::StartSession,
-                        };
-                    }
-                }
-                KeyCode::Char('x') => {
-                    if let Some(session) = selected_session(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::SessionCancel {
-                                session_id: session.id.clone(),
-                            },
-                        );
-                    }
-                }
-                KeyCode::Char('X') => {
-                    if let Some(slot) = selected_slot(&snapshot, &state) {
-                        state.status = "Working...".to_string();
-                        state.pending_ops += 1;
-                        dispatch_in_background(
-                            Command::SlotRelease {
-                                slot_id: slot.id.clone(),
-                            },
-                            tx.clone(),
-                        );
-                    }
-                }
-                KeyCode::Char('a') => {
-                    let current_dir = std::env::current_dir()
-                        .context("failed to resolve current working directory")?;
-                    state.status = "Working...".to_string();
-                    state.pending_ops += 1;
-                    dispatch_in_background(Command::RepoAdd { path: current_dir }, tx.clone());
-                }
-                KeyCode::Char('n') => {
-                    apply_command(
-                        &mut core,
-                        &mut state,
-                        Command::NoOp {
-                            label: "manual-noop".to_string(),
-                        },
-                    );
-                }
-                KeyCode::Char('r') => {
-                    if state.show_log_panel {
-                        if let Some(session_id) = state.log_session_id.clone() {
-                            fetch_session_log(&mut core, &mut state, &session_id);
-                            state.log_scroll = u16::MAX;
-                        }
-                    } else {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::ReviewStatus { repo_id: None },
-                        );
-                    }
-                }
-                KeyCode::Char('R') => {
-                    if let Some(team) = selected_team(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::TeamReport {
-                                team_id: team.team_id.clone(),
-                            },
-                        );
-                    }
-                }
-                KeyCode::Char('c') => {
-                    if let Some(repo) = selected_repo(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::ContextDoctor {
-                                repo_id: repo.id.clone(),
-                            },
-                        );
-                    }
-                }
-                KeyCode::Char('d') => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        if let Some(team) = state
-                            .team_dashboard
-                            .teams
-                            .get(state.team_dashboard.selected_team_idx)
-                            && let Some(task) =
-                                team.tasks.get(state.team_dashboard.selected_task_idx)
-                        {
-                            state.status = format!(
-                                "Delegation for {} not yet implemented in TUI",
-                                task.task_id
-                            );
-                        }
-                    } else if let Some(repo) = selected_repo(&snapshot, &state) {
-                        apply_command(
-                            &mut core,
-                            &mut state,
-                            Command::SkillsDoctor {
-                                repo_id: repo.id.clone(),
-                                runtime: None,
-                            },
-                        );
-                    }
-                }
-                KeyCode::Char('T') => {
-                    if state.focus == TuiFocus::TeamDashboard {
-                        state.focus = TuiFocus::Teams;
-                    } else {
-                        refresh_team_dashboard_data(&core, &mut state);
-                        state.focus = TuiFocus::TeamDashboard;
-                    }
-                }
-                KeyCode::Char('t') => {
-                    if let Some(team) = selected_team(&snapshot, &state) {
-                        start_next_team_task(&mut core, &mut state, &team.team_id);
-                    }
-                }
-                _ => {}
-            }
+            break;
         }
     }
 
     Ok(())
 }
 
-fn selected_repo<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a RepoSummary> {
+pub(crate) fn selected_repo<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Option<&'a RepoSummary> {
     let repos = visible_repos(snapshot, state);
     repos
         .get(state.selected_repo_index.min(repos.len().saturating_sub(1)))
@@ -624,7 +256,10 @@ fn visible_repos<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a Rep
         .collect()
 }
 
-fn visible_teams<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a CoreTeamSummary> {
+pub(crate) fn visible_teams<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Vec<&'a CoreTeamSummary> {
     let selected_repo = selected_repo(snapshot, state);
     let q = state.filter_query.as_deref();
     snapshot
@@ -637,12 +272,18 @@ fn visible_teams<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a Cor
         .collect()
 }
 
-fn selected_team<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a CoreTeamSummary> {
+pub(crate) fn selected_team<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Option<&'a CoreTeamSummary> {
     let teams = visible_teams(snapshot, state);
     teams.get(state.selected_team_index).copied()
 }
 
-fn visible_slots<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SlotSummary> {
+pub(crate) fn visible_slots<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Vec<&'a SlotSummary> {
     let selected_repo = selected_repo(snapshot, state);
     let q = state.filter_query.as_deref();
     snapshot
@@ -655,12 +296,18 @@ fn visible_slots<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a Slo
         .collect()
 }
 
-fn selected_slot<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a SlotSummary> {
+pub(crate) fn selected_slot<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Option<&'a SlotSummary> {
     let slots = visible_slots(snapshot, state);
     slots.get(state.selected_slot_index).copied()
 }
 
-fn visible_sessions<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a SessionSummary> {
+pub(crate) fn visible_sessions<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Vec<&'a SessionSummary> {
     let selected_repo = selected_repo(snapshot, state);
     let q = state.filter_query.as_deref();
     snapshot
@@ -679,12 +326,15 @@ fn visible_sessions<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Vec<&'a 
         .collect()
 }
 
-fn selected_session<'a>(snapshot: &'a AppSnapshot, state: &TuiState) -> Option<&'a SessionSummary> {
+pub(crate) fn selected_session<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Option<&'a SessionSummary> {
     let sessions = visible_sessions(snapshot, state);
     sessions.get(state.selected_session_index).copied()
 }
 
-fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
+pub(crate) fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
     let repo_count = visible_repos(snapshot, state).len();
     state.selected_repo_index = if repo_count > 0 {
         state.selected_repo_index.min(repo_count - 1)
@@ -712,9 +362,46 @@ fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
     } else {
         0
     };
+
+    let dashboard_team_count = state.team_dashboard.teams.len();
+    state.team_dashboard.selected_team_idx = if dashboard_team_count > 0 {
+        state
+            .team_dashboard
+            .selected_team_idx
+            .min(dashboard_team_count - 1)
+    } else {
+        0
+    };
+
+    let member_count = state
+        .team_dashboard
+        .teams
+        .get(state.team_dashboard.selected_team_idx)
+        .map(|team| team.members.len() + 1)
+        .unwrap_or(0);
+    state.team_dashboard.selected_member_idx = if member_count > 0 {
+        state
+            .team_dashboard
+            .selected_member_idx
+            .min(member_count - 1)
+    } else {
+        0
+    };
+
+    let task_count = state
+        .team_dashboard
+        .teams
+        .get(state.team_dashboard.selected_team_idx)
+        .map(|team| team.tasks.len())
+        .unwrap_or(0);
+    state.team_dashboard.selected_task_idx = if task_count > 0 {
+        state.team_dashboard.selected_task_idx.min(task_count - 1)
+    } else {
+        0
+    };
 }
 
-fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
+pub(crate) fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
     match core.dispatch(command) {
         Ok(outcome) => {
             state.status = outcome.summary;
@@ -730,7 +417,7 @@ fn apply_command(core: &mut AppCore, state: &mut TuiState, command: Command) {
     }
 }
 
-fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
+pub(crate) fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
     state
         .messages
         .extend(events.into_iter().map(|event| event.to_message()));
@@ -740,7 +427,7 @@ fn append_events(state: &mut TuiState, events: Vec<DomainEvent>) {
     }
 }
 
-fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, session_id: &str) {
+pub(crate) fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, session_id: &str) {
     match core.dispatch(Command::SessionLog {
         session_id: session_id.to_string(),
         lines: Some(100),
@@ -769,7 +456,7 @@ fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, session_id: &str)
     }
 }
 
-fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, team_id: &str) {
+pub(crate) fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, team_id: &str) {
     let manifest = match core.load_team_manifest(team_id) {
         Ok(m) => m,
         Err(err) => {
@@ -823,7 +510,7 @@ fn start_next_team_task(core: &mut AppCore, state: &mut TuiState, team_id: &str)
     }
 }
 
-fn refresh_team_dashboard_data(core: &AppCore, state: &mut TuiState) {
+pub(crate) fn refresh_team_dashboard_data(core: &AppCore, state: &mut TuiState) {
     if let Ok(paths) = awo_core::team::list_team_manifest_paths(core.paths()) {
         let mut teams = Vec::new();
         for path in paths {
@@ -835,7 +522,7 @@ fn refresh_team_dashboard_data(core: &AppCore, state: &mut TuiState) {
     }
 }
 
-fn start_team_task_explicit(
+pub(crate) fn start_team_task_explicit(
     core: &mut AppCore,
     state: &mut TuiState,
     team_id: &str,
@@ -1206,35 +893,25 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     }
 
     // Help overlay
+    if let InputMode::Form(form) = &state.input_mode {
+        widgets::render_form_overlay(frame, form);
+    }
+
+    if let InputMode::Confirm(confirm) = &state.input_mode {
+        widgets::render_confirm_overlay(frame, confirm);
+    }
+
     if state.show_help {
         let area = frame.area();
         let width = 50u16.min(area.width.saturating_sub(4));
-        let height = 16u16.min(area.height.saturating_sub(4));
+        let height = 22u16.min(area.height.saturating_sub(4));
         let help_area = Rect {
             x: (area.width.saturating_sub(width)) / 2,
             y: (area.height.saturating_sub(height)) / 2,
             width,
             height,
         };
-        let help_text = vec![
-            Line::from(""),
-            Line::from("  s       Acquire slot (enter task name)"),
-            Line::from("  /       Filter panels (case-insensitive on IDs/names)"),
-            Line::from("  Enter   Start session / View log"),
-            Line::from("  x       Cancel session"),
-            Line::from("  X       Release slot"),
-            Line::from("  t       Start next team task"),
-            Line::from("  R       Generate team report"),
-            Line::from("  a       Add current dir as repo"),
-            Line::from("  r       Refresh review / Refresh log"),
-            Line::from("  c       Context doctor"),
-            Line::from("  d       Skills doctor"),
-            Line::from("  T       Team Dashboard"),
-            Line::from("  Tab     Next panel"),
-            Line::from("  Esc     Close panel / Cancel input"),
-            Line::from("  q       Quit"),
-            Line::from("  ?       This help"),
-        ];
+        let help_text = keymap::help_lines();
         let help_widget = Paragraph::new(help_text).block(
             Block::default()
                 .borders(Borders::ALL)
@@ -1273,7 +950,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
         })
         .collect();
 
-    let sidebar_border_style = if state.team_dashboard.focus == TeamDashboardFocus::TeamList {
+    let sidebar_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Team {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
@@ -1307,24 +984,50 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
         let member_items: Vec<ListItem> = team
             .members
             .iter()
-            .map(|m| {
+            .enumerate()
+            .map(|(idx, m)| {
                 let slot = m.slot_id.as_deref().unwrap_or("none");
-                ListItem::new(format!("{}: {} (slot: {})", m.member_id, m.role, slot))
+                let selected = state.team_dashboard.focus == TeamDashboardFocus::Member
+                    && state.team_dashboard.selected_member_idx == idx + 1;
+                let style = if selected {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(format!("{}: {} (slot: {})", m.member_id, m.role, slot)).style(style)
             })
             .collect();
         let lead_item = ListItem::new(format!(
             "{} (lead): {}",
             team.lead.member_id, team.lead.role
-        ));
+        ))
+        .style(
+            if state.team_dashboard.focus == TeamDashboardFocus::Member
+                && state.team_dashboard.selected_member_idx == 0
+            {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            },
+        );
         let mut all_members = vec![lead_item];
         all_members.extend(member_items);
 
-        let members_list =
-            List::new(all_members).block(Block::default().borders(Borders::ALL).title("Members"));
+        let members_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Member {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let members_list = List::new(all_members).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Members")
+                .border_style(members_border_style),
+        );
         frame.render_widget(members_list, details_layout[1]);
 
         // Tasks Table
-        let task_border_style = if state.team_dashboard.focus == TeamDashboardFocus::TaskList {
+        let task_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Task {
             Style::default().fg(Color::Yellow)
         } else {
             Style::default()
@@ -1337,7 +1040,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
 
         let rows = team.tasks.iter().enumerate().map(|(idx, task)| {
             let style = if idx == state.team_dashboard.selected_task_idx
-                && state.team_dashboard.focus == TeamDashboardFocus::TaskList
+                && state.team_dashboard.focus == TeamDashboardFocus::Task
             {
                 Style::default().fg(Color::Yellow)
             } else {
@@ -1413,7 +1116,7 @@ fn render_repo_detail(
     runtime_capabilities: &[RuntimeCapabilityDescriptor],
 ) -> Vec<Line<'static>> {
     let Some(repo) = repo else {
-        return vec![Line::from("Press 'a' to add the current directory.")];
+        return vec![Line::from("Press 'a' to add a repository by path.")];
     };
 
     let mut lines = vec![
@@ -1462,7 +1165,9 @@ fn render_repo_detail(
                 team.team_id, team.status, team.open_task_count, team.task_count
             )));
         }
-        lines.push(Line::from("Select a team with h/l for details."));
+        lines.push(Line::from(
+            "Select a team from the Teams panel for details.",
+        ));
     }
 
     lines.push(Line::from("Runtime capabilities:"));
@@ -1487,7 +1192,9 @@ fn render_repo_detail(
 
 fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
     let Some(team) = team else {
-        return vec![Line::from("Use h/l to select a team.")];
+        return vec![Line::from(
+            "Select a team from the Teams panel or press 'c' to create one.",
+        )];
     };
 
     let mut lines = vec![
@@ -1535,9 +1242,13 @@ fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
     lines
 }
 
-fn dispatch_in_background(command: Command, tx: Sender<BackgroundResult>) {
+pub(crate) fn dispatch_in_background(
+    paths: awo_core::app::AppPaths,
+    command: Command,
+    tx: Sender<BackgroundResult>,
+) {
     thread::spawn(move || {
-        let result = match AppCore::bootstrap() {
+        let result = match AppCore::with_dirs(paths.config_dir.clone(), paths.data_dir.clone()) {
             Ok(mut bg_core) => match bg_core.dispatch(command) {
                 Ok(outcome) => BackgroundResult {
                     summary: outcome.summary,
@@ -1620,4 +1331,149 @@ fn format_member_routing(member: &MemberRoutingSummary) -> String {
         ));
     }
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use awo_core::team::{TaskCard, TeamExecutionMode, TeamMember};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn test_member(
+        member_id: &str,
+        role: &str,
+        runtime: Option<&str>,
+        read_only: bool,
+    ) -> TeamMember {
+        TeamMember {
+            member_id: member_id.to_string(),
+            role: role.to_string(),
+            runtime: runtime.map(str::to_string),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        }
+    }
+
+    fn test_task(task_id: &str, owner_id: &str) -> TaskCard {
+        TaskCard {
+            task_id: task_id.to_string(),
+            title: format!("Title for {task_id}"),
+            summary: "Summary".to_string(),
+            owner_id: owner_id.to_string(),
+            runtime: Some("shell".to_string()),
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            deliverable: "Patch".to_string(),
+            verification: Vec::new(),
+            verification_command: None,
+            depends_on: Vec::new(),
+            state: TaskCardState::Todo,
+            result_summary: None,
+            output_log_path: None,
+        }
+    }
+
+    fn base_state() -> TuiState {
+        TuiState {
+            status: String::new(),
+            messages: Vec::new(),
+            focus: TuiFocus::Repos,
+            selected_repo_index: 0,
+            selected_team_index: 0,
+            selected_slot_index: 0,
+            selected_session_index: 0,
+            log_content: None,
+            log_session_id: None,
+            log_path: None,
+            show_log_panel: false,
+            pending_ops: 0,
+            input_mode: InputMode::Normal,
+            show_help: false,
+            log_scroll: 0,
+            filter_query: None,
+            team_dashboard: TeamDashboardState {
+                selected_team_idx: 0,
+                selected_member_idx: 0,
+                selected_task_idx: 0,
+                teams: Vec::new(),
+                focus: TeamDashboardFocus::Team,
+            },
+            last_snapshot: None,
+            last_snapshot_time: None,
+        }
+    }
+
+    fn empty_snapshot() -> AppSnapshot {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("awo-tui-tests-{}-{id}", std::process::id()));
+        let config_dir = root.join("config");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let snapshot = AppCore::with_dirs(config_dir, data_dir)
+            .expect("app core")
+            .snapshot()
+            .expect("snapshot");
+        let _ = std::fs::remove_dir_all(root);
+        snapshot
+    }
+
+    #[test]
+    fn clamp_selection_clamps_dashboard_indexes_after_team_data_changes() {
+        let mut state = base_state();
+        state.team_dashboard.selected_team_idx = 3;
+        state.team_dashboard.selected_member_idx = 4;
+        state.team_dashboard.selected_task_idx = 5;
+        state.team_dashboard.teams = vec![TeamManifest {
+            version: 1,
+            team_id: "alpha".to_string(),
+            repo_id: "repo-1".to_string(),
+            objective: "Ship".to_string(),
+            status: awo_core::TeamStatus::Planning,
+            routing_preferences: None,
+            lead: test_member("lead", "lead", None, true),
+            members: vec![test_member("worker-a", "worker", Some("shell"), false)],
+            tasks: vec![test_task("task-1", "worker-a")],
+        }];
+
+        clamp_selection(&mut state, &empty_snapshot());
+
+        assert_eq!(state.team_dashboard.selected_team_idx, 0);
+        assert_eq!(state.team_dashboard.selected_member_idx, 1);
+        assert_eq!(state.team_dashboard.selected_task_idx, 0);
+    }
+
+    #[test]
+    fn repo_empty_state_describes_path_based_add() {
+        let lines = render_repo_detail(None, &[], &[]);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("repository by path"))
+        );
+    }
+
+    #[test]
+    fn team_empty_state_describes_current_team_controls() {
+        let lines = render_team_detail(None);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Teams panel"))
+        );
+    }
 }

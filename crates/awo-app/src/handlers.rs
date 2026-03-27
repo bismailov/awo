@@ -30,6 +30,10 @@ use awo_core::{
 #[cfg(unix)]
 use awo_core::{DaemonOptions, DaemonServer, DaemonStatus, get_daemon_status, stop_daemon};
 use serde::Serialize;
+#[cfg(unix)]
+use serde_json::json;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +49,8 @@ struct CliBackend {
     core: AppCore,
     #[cfg(unix)]
     daemon: Option<awo_core::DaemonClient>,
+    #[cfg(unix)]
+    notice: Option<String>,
 }
 
 impl CliBackend {
@@ -52,42 +58,14 @@ impl CliBackend {
         let core = AppCore::bootstrap()?;
 
         #[cfg(unix)]
-        let daemon = {
-            if awo_core::daemon_is_running(core.paths()) {
-                match awo_core::DaemonClient::connect(&core.paths().daemon_socket_path()) {
-                    Ok(client) => {
-                        tracing::info!("connected to awod daemon");
-                        Some(client)
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "daemon appears running but connection failed, using direct mode");
-                        None
-                    }
-                }
-            } else {
-                match awo_core::spawn_daemon(core.paths()) {
-                    Ok(pid) => {
-                        tracing::info!(pid, "auto-started awod daemon");
-                        match awo_core::DaemonClient::connect(&core.paths().daemon_socket_path()) {
-                            Ok(client) => Some(client),
-                            Err(error) => {
-                                tracing::warn!(%error, "auto-started daemon but connection failed, using direct mode");
-                                None
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        tracing::debug!(%error, "could not auto-start daemon, using direct mode");
-                        None
-                    }
-                }
-            }
-        };
+        let (daemon, notice) = bootstrap_daemon_transport(core.paths());
 
         Ok(Self {
             core,
             #[cfg(unix)]
             daemon,
+            #[cfg(unix)]
+            notice,
         })
     }
 
@@ -105,6 +83,186 @@ impl CliBackend {
 
     fn core_mut(&mut self) -> &mut AppCore {
         &mut self.core
+    }
+
+    #[cfg(unix)]
+    fn emit_notice(&self, output: OutputMode) {
+        if !output.json
+            && let Some(notice) = &self.notice
+        {
+            eprintln!("Warning: {notice}");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn bootstrap_backend(output: OutputMode) -> Result<CliBackend> {
+    let backend = CliBackend::bootstrap()?;
+    backend.emit_notice(output);
+    Ok(backend)
+}
+
+#[cfg(not(unix))]
+fn bootstrap_backend(_output: OutputMode) -> Result<CliBackend> {
+    CliBackend::bootstrap()
+}
+
+#[cfg(unix)]
+fn bootstrap_daemon_transport(
+    paths: &awo_core::AppPaths,
+) -> (Option<awo_core::DaemonClient>, Option<String>) {
+    match get_daemon_status(paths) {
+        DaemonStatus::Healthy { pid } => match connect_daemon_client(paths) {
+            Ok(client) => {
+                tracing::info!(pid, "connected to healthy awod daemon");
+                (Some(client), None)
+            }
+            Err(error) => {
+                tracing::warn!(%error, pid, "daemon reported healthy but connection failed, using direct mode");
+                (
+                    None,
+                    Some(format!(
+                        "using direct mode because daemon reported healthy (pid {pid}) but connection failed: {error}"
+                    )),
+                )
+            }
+        },
+        DaemonStatus::Starting { pid, .. } => {
+            match wait_for_daemon_client(paths, Duration::from_secs(3)) {
+                Ok(client) => {
+                    tracing::info!(pid, "connected to awod daemon after startup wait");
+                    (Some(client), None)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, pid, "daemon stayed in starting state, using direct mode");
+                    (
+                        None,
+                        Some(format!(
+                            "using direct mode because daemon is still starting (pid {pid}): {error}"
+                        )),
+                    )
+                }
+            }
+        }
+        DaemonStatus::Degraded { pid, issues } => {
+            let issue_summary = format_daemon_issues(issues.as_slice());
+            tracing::warn!(pid, issues = %issue_summary, "daemon is degraded, using direct mode");
+            (
+                None,
+                Some(format!(
+                    "using direct mode because daemon is degraded (pid {pid}, {issue_summary})"
+                )),
+            )
+        }
+        DaemonStatus::NotRunning => match awo_core::spawn_daemon(paths) {
+            Ok(pid) => match connect_daemon_client(paths) {
+                Ok(client) => {
+                    tracing::info!(pid, "auto-started awod daemon");
+                    (Some(client), None)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, pid, "auto-started daemon but connection failed, using direct mode");
+                    (
+                        None,
+                        Some(format!(
+                            "using direct mode because auto-started daemon (pid {pid}) was unreachable: {error}"
+                        )),
+                    )
+                }
+            },
+            Err(error) => {
+                tracing::debug!(%error, "could not auto-start daemon, using direct mode");
+                (
+                    None,
+                    Some(format!(
+                        "using direct mode because daemon auto-start failed: {error}"
+                    )),
+                )
+            }
+        },
+    }
+}
+
+#[cfg(unix)]
+fn connect_daemon_client(paths: &awo_core::AppPaths) -> AwoResult<awo_core::DaemonClient> {
+    awo_core::DaemonClient::connect(&paths.daemon_socket_path())
+}
+
+#[cfg(unix)]
+fn wait_for_daemon_client(
+    paths: &awo_core::AppPaths,
+    timeout: Duration,
+) -> AwoResult<awo_core::DaemonClient> {
+    let start = Instant::now();
+    let interval = Duration::from_millis(100);
+
+    while start.elapsed() < timeout {
+        match get_daemon_status(paths) {
+            DaemonStatus::Healthy { .. } => return connect_daemon_client(paths),
+            DaemonStatus::Starting { .. } => std::thread::sleep(interval),
+            DaemonStatus::Degraded { pid, issues } => {
+                return Err(awo_core::AwoError::supervisor(format!(
+                    "daemon became degraded (pid {pid}, {})",
+                    format_daemon_issues(issues.as_slice())
+                )));
+            }
+            DaemonStatus::NotRunning => {
+                return Err(awo_core::AwoError::supervisor(
+                    "daemon stopped before becoming healthy",
+                ));
+            }
+        }
+    }
+
+    Err(awo_core::AwoError::supervisor(format!(
+        "daemon did not become healthy within {}s",
+        timeout.as_secs()
+    )))
+}
+
+#[cfg(unix)]
+fn format_daemon_issues(issues: &[awo_core::daemon::DaemonHealthIssue]) -> String {
+    issues
+        .iter()
+        .map(|issue| issue.description())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(unix)]
+fn daemon_status_payload(status: &DaemonStatus) -> serde_json::Value {
+    json!({
+        "status": status.state_label(),
+        "running": status.is_running(),
+        "healthy": status.is_healthy(),
+        "pid": status.pid(),
+        "issues": status
+            .issues()
+            .iter()
+            .map(|issue| issue.description())
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[cfg(unix)]
+fn daemon_status_text(status: &DaemonStatus) -> String {
+    match status {
+        DaemonStatus::NotRunning => "not running".to_string(),
+        DaemonStatus::Healthy { pid } => {
+            format!("healthy (pid {pid}, socket accepting connections)")
+        }
+        DaemonStatus::Starting { pid, issues } => {
+            format!(
+                "starting (pid {pid}, {})",
+                format_daemon_issues(issues.as_slice())
+            )
+        }
+        DaemonStatus::Degraded { pid, issues } => {
+            format!(
+                "degraded (pid {pid}, {})",
+                format_daemon_issues(issues.as_slice())
+            )
+        }
     }
 }
 
@@ -221,7 +379,7 @@ Use 'awo help --manual' to view the full project README and manual.
 }
 
 fn run_debug(command: DebugCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let outcome = match command {
         DebugCommand::Noop { label } => backend.dispatch(Command::NoOp { label })?,
     };
@@ -235,7 +393,7 @@ fn run_debug(command: DebugCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let outcome = match command {
         RepoCommand::Add { path } => backend.dispatch(Command::RepoAdd { path: path.into() })?,
         RepoCommand::Clone {
@@ -287,31 +445,9 @@ fn run_daemon(command: DaemonCommand, output: OutputMode) -> Result<()> {
         DaemonCommand::Status => {
             let status = get_daemon_status(paths);
             if output.json {
-                let json = match &status {
-                    DaemonStatus::Running { pid, socket_ok } => serde_json::json!({
-                        "status": "running",
-                        "pid": pid,
-                        "socket_ok": socket_ok
-                    }),
-                    DaemonStatus::NotRunning => serde_json::json!({
-                        "status": "not_running"
-                    }),
-                };
-                print_json_response(&json, None);
+                print_json_response(&daemon_status_payload(&status), None);
             } else {
-                match status {
-                    DaemonStatus::Running { pid, socket_ok } => {
-                        let socket_msg = if socket_ok {
-                            "socket ok"
-                        } else {
-                            "socket not responding"
-                        };
-                        println!("running (pid {}, {})", pid, socket_msg);
-                    }
-                    DaemonStatus::NotRunning => {
-                        println!("not running");
-                    }
-                }
+                println!("{}", daemon_status_text(&status));
             }
             if !status.is_running() {
                 std::process::exit(1);
@@ -323,7 +459,7 @@ fn run_daemon(command: DaemonCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_context(command: ContextCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     match command {
         ContextCommand::Pack { repo_id } => {
             let outcome = backend.dispatch(Command::ContextPack {
@@ -355,7 +491,7 @@ fn run_context(command: ContextCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     match command {
         SkillsCommand::List { repo_id } => {
             let outcome = backend.dispatch(Command::SkillsList {
@@ -464,7 +600,7 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     match command {
         RuntimeCommand::List => {
             let capabilities = all_runtime_capabilities();
@@ -590,7 +726,7 @@ fn handle_runtime_pressure_command(
 }
 
 fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let core = backend.core_mut();
     match command {
         TeamCommand::Init {
@@ -639,8 +775,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 // We'll just print the outcome for now.
             }
         }
-        TeamCommand::List => {
-            let outcome = backend.dispatch(Command::TeamList { repo_id: None })?;
+        TeamCommand::List { repo_id } => {
+            let outcome = backend.dispatch(Command::TeamList { repo_id })?;
             if output.json {
                 print_json_response(&outcome.data, Some(&outcome));
             } else if let Some(data) = &outcome.data {
@@ -957,6 +1093,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 notes,
                 focus_file,
                 auto_start,
+                no_auto_start,
                 strategy,
                 dry_run,
                 launch_mode,
@@ -969,7 +1106,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                             target_member_id,
                             lead_notes: notes,
                             focus_files: focus_file,
-                            auto_start,
+                            auto_start: auto_start && !no_auto_start,
                         },
                         strategy,
                         dry_run,
@@ -1119,7 +1256,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let repo_filter = match &command {
         SlotCommand::List { repo_id } => repo_id.clone(),
         _ => None,
@@ -1162,7 +1299,7 @@ fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let repo_filter = match &command {
         SessionCommand::List { repo_id } => repo_id.clone(),
         _ => None,
@@ -1243,7 +1380,7 @@ fn run_session(command: SessionCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_review(command: ReviewCommand, output: OutputMode) -> Result<()> {
-    let mut backend = CliBackend::bootstrap()?;
+    let mut backend = bootstrap_backend(output)?;
     let repo_filter = match &command {
         ReviewCommand::Status { repo_id } => repo_id.clone(),
     };
@@ -1334,4 +1471,44 @@ fn resolve_routing_context(core: &AppCore, pressure_entries: &[String]) -> Resul
     }
 
     parse_routing_context(pressure_entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_payload_reports_health_fields() {
+        let payload = daemon_status_payload(&DaemonStatus::Degraded {
+            pid: 4242,
+            issues: vec![awo_core::daemon::DaemonHealthIssue::SocketUnreachable],
+        });
+
+        assert_eq!(payload["status"], "degraded");
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["healthy"], false);
+        assert_eq!(payload["pid"], 4242);
+        assert_eq!(
+            payload["issues"].as_array().unwrap(),
+            &vec![serde_json::Value::String(
+                "socket not accepting connections".to_string()
+            )]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_text_distinguishes_starting_and_healthy() {
+        let starting = daemon_status_text(&DaemonStatus::Starting {
+            pid: 100,
+            issues: vec![awo_core::daemon::DaemonHealthIssue::SocketMissing],
+        });
+        assert!(starting.contains("starting"));
+        assert!(starting.contains("socket file missing"));
+
+        let healthy = daemon_status_text(&DaemonStatus::Healthy { pid: 200 });
+        assert!(healthy.contains("healthy"));
+        assert!(healthy.contains("socket accepting connections"));
+    }
 }

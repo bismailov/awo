@@ -35,8 +35,12 @@ impl<'a> CommandRunner<'a> {
                     existing.base_branch = repo.default_base_branch.clone();
                     existing.status = SlotStatus::Active;
                     existing.dirty = false;
+                    existing.fingerprint_status = if repo_fingerprint.hash.is_some() {
+                        FingerprintStatus::Ready
+                    } else {
+                        FingerprintStatus::Missing
+                    };
                     existing.fingerprint_hash = repo_fingerprint.hash.clone();
-                    existing.fingerprint_status = FingerprintStatus::Ready;
                     existing
                 } else {
                     self.create_fresh_slot(FreshSlotOptions {
@@ -127,8 +131,12 @@ impl<'a> CommandRunner<'a> {
             base_branch: options.base_branch.to_string(),
             strategy: options.strategy,
             status: SlotStatus::Active,
+            fingerprint_status: if options.fingerprint_hash.is_some() {
+                FingerprintStatus::Ready
+            } else {
+                FingerprintStatus::Missing
+            },
             fingerprint_hash: options.fingerprint_hash,
-            fingerprint_status: FingerprintStatus::Ready,
             dirty: false,
             created_at: String::new(),
             updated_at: String::new(),

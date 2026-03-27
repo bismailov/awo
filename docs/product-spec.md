@@ -5,6 +5,19 @@ Awo Console is a macOS-centric orchestration tool for parallel AI coding. Its pu
 
 This is not primarily a chatbot shell or IDE. It is a workspace operations product for AI-assisted development.
 
+### 1.1 Final Local Product Contract
+The current finish line for Awo Console is a **local-first orchestration console and broker** that an operator can trust for daily work.
+
+For the local product to count as "done enough" for release-quality use, it should:
+- be daemon-backed by default on supported platforms
+- stay transparent about slot reuse, health, and recovery decisions
+- support local team orchestration and delegation safely
+- treat the TUI as the main operator surface and CLI/MCP as automation surfaces
+- retain enough history for debugging, reports, and audit without becoming a transcript product
+- work honestly on both Unix and Windows
+
+Remote execution is explicitly deferred until the local-slot model is stable, observable, and well-tested.
+
 ## 2. Product Wedge
 Most existing tools focus on one of two layers:
 - session control: run many agents, view transcripts, coordinate prompts
@@ -35,6 +48,7 @@ As more agents participate, standards, constraints, and early decisions get lost
 ## 4. Product Principles
 - Workspace-first: the unit of orchestration is a repo-aware slot, not a chat pane.
 - Warm-path optimized: the common case should be reuse, not rebuild.
+- Pooling mostly automatic, but transparent: slot reuse should usually happen automatically, but the product must show when reuse happened, why it happened, and why it was blocked.
 - Guardrails by default: dangerous workflows should require explicit override.
 - Repo-aware: behavior should be shaped by a repo profile rather than generic assumptions.
 - Context-preserving: every new session should start from the same architectural baseline.
@@ -88,6 +102,24 @@ A runtime instance attached to a slot, including:
 - task brief
 - timing and exit metadata
 
+### Task Brief
+The operator-facing task brief should use a **hybrid model**:
+- structured fields for ownership, scope, verification, routing, dependencies, and lifecycle
+- freeform notes for nuance, operator intent, and situational context
+
+The product should avoid both extremes:
+- not just an unstructured wall of text
+- not a rigid schema that removes operator flexibility
+
+### History Record
+V1/V1.5 history ownership should be intentionally bounded. The product should retain:
+- session metadata
+- log locations
+- task result summaries
+- recent or fetchable logs needed for debugging
+
+The product should not try to become a full transcript archive in this stage.
+
 ### Context Pack
 The durable project memory and standards shared with every session. At minimum:
 - `project.md`
@@ -111,6 +143,8 @@ Shared MCP configuration and server metadata for tools, resources, and prompts.
 
 ### Machine Target
 Local machine or remote execution target that can host slots and sessions.
+
+For the local release track, the only required target is the local machine. Remote execution remains a later expansion after the local broker, recovery model, and platform parity are proven.
 
 ## 7. Primary Jobs To Be Done
 - "Give me a ready workspace for this task."
@@ -147,6 +181,12 @@ Local machine or remote execution target that can host slots and sessions.
 3. Compare dependency fingerprint between current slot state and target branch.
 4. Run bootstrap or skip based on repo profile rules.
 5. Mark slot `active`.
+
+Slot pooling should normally feel automatic to the operator. The UI should surface:
+- whether the slot was fresh, warm, or persistent
+- whether it was reused or newly created
+- why a warm slot was considered eligible
+- why reuse was blocked when the product had to fall back to a fresh slot
 
 ### 8.3 Launch Agent
 1. Pick runtime adapter.
@@ -210,7 +250,7 @@ The product should support:
 - runtime-neutral entrypoint detection
 - portable skill discovery
 - MCP config discovery
-- task brief templates
+- hybrid task brief templates with structured fields plus freeform notes
 - quality gate checklist before launch
 - handoff notes between sessions
 - audit trail for workspace lifecycle changes
@@ -310,6 +350,7 @@ This product should be workspace-first.
 - Inject context files and task briefs
 - Provide list/status/release/refresh actions
 - Warn on dirty slots, stale slots, and high-risk overlap
+- Keep enough session/task history for audit, debugging, and reports
 
 ## 16. V1 Non-Goals
 - Full Git client replacement
@@ -318,6 +359,9 @@ This product should be workspace-first.
 - Team collaboration backend
 - Plugin marketplace
 - Full remote daemon story unless local workflows are already solid
+- Remote worker execution and distributed orchestration
+- Full transcript archival as a product feature
+- Edit-in-place or delete-in-place task mutation
 
 ## 17. Build Sequence
 ### Phase A
@@ -339,9 +383,10 @@ Build user-facing control surface:
 ### Phase D
 Add higher-order features:
 - warm pool auto-refresh
-- remote machine targets
 - richer review surfaces
 - embedded terminal panes
+
+Remote machine targets are intentionally deferred until the local product is stable and release-grade.
 
 ## 18. Key Risks
 - Overbuilding session UI before solving workspace readiness
@@ -350,8 +395,8 @@ Add higher-order features:
 - Hiding too much Git behavior behind abstraction
 - Letting recycle/cleanup flows become destructive
 
-## 19. Open Design Questions
-- Should slot pooling be visible as a first-class concept in the UI, or mostly automatic?
-- Should task briefs be plain text templates, markdown files, or structured YAML plus rendered text?
-- How much of the session transcript should the product own in V1?
-- Should remote execution wait until after the local-slot model is proven?
+## 19. Resolved Product Decisions
+- Slot pooling should be mostly automatic, but transparent.
+- Task briefs should use hybrid structured fields plus freeform notes.
+- Session history ownership should stay bounded to audit/debug/reporting needs.
+- Remote execution should wait until the local-slot model is proven.

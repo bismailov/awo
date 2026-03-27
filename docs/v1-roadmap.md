@@ -1,5 +1,7 @@
 # V1 Roadmap
 
+> Historical baseline: this document captures the original V1 delivery shape. The current finish-line roadmap is the local-first finalization plan in `planning/2026-03-27-master-finalization-plan.md`, which explicitly defers remote execution until the local broker/worktree model is proven.
+
 ## Goal
 Ship a TUI-first V1 that makes parallel AI work safer and faster for local repositories, without getting trapped in UI polish or overbuilt remote features.
 

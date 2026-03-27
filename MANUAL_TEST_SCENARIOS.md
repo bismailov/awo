@@ -65,7 +65,7 @@ echo "test" >> <SLOT_PATH>/README.md
 # 6. Refresh the slot (re-checks fingerprint and dirty state)
 ./target/debug/awo slot refresh <SLOT_ID>
 
-# 7. Release the slot (will FAIL because it's dirty)fccccccccccccccccc
+# 7. Release the slot (should FAIL because it's dirty)
 ./target/debug/awo slot release <SLOT_ID>
 
 # 8. Undo the change and release
@@ -165,36 +165,42 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 
 ## Scenario 5: TUI Dashboard — Interactive Control
 
-**Goal:** Explore the full TUI with live data.
+**Goal:** Use the TUI as the primary control surface for setup and operations.
 
 ```bash
-# 1. Set up some state first (so the TUI has things to show)
-./target/debug/awo repo add .
-./target/debug/awo team init <REPO_ID> tui-demo "Demonstrate TUI features"
-./target/debug/awo team member add tui-demo worker-1 worker --runtime shell
-./target/debug/awo team task add tui-demo task-1 worker-1 \
-  "Build check" "Run cargo build" --deliverable "Build output"
-./target/debug/awo slot acquire <REPO_ID> manual-slot
-
-# 2. Launch the TUI
+# 1. Launch the TUI from a repository you want to register
 ./target/debug/awo
 
-# TUI Keybindings to try:
+# 2. Try the setup flows directly in the TUI:
+#   a           — open the repo-path form (defaults to the current working directory)
+#   Enter       — submit the repo form
+#   Tab         — move to the Teams panel
+#   c           — create a team for the selected repo
+#   T           — open Team Dashboard (full-screen team view)
+#   m           — add a member in Team Dashboard
+#   u           — update the selected member's routing/runtime policy
+#   d           — remove the selected non-lead member (with confirmation)
+#   n           — add a task in Team Dashboard
+#   D           — delegate the selected task
+#   s           — start the selected task in Team Dashboard
+
+# 3. Explore the operational controls:
 #   Tab         — cycle between panels (Repos, Teams, Slots, Sessions)
 #   j/k or ↑/↓  — navigate lists
 #   /           — filter (type to search, Esc to clear)
-#   T           — open Team Dashboard (full-screen team view)
-#   s           — in Team Dashboard: start selected task
-#   Tab         — in Team Dashboard: switch between team list and task list
+#   Enter       — on Slots: start a session prompt; on Sessions: open the log view
+#   Tab         — in Team Dashboard: cycle Teams -> Members -> Tasks
+#   Shift+Tab   — cycle dashboard panes in reverse
+#   x           — cancel the selected session
+#   X           — release the selected slot
 #   r           — refresh review data
 #   ?           — help overlay
 #   Esc         — back / clear filter
 #   q           — quit
 
-# 3. After exploring, clean up
+# 4. After exploring, clean up any created team/slots
 ./target/debug/awo team teardown tui-demo --force
 ./target/debug/awo team delete tui-demo
-./target/debug/awo slot release <SLOT_ID>
 ```
 
 ---
