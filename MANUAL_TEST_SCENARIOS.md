@@ -74,6 +74,27 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 
 # 9. Verify slot is gone
 ./target/debug/awo slot list
+
+# 10. Repeat with a warm slot to verify retention vs deletion
+./target/debug/awo slot acquire <REPO_ID> warm-review --strategy warm
+./target/debug/awo slot list
+./target/debug/awo slot release <WARM_SLOT_ID>
+
+# 11. Warm release should keep the worktree around for reuse until you delete it
+./target/debug/awo slot list
+test -d <WARM_SLOT_PATH>
+
+# 12. Explicitly delete the released warm slot/worktree
+./target/debug/awo slot delete <WARM_SLOT_ID>
+./target/debug/awo slot list
+
+# 13. Recreate a couple of released warm slots, then prune them in one shot
+./target/debug/awo slot acquire <REPO_ID> warm-prune-a --strategy warm
+./target/debug/awo slot acquire <REPO_ID> warm-prune-b --strategy warm
+./target/debug/awo slot release <WARM_PRUNE_A_SLOT_ID>
+./target/debug/awo slot release <WARM_PRUNE_B_SLOT_ID>
+./target/debug/awo slot prune --repo-id <REPO_ID>
+./target/debug/awo slot list
 ```
 
 ---
@@ -120,20 +141,22 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 
 # 2. Add two workers
 ./target/debug/awo team member add audit-team code-reviewer worker \
-  --runtime shell --notes "Reviews code for quality issues"
+  --runtime shell --model local-shell --notes "Reviews code for quality issues"
 
 ./target/debug/awo team member add audit-team doc-reviewer worker \
-  --runtime shell --notes "Reviews documentation completeness"
+  --runtime shell --model local-shell --notes "Reviews documentation completeness"
 
 # 3. Add tasks
 ./target/debug/awo team task add audit-team code-scan code-reviewer \
   "Scan code quality" \
   "Run clippy and check for common issues" \
+  --model local-shell \
   --deliverable "Quality report"
 
 ./target/debug/awo team task add audit-team doc-scan doc-reviewer \
   "Scan documentation" \
   "Check for missing or outdated docs" \
+  --model local-shell \
   --deliverable "Documentation gaps report"
 
 # 4. Show the team manifest
@@ -176,6 +199,7 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 #   Enter       — submit the repo form
 #   Tab         — move to the Teams panel
 #   c           — create a team for the selected repo
+#                 the form now also allows explicit lead runtime/model
 #   T           — open Team Dashboard (full-screen team view)
 #   m           — add a member in Team Dashboard
 #   u           — update the selected member's routing/runtime policy
@@ -183,6 +207,11 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 #   n           — add a task in Team Dashboard
 #   D           — delegate the selected task
 #   s           — start the selected task in Team Dashboard
+#   A           — accept the selected review-ready task card
+#   W           — send the selected task card back for rework
+#   o           — open the selected task-card log
+#   X           — release the selected task-card slot (retain warm / delete fresh)
+#   K           — delete the selected released task-card slot
 
 # 3. Explore the operational controls:
 #   Tab         — cycle between panels (Repos, Teams, Slots, Sessions)
@@ -201,6 +230,39 @@ cd <SLOT_PATH> && git checkout README.md && cd -
 # 4. After exploring, clean up any created team/slots
 ./target/debug/awo team teardown tui-demo --force
 ./target/debug/awo team delete tui-demo
+```
+
+---
+
+## Scenario 5B: Review Closeout — Accept, Rework, Retain, Delete
+
+**Goal:** Close the loop on a completed task card and make an explicit worktree retention decision.
+
+```bash
+# 1. Create a repo/team/task and start the task
+./target/debug/awo repo add .
+./target/debug/awo team init <REPO_ID> closeout-team "Exercise review closeout"
+./target/debug/awo team task add closeout-team task-1 lead \
+  "Review closeout" \
+  "Produce a review-ready result" \
+  --model sonnet \
+  --deliverable "A reviewed patch"
+./target/debug/awo team task start closeout-team task-1 --dry-run
+
+# 2. Open the TUI
+./target/debug/awo
+
+# 3. In the Team Dashboard:
+#   T           — open Team Dashboard
+#   Tab         — focus the Task Cards pane
+#   Enter       — open the selected task-card log when a result session exists
+#   A           — accept the task card and mark it done
+#   X           — release the slot bound to that task card
+#                warm slots are retained for reuse; fresh slots are removed
+#   K           — if the slot was warm and released, delete it explicitly
+
+# 4. Re-run the scenario and choose rework instead:
+#   W           — send the task card back to todo and clear its review summary
 ```
 
 ---
@@ -437,8 +499,10 @@ SESS_ID=$(./target/debug/awo session list | grep $SLOT_ID | awk '{print $1}')
 
 # 2. Verify it appeared in the repo list
 ./target/debug/awo repo list
-# Note the REPO_ID (e.g. anyhow-xxxx) and that root is under
-# ~/Library/Application Support/net.awo.awo/clones/github/dtolnay/anyhow
+# Note the REPO_ID (e.g. anyhow-xxxx) and that root is under the configured clone root.
+# By default this is inside AWO's data dir, but you can override it with:
+#   AWO_CLONES_DIR=/path/to/clones
+#   AWO_WORKTREES_DIR=/path/to/worktrees
 
 # 3. Clone with explicit destination
 ./target/debug/awo repo clone https://github.com/dtolnay/thiserror.git /tmp/thiserror-clone
@@ -456,8 +520,7 @@ SESS_ID=$(./target/debug/awo session list | grep $SLOT_ID | awk '{print $1}')
 ./target/debug/awo repo remove <ANYHOW_REPO_ID>
 ./target/debug/awo repo remove <THISERROR_REPO_ID>
 rm -rf /tmp/thiserror-clone
-# Optionally clean AWO-managed clone:
-# rm -rf ~/Library/Application\ Support/net.awo.awo/clones/github/dtolnay/anyhow
+# Optionally clean the managed clone from your configured clone root.
 ```
 
 ---

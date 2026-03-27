@@ -19,10 +19,12 @@ fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
     let data_dir = temp_dir.path().join("data");
     let logs_dir = data_dir.join("logs");
     let clones_dir = data_dir.join("clones");
+    let worktrees_dir = data_dir.join("worktrees");
     let repos_dir = config_dir.join("repos");
     let teams_dir = config_dir.join("teams");
     fs::create_dir_all(&logs_dir)?;
     fs::create_dir_all(&clones_dir)?;
+    fs::create_dir_all(&worktrees_dir)?;
     fs::create_dir_all(&repos_dir)?;
     fs::create_dir_all(&teams_dir)?;
 
@@ -34,6 +36,7 @@ fn temp_core() -> Result<(tempfile::TempDir, AppCore)> {
             logs_dir,
             repos_dir,
             clones_dir,
+            worktrees_dir,
             teams_dir,
         },
         settings: AppSettings::default(),
@@ -154,6 +157,7 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             summary: "Review the routing behavior.".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: None,
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: true,
@@ -163,6 +167,8 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -254,6 +260,7 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             summary: "printf ok > TEAM_TASK.txt".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -263,6 +270,8 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -327,6 +336,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             summary: "printf ok > TEAM_TASK.txt".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -336,6 +346,8 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -370,6 +382,148 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         .map(|slot| slot.slot_path)
         .context("missing slot summary")?;
     assert!(Path::new(&slot_path).join("TEAM_TASK.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn replace_team_lead_persists_current_lead_pointer() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-lead-replace")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-lead",
+        "Keep orchestration moving",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-lead",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("codex".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: Vec::new(),
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+
+    let manifest = core.replace_team_lead("team-lead", "worker-a")?;
+    assert_eq!(manifest.current_lead_member_id(), "worker-a");
+    assert_eq!(manifest.current_lead_session_id(), None);
+
+    let loaded = core.load_team_manifest("team-lead")?;
+    assert_eq!(loaded.current_lead_member_id(), "worker-a");
+    Ok(())
+}
+
+#[test]
+fn start_team_task_for_current_lead_binds_session_until_reconcile() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    let repo_dir = create_repo(&core.paths().data_dir, "team-lead-session")?;
+    core.dispatch(Command::RepoAdd {
+        path: repo_dir.clone(),
+    })?;
+    let repo_id = core
+        .store
+        .list_repositories()?
+        .into_iter()
+        .next()
+        .map(|repo| repo.id)
+        .context("missing registered repo")?;
+
+    let manifest = starter_team_manifest(
+        &repo_id,
+        "team-lead-session",
+        "Let the lead implement directly",
+        Some("claude"),
+        Some("sonnet"),
+        TeamExecutionMode::ExternalSlots,
+        None,
+        None,
+    );
+    core.save_team_manifest(&manifest)?;
+    core.add_team_member(
+        "team-lead-session",
+        TeamMember {
+            member_id: "worker-a".to_string(),
+            role: "implementer".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["LEAD.txt".to_string()],
+            context_packs: Vec::new(),
+            skills: Vec::new(),
+            notes: None,
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+        },
+    )?;
+    core.replace_team_lead("team-lead-session", "worker-a")?;
+    core.add_team_task(
+        "team-lead-session",
+        TaskCard {
+            task_id: "task-1".to_string(),
+            title: "Lead-owned patch".to_string(),
+            summary: "printf lead > LEAD.txt".to_string(),
+            owner_id: "worker-a".to_string(),
+            runtime: Some("shell".to_string()),
+            model: None,
+            slot_id: None,
+            branch_name: None,
+            read_only: false,
+            write_scope: vec!["LEAD.txt".to_string()],
+            deliverable: "A file".to_string(),
+            verification: vec!["test -f LEAD.txt".to_string()],
+            depends_on: Vec::new(),
+            verification_command: None,
+            result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
+            output_log_path: None,
+            state: TaskCardState::Todo,
+        },
+    )?;
+
+    let (manifest, _slot_outcome, _session_outcome, execution) =
+        core.start_team_task(team_task_start_options("team-lead-session", "task-1"))?;
+    assert_eq!(manifest.current_lead_member_id(), "worker-a");
+    assert_eq!(
+        manifest.current_lead_session_id(),
+        execution.session_id.as_deref()
+    );
+
+    let reconciled = core.load_team_manifest("team-lead-session")?;
+    assert_eq!(reconciled.current_lead_member_id(), "worker-a");
+    assert_eq!(reconciled.current_lead_session_id(), None);
     Ok(())
 }
 
@@ -427,6 +581,7 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
             summary: "printf ok > TEAM_TASK.txt".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: None,
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -436,6 +591,8 @@ fn start_team_task_missing_runtime_fails() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -647,6 +804,27 @@ fn recommend_team_routing_for_task_respects_manifest_defaults() -> Result<()> {
 }
 
 #[test]
+fn task_model_override_wins_over_owner_model_for_execution() -> Result<()> {
+    let (_temp_dir, mut core) = temp_core()?;
+    create_routed_team_task(&mut core, "team-task-model-override")?;
+
+    let mut manifest = core.load_team_manifest("team-task-model-override")?;
+    let task = manifest
+        .task_mut("task-1")
+        .context("missing task for model override")?;
+    task.model = Some("haiku".to_string());
+    core.save_team_manifest(&manifest)?;
+
+    let mut options = team_task_start_options("team-task-model-override", "task-1");
+    options.dry_run = true;
+
+    let (_manifest, _slot_outcome, _session_outcome, execution) = core.start_team_task(options)?;
+    assert_eq!(execution.runtime, "claude");
+    assert_eq!(execution.model.as_deref(), Some("haiku"));
+    Ok(())
+}
+
+#[test]
 fn recommend_team_routing_member_preferences_override_team_defaults() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
     create_routed_team_with_manifest_defaults(
@@ -814,6 +992,7 @@ fn create_team_with_bound_slot(
             summary: "Run reconciliation.".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -823,6 +1002,8 @@ fn create_team_with_bound_slot(
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -846,12 +1027,14 @@ fn create_team_with_bound_slot(
 
 #[test]
 fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
-    let (_temp_dir, mut core) = temp_core()?;
+    let (temp_dir, mut core) = temp_core()?;
     let (repo_id, slot_id) = create_team_with_bound_slot(
         &mut core,
         "team-reconcile-complete",
         "team-reconcile-complete",
     )?;
+    let stdout_path = temp_dir.path().join("reconcile-complete.out.log");
+    fs::write(&stdout_path, "Applied the change and verified it.\n")?;
     core.store.upsert_session(&SessionRecord {
         id: "sess-reconcile-complete".to_string(),
         repo_id,
@@ -863,9 +1046,10 @@ fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
         read_only: false,
         dry_run: false,
         command_line: "sh -lc 'echo done'".to_string(),
-        stdout_path: Some("/tmp/reconcile-complete.out.log".to_string()),
+        stdout_path: Some(stdout_path.display().to_string()),
         stderr_path: Some("/tmp/reconcile-complete.err.log".to_string()),
         exit_code: Some(0),
+        end_reason: Some(crate::runtime::SessionEndReason::Completed),
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -877,6 +1061,14 @@ fn load_team_manifest_reconciles_completed_session_to_review() -> Result<()> {
     assert_eq!(task.state, TaskCardState::Review);
     assert_eq!(manifest.status, crate::team::TeamStatus::Running);
     assert_eq!(task.slot_id.as_deref(), Some(slot_id.as_str()));
+    assert_eq!(
+        task.result_session_id.as_deref(),
+        Some("sess-reconcile-complete")
+    );
+    assert_eq!(
+        task.handoff_note.as_deref(),
+        Some("Applied the change and verified it.")
+    );
     Ok(())
 }
 
@@ -899,6 +1091,7 @@ fn load_team_manifest_reconciles_failed_session_to_blocked() -> Result<()> {
         stdout_path: Some("/tmp/reconcile-failed.out.log".to_string()),
         stderr_path: Some("/tmp/reconcile-failed.err.log".to_string()),
         exit_code: Some(1),
+        end_reason: Some(crate::runtime::SessionEndReason::RuntimeFailure),
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -940,6 +1133,7 @@ fn load_team_manifest_clears_released_slot_bindings() -> Result<()> {
         stdout_path: Some("/tmp/reconcile-release.out.log".to_string()),
         stderr_path: Some("/tmp/reconcile-release.err.log".to_string()),
         exit_code: Some(0),
+        end_reason: Some(crate::runtime::SessionEndReason::Completed),
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -1011,6 +1205,7 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             summary: "Task already finished.".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1020,6 +1215,8 @@ fn archive_team_blocks_active_bound_slot() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Done,
         },
@@ -1100,6 +1297,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             summary: "Task already finished.".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1109,6 +1307,8 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Done,
         },
@@ -1150,6 +1350,7 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
         stdout_path: Some("/tmp/archive-running.out.log".to_string()),
         stderr_path: Some("/tmp/archive-running.err.log".to_string()),
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -1188,6 +1389,7 @@ fn teardown_team_cancels_prepared_sessions_releases_slots_and_resets() -> Result
         stdout_path: Some("/tmp/team-teardown.out.log".to_string()),
         stderr_path: Some("/tmp/team-teardown.err.log".to_string()),
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -1248,6 +1450,7 @@ fn teardown_team_blocks_running_oneshot_sessions() -> Result<()> {
         stdout_path: Some("/tmp/team-teardown-blocked.out.log".to_string()),
         stderr_path: Some("/tmp/team-teardown-blocked.err.log".to_string()),
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -1421,6 +1624,7 @@ fn delegate_team_task_updates_owner_state_and_prompt() -> Result<()> {
             summary: "printf ok > DELEGATED.txt".to_string(),
             owner_id: "lead".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1430,6 +1634,8 @@ fn delegate_team_task_updates_owner_state_and_prompt() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -1515,6 +1721,7 @@ fn delegate_team_task_with_auto_start_false_only_updates_manifest() -> Result<()
             summary: "printf ok > DELEGATED.txt".to_string(),
             owner_id: "lead".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1524,6 +1731,8 @@ fn delegate_team_task_with_auto_start_false_only_updates_manifest() -> Result<()
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -1580,6 +1789,7 @@ fn delegate_team_task_fails_for_unknown_member() -> Result<()> {
             summary: "summary".to_string(),
             owner_id: "lead".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1589,6 +1799,8 @@ fn delegate_team_task_fails_for_unknown_member() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         },
@@ -1661,6 +1873,7 @@ fn delegate_team_task_fails_for_non_todo_task() -> Result<()> {
             summary: "summary".to_string(),
             owner_id: "lead".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1670,6 +1883,8 @@ fn delegate_team_task_fails_for_non_todo_task() -> Result<()> {
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::InProgress,
         },
@@ -1776,6 +1991,7 @@ fn team_task_delegation_flow() -> Result<()> {
             summary: "Work on it".to_string(),
             owner_id: member_a.to_string(),
             runtime: None,
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1786,6 +2002,8 @@ fn team_task_delegation_flow() -> Result<()> {
             depends_on: Vec::new(),
             state: TaskCardState::Todo,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
         },
     )?;
@@ -1855,6 +2073,7 @@ fn team_task_state_transitions() -> Result<()> {
             summary: "Work".to_string(),
             owner_id: "lead".to_string(),
             runtime: None,
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1865,6 +2084,8 @@ fn team_task_state_transitions() -> Result<()> {
             depends_on: Vec::new(),
             state: TaskCardState::Todo,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
         },
     )?;
@@ -1919,6 +2140,7 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
             summary: "summary".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: Some(slot_id.clone()),
             branch_name: None,
             read_only: false,
@@ -1928,6 +2150,8 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
             depends_on: vec![],
             verification_command: Some("true".to_string()),
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::InProgress,
         },
@@ -1947,6 +2171,7 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
         stdout_path: None,
         stderr_path: None,
         exit_code: Some(0),
+        end_reason: Some(crate::runtime::SessionEndReason::Completed),
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -1958,7 +2183,7 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
     assert_eq!(updated_task.state, TaskCardState::Review);
     assert_eq!(
         updated_task.result_summary.as_deref(),
-        Some("Verification passed.")
+        Some("Verification passed. Ready for review.")
     );
 
     Ok(())
@@ -1978,6 +2203,7 @@ fn test_reconcile_failed_verification_blocks() -> Result<()> {
             summary: "summary".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: Some(slot_id.clone()),
             branch_name: None,
             read_only: false,
@@ -1987,6 +2213,8 @@ fn test_reconcile_failed_verification_blocks() -> Result<()> {
             depends_on: vec![],
             verification_command: Some("false".to_string()),
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::InProgress,
         },
@@ -2006,6 +2234,7 @@ fn test_reconcile_failed_verification_blocks() -> Result<()> {
         stdout_path: None,
         stderr_path: None,
         exit_code: Some(0),
+        end_reason: Some(crate::runtime::SessionEndReason::Completed),
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),

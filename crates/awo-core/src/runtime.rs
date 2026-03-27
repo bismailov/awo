@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use strum_macros::{Display, EnumString, IntoStaticStr};
 
 mod supervisor;
@@ -34,6 +35,7 @@ pub struct SessionRecord {
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     pub exit_code: Option<i64>,
+    pub end_reason: Option<SessionEndReason>,
     pub timeout_secs: Option<i64>,
     pub started_at: Option<String>,
     pub created_at: String,
@@ -76,6 +78,17 @@ impl SessionRecord {
     pub fn is_supervised(&self) -> bool {
         self.is_running() && SessionSupervisor::from_session(self).is_some()
     }
+
+    pub fn capacity_status(&self) -> SessionCapacityStatus {
+        match self.end_reason {
+            Some(SessionEndReason::Timeout) => SessionCapacityStatus::TimedOut,
+            Some(SessionEndReason::TokenExhausted) => SessionCapacityStatus::Exhausted,
+            _ => match RuntimeKind::from_str(&self.runtime) {
+                Ok(RuntimeKind::Shell) => SessionCapacityStatus::Unsupported,
+                Ok(_) | Err(_) => SessionCapacityStatus::Unknown,
+            },
+        }
+    }
 }
 
 #[derive(
@@ -108,6 +121,63 @@ impl SessionStatus {
 
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionEndReason {
+    Completed,
+    RuntimeFailure,
+    Timeout,
+    OperatorCancelled,
+    TokenExhausted,
+}
+
+impl SessionEndReason {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionCapacityStatus {
+    Unsupported,
+    Unknown,
+    TimedOut,
+    Exhausted,
+}
+
+impl SessionCapacityStatus {
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
@@ -242,6 +312,7 @@ pub fn prepare_session(request: SessionRunRequest<'_>) -> AwoResult<PreparedSess
             stdout_path: Some(stdout_path.display().to_string()),
             stderr_path: stderr_path.as_ref().map(|path| path.display().to_string()),
             exit_code: None,
+            end_reason: None,
             timeout_secs: request.timeout_secs,
             started_at: None,
             created_at: String::new(),
@@ -332,6 +403,14 @@ pub fn execute_prepared_session(
     };
 
     prepared_session.session.exit_code = output.status.code().map(i64::from);
+    prepared_session.session.end_reason = Some(if output.status.success() {
+        SessionEndReason::Completed
+    } else {
+        infer_failed_end_reason(
+            prepared_session.session.stdout_path.as_deref(),
+            prepared_session.session.stderr_path.as_deref(),
+        )
+    });
     let exit_code = prepared_session.session.exit_code.unwrap_or(-1);
     fs::write(&exit_path, exit_code.to_string())
         .map_err(|source| AwoError::io("write exit-code sidecar", &exit_path, source))?;
@@ -353,8 +432,9 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
         let now = Utc::now();
         let elapsed = now.signed_duration_since(started_at.with_timezone(&Utc));
         if elapsed.num_seconds() >= timeout_secs {
-            cancel_session(paths, session)?;
+            cancel_session_with_reason(paths, session, SessionEndReason::Timeout)?;
             session.status = SessionStatus::Failed;
+            session.end_reason = Some(SessionEndReason::Timeout);
             return Ok(true);
         }
     }
@@ -373,11 +453,16 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
     match supervisor.sync(paths, &session.id)? {
         Some(exit_code) => {
             session.exit_code = Some(exit_code);
-            session.status = if exit_code == 0 {
-                SessionStatus::Completed
+            if exit_code == 0 {
+                session.status = SessionStatus::Completed;
+                session.end_reason = Some(SessionEndReason::Completed);
             } else {
-                SessionStatus::Failed
-            };
+                session.status = SessionStatus::Failed;
+                session.end_reason = Some(infer_failed_end_reason(
+                    session.stdout_path.as_deref(),
+                    session.stderr_path.as_deref(),
+                ));
+            }
             Ok(true)
         }
         None => Ok(false),
@@ -385,6 +470,14 @@ pub fn sync_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<
 }
 
 pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResult<bool> {
+    cancel_session_with_reason(paths, session, SessionEndReason::OperatorCancelled)
+}
+
+fn cancel_session_with_reason(
+    paths: &AppPaths,
+    session: &mut SessionRecord,
+    end_reason: SessionEndReason,
+) -> AwoResult<bool> {
     if session.is_terminal() {
         return Ok(false);
     }
@@ -422,6 +515,7 @@ pub fn cancel_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoResul
     }
 
     session.status = SessionStatus::Cancelled;
+    session.end_reason = Some(end_reason);
     Ok(true)
 }
 
@@ -435,13 +529,22 @@ fn sync_oneshot_session(paths: &AppPaths, session: &mut SessionRecord) -> AwoRes
 
     if let Some(exit_code) = read_exit_code(paths, &session.id)? {
         session.exit_code = Some(exit_code);
-        session.status = if exit_code == 0 {
-            SessionStatus::Completed
+        if exit_code == 0 {
+            session.status = SessionStatus::Completed;
+            session.end_reason = Some(SessionEndReason::Completed);
         } else {
-            SessionStatus::Failed
-        };
+            session.status = SessionStatus::Failed;
+            session.end_reason = Some(infer_failed_end_reason(
+                session.stdout_path.as_deref(),
+                session.stderr_path.as_deref(),
+            ));
+        }
     } else {
         session.status = SessionStatus::Failed;
+        session.end_reason = Some(infer_failed_end_reason(
+            session.stdout_path.as_deref(),
+            session.stderr_path.as_deref(),
+        ));
     }
 
     clear_sidecar_if_exists(&pid_path_for(&paths.logs_dir.join("sessions"), &session.id))?;
@@ -459,5 +562,41 @@ pub fn detect_runtime(runtime: RuntimeKind) -> bool {
 pub fn detect_tmux() -> bool {
     pty_supervision_available()
 }
+
+fn infer_failed_end_reason(
+    stdout_path: Option<&str>,
+    stderr_path: Option<&str>,
+) -> SessionEndReason {
+    let combined = [stdout_path, stderr_path]
+        .into_iter()
+        .flatten()
+        .filter_map(read_log_text)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
+    if looks_like_token_exhaustion(&combined) {
+        SessionEndReason::TokenExhausted
+    } else {
+        SessionEndReason::RuntimeFailure
+    }
+}
+
+fn read_log_text(path: &str) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+fn looks_like_token_exhaustion(text: &str) -> bool {
+    [
+        "out of tokens",
+        "token limit",
+        "tokens exhausted",
+        "context window",
+        "context length",
+        "maximum context length",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
 #[cfg(test)]
 mod tests;

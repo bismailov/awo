@@ -83,6 +83,18 @@ impl AppCore {
         Ok(manifest)
     }
 
+    pub fn replace_team_lead(&self, team_id: &str, member_id: &str) -> AwoResult<TeamManifest> {
+        let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
+        manifest.manifest_mut().promote_current_lead(member_id)?;
+        manifest.save()?;
+        let manifest = manifest.into_manifest();
+        self.store.insert_action(
+            "team_lead_replace",
+            &format!("team_id={} member_id={member_id}", manifest.team_id),
+        )?;
+        Ok(manifest)
+    }
+
     pub fn add_team_task(&self, team_id: &str, task: TaskCard) -> AwoResult<TeamManifest> {
         let task_id = task.task_id.clone();
         let mut manifest = TeamManifestGuard::load(&self.config.paths, team_id)?;
@@ -486,8 +498,10 @@ impl AppCore {
             let primary_runtime: RuntimeKind = primary_runtime_name
                 .parse()
                 .map_err(|_| AwoError::unsupported("runtime", primary_runtime_name))?;
-            let primary_target =
-                crate::routing::RoutingTarget::new(primary_runtime, owner.model.clone());
+            let primary_target = crate::routing::RoutingTarget::new(
+                primary_runtime,
+                task.model.clone().or(owner.model.clone()),
+            );
             let fallback_target = if let Some(fallback_runtime_name) = &owner.fallback_runtime {
                 let fallback_runtime: RuntimeKind =
                     fallback_runtime_name.parse().map_err(|_| {
@@ -704,7 +718,26 @@ impl AppCore {
         );
 
         let manifest = if !dry_run || next_state != TaskCardState::Todo {
-            self.set_team_task_state(&team_id, &task_id, next_state)?
+            let mut manifest = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+            manifest.manifest_mut().clear_task_result(&task_id)?;
+            manifest
+                .manifest_mut()
+                .set_task_state(&task_id, next_state)?;
+            if !dry_run && manifest.manifest().current_lead_member_id() == owner_id {
+                manifest
+                    .manifest_mut()
+                    .bind_current_lead_session(&owner_id, session_id.clone())?;
+            }
+            manifest.save()?;
+            let manifest = manifest.into_manifest();
+            self.store.insert_action(
+                "team_task_state",
+                &format!(
+                    "team_id={} task_id={} state={}",
+                    manifest.team_id, task_id, next_state
+                ),
+            )?;
+            manifest
         } else {
             self.load_team_manifest(&team_id)?
         };

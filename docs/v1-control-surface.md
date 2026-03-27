@@ -38,7 +38,7 @@ Registers a repository and initializes its profile.
 Expected behaviors:
 - validate Git root
 - infer ecosystem hints
-- suggest worktree root
+- honor configured clone/worktree roots and surface them clearly
 - prompt for warm-slot strategy
 - discover context files if present
 
@@ -119,6 +119,27 @@ Checks before release:
 - unpushed commits
 - protected slot status
 
+Behavior:
+- fresh slots are deleted on release
+- warm slots are retained for reuse on release
+
+#### `awo slot delete <slot>`
+Explicitly deletes a released slot record and removes its worktree immediately.
+
+Expected behaviors:
+- refuse active slots
+- refuse slots with pending sessions
+- remove released warm worktrees from disk
+- clean stale local slot state when the worktree is already gone
+
+#### `awo slot prune [--repo-id <repo>]`
+Deletes all released or missing slots in one sweep, primarily for retained warm worktrees that are no longer worth keeping around.
+
+Expected behaviors:
+- scope pruning to one repo when requested
+- skip active or otherwise unsafe slots
+- preserve release-vs-delete as an explicit operator choice before prune is used
+
 #### `awo slot refresh [slot|--all]`
 Refreshes stale warm slots from base branch and reruns bootstrap if needed.
 
@@ -171,6 +192,16 @@ Shows a review-oriented snapshot:
 #### `awo review diff <slot>`
 Opens a diff summary for the slot.
 
+### Team Task-Card Closeout Commands
+#### `awo team task accept <team> <task>`
+Marks a review-ready task card as done while preserving its review summary and leaving slot cleanup explicit.
+
+#### `awo team task rework <team> <task>`
+Sends a reviewed task card back to `todo` and clears the prior review result so the next run starts from a clean review state.
+
+#### `awo team task add <team> <task> ... --runtime <runtime> --model <model>`
+Allows task-card-specific runtime and model overrides so an operator can route one task more cheaply or more aggressively than the owner member's default profile.
+
 #### `awo review overlap [repo]`
 Detects multiple slots modifying risky file classes:
 - lockfiles
@@ -211,7 +242,7 @@ Per-slot operational detail:
 - slot path and branch
 - readiness and fingerprint
 - session attachment
-- actions: start, open terminal, inspect diff, refresh, release
+- actions: start, open terminal, inspect diff, refresh, release, delete
 
 #### Session Detail View
 Minimal in V1:
@@ -219,6 +250,14 @@ Minimal in V1:
 - state
 - transcript/log preview
 - actions: stop, resume, open external terminal, reveal slot
+
+#### Team Dashboard
+Team-local orchestration and closeout surface:
+- mission summary with current lead and review/consolidation counts
+- member roster and lead-promotion controls
+- task-card list with review state and requested runtime/model when set
+- task-card detail with result summary, session outcome, slot path, and cleanup hints
+- actions: start, delegate, accept, rework, open task-card log, release retained slot, delete retained slot
 
 ### Command Palette / Quick Actions
 Useful throughout the TUI:
@@ -251,6 +290,17 @@ Useful throughout the TUI:
 2. Tool shows status: clean, merged, branch pushed.
 3. User confirms release and optional branch deletion.
 4. Slot returns to `idle` or remains protected if persistent.
+
+### Workflow D: Review And Close Out
+1. User opens Team Dashboard and selects a task card in `review`.
+2. Tool shows the result summary, handoff note, session outcome, and slot details.
+3. User opens the task-card log if deeper inspection is needed.
+4. User chooses:
+   - accept: mark the task card `done`
+   - rework: send it back to `todo` and clear the prior review result
+5. User explicitly chooses what happens to the slot:
+   - release: retain warm worktrees for reuse or delete fresh ones
+   - delete: remove the released worktree immediately
 
 ## Recommended V1 UI Bias
 The TUI should prioritize:

@@ -95,7 +95,7 @@ fn initialize_schema_migrates_pascal_enums() -> Result<()> {
     assert_eq!(status, "released");
     assert_eq!(strategy, "warm");
     assert_eq!(fingerprint_status, "ready");
-    assert_eq!(schema_version_at(&db_path)?, 6);
+    assert_eq!(schema_version_at(&db_path)?, 7);
 
     Ok(())
 }
@@ -328,6 +328,7 @@ fn roundtrip_session_crud() -> Result<()> {
         stdout_path: Some("/tmp/stdout.log".to_string()),
         stderr_path: Some("/tmp/stderr.log".to_string()),
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),

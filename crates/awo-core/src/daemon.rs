@@ -705,6 +705,7 @@ mod tests {
             logs_dir: PathBuf::from("/tmp/logs"),
             repos_dir: PathBuf::from("/tmp/repos"),
             clones_dir: PathBuf::from("/tmp/clones"),
+            worktrees_dir: PathBuf::from("/tmp/worktrees"),
             teams_dir: PathBuf::from("/tmp/teams"),
         };
         let options = DaemonOptions::from_paths(&paths);
@@ -722,6 +723,7 @@ mod tests {
             logs_dir: PathBuf::from("/nonexistent/logs"),
             repos_dir: PathBuf::from("/nonexistent/repos"),
             clones_dir: PathBuf::from("/nonexistent/clones"),
+            worktrees_dir: PathBuf::from("/nonexistent/worktrees"),
             teams_dir: PathBuf::from("/nonexistent/teams"),
         };
         assert!(!daemon_is_running(&paths));
@@ -817,6 +819,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 
@@ -850,6 +853,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 
@@ -895,6 +899,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 
@@ -915,6 +920,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 
@@ -949,6 +955,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 
@@ -992,6 +999,7 @@ mod tests {
             logs_dir: temp_dir.path().join("logs"),
             repos_dir: temp_dir.path().join("repos"),
             clones_dir: temp_dir.path().join("clones"),
+            worktrees_dir: temp_dir.path().join("worktrees"),
             teams_dir: temp_dir.path().join("teams"),
         };
 

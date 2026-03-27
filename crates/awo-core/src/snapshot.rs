@@ -7,7 +7,7 @@ use crate::git;
 use crate::platform::current_platform_label;
 use crate::repo::{RegisteredRepo, remote_label};
 use crate::routing::RoutingPreferences;
-use crate::runtime::{SessionRecord, SessionStatus};
+use crate::runtime::{SessionCapacityStatus, SessionEndReason, SessionRecord, SessionStatus};
 use crate::skills::{
     RuntimeSkillRoots, SkillInstallState, SkillRuntime, discover_repo_skills, doctor_repo_skills,
 };
@@ -98,6 +98,7 @@ pub struct AppSnapshot {
     pub logs_dir: String,
     pub repos_dir: String,
     pub clones_dir: String,
+    pub worktrees_dir: String,
     pub teams_dir: String,
     pub registered_repos: Vec<RepoSummary>,
     pub teams: Vec<TeamSummary>,
@@ -157,6 +158,12 @@ pub struct TeamSummary {
     pub lead_fallback_model: Option<String>,
     pub lead_runtime: Option<String>,
     pub lead_model: Option<String>,
+    pub current_lead_member_id: String,
+    pub current_lead_runtime: Option<String>,
+    pub current_lead_model: Option<String>,
+    pub current_lead_session_id: Option<String>,
+    pub current_lead_session_status: Option<SessionStatus>,
+    pub current_lead_attention: Option<String>,
     pub member_routing: Vec<MemberRoutingSummary>,
 }
 
@@ -201,6 +208,8 @@ pub struct SessionSummary {
     pub dry_run: bool,
     pub log_path: Option<String>,
     pub exit_code: Option<i64>,
+    pub end_reason: Option<SessionEndReason>,
+    pub capacity_status: SessionCapacityStatus,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -232,6 +241,10 @@ impl AppSnapshot {
         let repositories = store.list_repositories()?;
         let slots = store.list_slots(None)?;
         let sessions = store.list_sessions(None)?;
+        let sessions_by_id = sessions
+            .iter()
+            .map(|session| (session.id.as_str(), session))
+            .collect::<HashMap<_, _>>();
         let review = build_review_summary(&slots, &sessions, dirty_cache);
         let teams = list_team_manifest_paths(&config.paths)?
             .into_iter()
@@ -246,7 +259,7 @@ impl AppSnapshot {
                     None
                 }
             })
-            .map(TeamSummary::from)
+            .map(|manifest| build_team_summary(manifest, &sessions_by_id))
             .collect::<Vec<_>>();
         let registered_repos = repositories
             .into_iter()
@@ -261,6 +274,7 @@ impl AppSnapshot {
             logs_dir: config.paths.logs_dir.display().to_string(),
             repos_dir: config.paths.repos_dir.display().to_string(),
             clones_dir: config.paths.clones_dir.display().to_string(),
+            worktrees_dir: config.paths.worktrees_dir.display().to_string(),
             teams_dir: config.paths.teams_dir.display().to_string(),
             registered_repos,
             teams,
@@ -427,6 +441,7 @@ fn build_repo_summary(value: RegisteredRepo) -> RepoSummary {
 
 impl From<SessionRecord> for SessionSummary {
     fn from(value: SessionRecord) -> Self {
+        let capacity_status = value.capacity_status();
         Self {
             id: value.id,
             repo_id: value.repo_id,
@@ -438,69 +453,131 @@ impl From<SessionRecord> for SessionSummary {
             dry_run: value.dry_run,
             log_path: value.stdout_path,
             exit_code: value.exit_code,
+            end_reason: value.end_reason,
+            capacity_status,
         }
     }
 }
 
-impl From<TeamManifest> for TeamSummary {
-    fn from(value: TeamManifest) -> Self {
-        let member_count = 1 + value.members.len();
-        let write_member_count = usize::from(!value.lead.read_only)
-            + value
-                .members
-                .iter()
-                .filter(|member| !member.read_only)
-                .count();
-        let task_count = value.tasks.len();
-        let open_task_count = value
-            .tasks
-            .iter()
-            .filter(|task| task.state != TaskCardState::Done)
-            .count();
-        let routing_preferences = value
-            .routing_preferences
-            .as_ref()
-            .map(RoutingPreferencesSummary::from);
-        let member_routing = value
+fn build_team_summary(
+    value: TeamManifest,
+    sessions_by_id: &HashMap<&str, &SessionRecord>,
+) -> TeamSummary {
+    let current_lead = value.current_lead_member().cloned();
+    let current_lead_member_id = value.current_lead_member_id().to_string();
+    let current_lead_session_id = value.current_lead_session_id().map(str::to_string);
+    let current_lead_session = current_lead_session_id
+        .as_deref()
+        .and_then(|session_id| sessions_by_id.get(session_id).copied());
+    let current_lead_session_status = current_lead_session.map(|session| session.status);
+    let current_lead_attention = build_current_lead_attention(&value, current_lead_session);
+    let member_count = 1 + value.members.len();
+    let write_member_count = usize::from(!value.lead.read_only)
+        + value
             .members
             .iter()
-            .filter_map(|member| {
-                let routing_preferences = member
-                    .routing_preferences
-                    .as_ref()
-                    .map(RoutingPreferencesSummary::from);
-                if member.fallback_runtime.is_none()
-                    && member.fallback_model.is_none()
-                    && routing_preferences.is_none()
-                {
-                    None
-                } else {
-                    Some(MemberRoutingSummary {
-                        member_id: member.member_id.clone(),
-                        fallback_runtime: member.fallback_runtime.clone(),
-                        fallback_model: member.fallback_model.clone(),
-                        routing_preferences,
-                    })
-                }
-            })
-            .collect();
+            .filter(|member| !member.read_only)
+            .count();
+    let task_count = value.tasks.len();
+    let open_task_count = value
+        .tasks
+        .iter()
+        .filter(|task| task.state != TaskCardState::Done)
+        .count();
+    let routing_preferences = value
+        .routing_preferences
+        .as_ref()
+        .map(RoutingPreferencesSummary::from);
+    let member_routing = value
+        .members
+        .iter()
+        .filter_map(|member| {
+            let routing_preferences = member
+                .routing_preferences
+                .as_ref()
+                .map(RoutingPreferencesSummary::from);
+            if member.fallback_runtime.is_none()
+                && member.fallback_model.is_none()
+                && routing_preferences.is_none()
+            {
+                None
+            } else {
+                Some(MemberRoutingSummary {
+                    member_id: member.member_id.clone(),
+                    fallback_runtime: member.fallback_runtime.clone(),
+                    fallback_model: member.fallback_model.clone(),
+                    routing_preferences,
+                })
+            }
+        })
+        .collect();
 
-        Self {
-            team_id: value.team_id,
-            repo_id: value.repo_id,
-            status: value.status,
-            objective: value.objective,
-            member_count,
-            write_member_count,
-            task_count,
-            open_task_count,
-            routing_preferences,
-            lead_fallback_runtime: value.lead.fallback_runtime,
-            lead_fallback_model: value.lead.fallback_model,
-            lead_runtime: value.lead.runtime.clone(),
-            lead_model: value.lead.model.clone(),
-            member_routing,
-        }
+    TeamSummary {
+        team_id: value.team_id,
+        repo_id: value.repo_id,
+        status: value.status,
+        objective: value.objective,
+        member_count,
+        write_member_count,
+        task_count,
+        open_task_count,
+        routing_preferences,
+        lead_fallback_runtime: value.lead.fallback_runtime,
+        lead_fallback_model: value.lead.fallback_model,
+        lead_runtime: value.lead.runtime.clone(),
+        lead_model: value.lead.model.clone(),
+        current_lead_member_id,
+        current_lead_runtime: current_lead
+            .as_ref()
+            .and_then(|member| member.runtime.clone()),
+        current_lead_model: current_lead
+            .as_ref()
+            .and_then(|member| member.model.clone()),
+        current_lead_session_id,
+        current_lead_session_status,
+        current_lead_attention,
+        member_routing,
+    }
+}
+
+fn build_current_lead_attention(
+    manifest: &TeamManifest,
+    current_lead_session: Option<&SessionRecord>,
+) -> Option<String> {
+    match current_lead_session {
+        Some(session) => match session.status {
+            SessionStatus::Running => None,
+            SessionStatus::Prepared => {
+                Some("Current lead session is prepared but not yet running.".to_string())
+            }
+            SessionStatus::Completed => Some(
+                "Current lead session completed. Start a new lead task or promote another member if coordination should continue.".to_string(),
+            ),
+            SessionStatus::Failed => Some(match session.end_reason {
+                Some(SessionEndReason::Timeout) => {
+                    "Current lead session timed out. Inspect logs and hand off or restart the lead."
+                        .to_string()
+                }
+                Some(SessionEndReason::TokenExhausted) => {
+                    "Current lead session appears to have exhausted tokens or context budget. Inspect logs and hand off or restart the lead."
+                        .to_string()
+                }
+                _ => "Current lead session failed. This can happen after runtime errors, token exhaustion, or timeout; inspect logs and hand off or restart the lead."
+                    .to_string(),
+            }),
+            SessionStatus::Cancelled => Some(
+                "Current lead session was cancelled. Restart the lead or promote another member before continuing orchestration.".to_string(),
+            ),
+        },
+        None if manifest.current_lead_session_id().is_some() => Some(
+            "Tracked current lead session is missing. Inspect logs and replace or restart the lead session."
+                .to_string(),
+        ),
+        None if matches!(manifest.status, TeamStatus::Running | TeamStatus::Blocked) => Some(
+            "No active current lead session is tracked. Promote another member or start a new lead session if coordination should continue."
+                .to_string(),
+        ),
+        None => None,
     }
 }
 

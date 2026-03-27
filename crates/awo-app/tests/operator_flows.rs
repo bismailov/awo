@@ -362,6 +362,53 @@ fn team_member_add_with_routing_defaults_persists_in_show() {
 }
 
 #[test]
+fn team_member_promote_lead_updates_current_lead_state() {
+    let env = TestEnv::new();
+    let repo_dir = env.create_repo("team-promote-lead");
+    let add_result = env.run(&["repo", "add", repo_dir.to_str().expect("valid repo path")]);
+    let repo_id = add_result["data"][0]["id"]
+        .as_str()
+        .expect("repo id should be a string")
+        .to_string();
+
+    let init_result = env.run(&[
+        "team",
+        "init",
+        &repo_id,
+        "promote-team",
+        "Keep orchestration moving",
+    ]);
+    assert_eq!(init_result["ok"], true);
+
+    let member_result = env.run(&[
+        "team",
+        "member",
+        "add",
+        "promote-team",
+        "worker-a",
+        "implementer",
+        "--runtime",
+        "codex",
+    ]);
+    assert_eq!(member_result["ok"], true);
+
+    let promote_result = env.run(&["team", "member", "promote-lead", "promote-team", "worker-a"]);
+    assert_eq!(
+        promote_result["ok"], true,
+        "promote failed: {promote_result}"
+    );
+    assert_eq!(promote_result["events"][0]["type"], "team_lead_replaced");
+    assert_eq!(promote_result["data"]["current_lead_member_id"], "worker-a");
+
+    let show_result = env.run(&["team", "show", "promote-team"]);
+    assert_eq!(show_result["ok"], true);
+    assert_eq!(show_result["data"]["current_lead_member_id"], "worker-a");
+
+    let text_output = env.run_text(&["team", "show", "promote-team"]);
+    assert!(text_output.contains("current lead: worker-a"));
+}
+
+#[test]
 fn team_recommend_returns_task_recommendation_using_manifest_defaults() {
     let env = TestEnv::new();
     let repo_dir = env.create_repo("team-recommend-routing");

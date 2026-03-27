@@ -6,8 +6,9 @@ mod widgets;
 use anyhow::Result;
 use awo_core::{
     AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, RepoSummary,
-    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, SessionLaunchMode, SessionSummary,
-    SlotSummary, TaskCardState, TeamManifest, TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
+    RoutingPreferencesSummary, RuntimeCapabilityDescriptor, SessionEndReason, SessionLaunchMode,
+    SessionStatus, SessionSummary, SlotSummary, TaskCardState, TeamManifest,
+    TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
 };
 use crossbeam_channel::Sender;
 use crossterm::event::{self, Event as CEvent};
@@ -602,6 +603,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         Line::from(format!("State DB: {}", snapshot.state_db_path)),
         Line::from(format!("Repo Overlays: {}", snapshot.repos_dir)),
         Line::from(format!("Managed Clones: {}", snapshot.clones_dir)),
+        Line::from(format!("Default Worktrees: {}", snapshot.worktrees_dir)),
         Line::from(format!("Team Manifests: {}", snapshot.teams_dir)),
         Line::from(format!(
             "Review: active={} releasable={} dirty={} stale={} pending={} sessions_ok={} sessions_failed={}",
@@ -751,7 +753,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                 " "
             };
             ListItem::new(format!(
-                "{} {} [{}] {} read_only={} dry_run={} exit={}",
+                "{} {} [{}] {} read_only={} dry_run={} exit={} reason={} cap={}",
                 marker,
                 session.runtime,
                 session.slot_id,
@@ -761,7 +763,12 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
                 session
                     .exit_code
                     .map(|code| code.to_string())
-                    .unwrap_or_else(|| "-".to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                session
+                    .end_reason
+                    .map(|reason| reason.as_str())
+                    .unwrap_or("-"),
+                session.capacity_status.as_str(),
             ))
         })
         .collect();
@@ -967,16 +974,18 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
     // Main Area: Team Details
     if let Some(team) = dashboard {
         let details_layout = Layout::vertical([
-            Constraint::Length(3), // Header/Objective
-            Constraint::Length(8), // Members
-            Constraint::Min(10),   // Tasks
-            Constraint::Length(3), // Progress
+            Constraint::Length(7),  // Mission / lead state
+            Constraint::Length(8),  // Members
+            Constraint::Min(9),     // Task cards
+            Constraint::Length(10), // Selected task detail
+            Constraint::Length(3),  // Progress
         ])
         .split(layout[1]);
 
-        // Objective
-        let objective = Paragraph::new(team.objective.clone())
-            .block(Block::default().borders(Borders::ALL).title("Objective"))
+        // Mission
+        let mission_lines = render_dashboard_mission_lines(team, state.last_snapshot.as_ref());
+        let objective = Paragraph::new(mission_lines.join("\n"))
+            .block(Block::default().borders(Borders::ALL).title("Mission"))
             .wrap(Wrap { trim: true });
         frame.render_widget(objective, details_layout[0]);
 
@@ -987,6 +996,11 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             .enumerate()
             .map(|(idx, m)| {
                 let slot = m.slot_id.as_deref().unwrap_or("none");
+                let current = if team.current_lead_member_id() == m.member_id {
+                    " [current]"
+                } else {
+                    ""
+                };
                 let selected = state.team_dashboard.focus == TeamDashboardFocus::Member
                     && state.team_dashboard.selected_member_idx == idx + 1;
                 let style = if selected {
@@ -994,12 +1008,22 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
                 } else {
                     Style::default()
                 };
-                ListItem::new(format!("{}: {} (slot: {})", m.member_id, m.role, slot)).style(style)
+                ListItem::new(format!(
+                    "{}: {}{} (slot: {})",
+                    m.member_id, m.role, current, slot
+                ))
+                .style(style)
             })
             .collect();
         let lead_item = ListItem::new(format!(
-            "{} (lead): {}",
-            team.lead.member_id, team.lead.role
+            "{} (lead): {}{}",
+            team.lead.member_id,
+            team.lead.role,
+            if team.current_lead_member_id() == team.lead.member_id {
+                " [current]"
+            } else {
+                ""
+            }
         ))
         .style(
             if state.team_dashboard.focus == TeamDashboardFocus::Member
@@ -1026,7 +1050,7 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
         );
         frame.render_widget(members_list, details_layout[1]);
 
-        // Tasks Table
+        // Task Card Table
         let task_border_style = if state.team_dashboard.focus == TeamDashboardFocus::Task {
             Style::default().fg(Color::Yellow)
         } else {
@@ -1070,10 +1094,26 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Tasks")
+                .title("Task Cards")
                 .border_style(task_border_style),
         );
         frame.render_widget(task_table, details_layout[2]);
+
+        let task_detail = Paragraph::new(
+            render_dashboard_task_detail_lines(
+                team,
+                state.team_dashboard.selected_task_idx,
+                state.last_snapshot.as_ref(),
+            )
+            .join("\n"),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Task Card Detail"),
+        )
+        .wrap(Wrap { trim: true });
+        frame.render_widget(task_detail, details_layout[3]);
 
         // Progress
         let total_tasks = team.tasks.len();
@@ -1092,8 +1132,11 @@ fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
             .block(Block::default().borders(Borders::ALL).title("Progress"))
             .gauge_style(Style::default().fg(Color::Green))
             .ratio(progress)
-            .label(format!("{}/{} tasks completed", done_tasks, total_tasks));
-        frame.render_widget(gauge, details_layout[3]);
+            .label(format!(
+                "{}/{} task cards completed",
+                done_tasks, total_tasks
+            ));
+        frame.render_widget(gauge, details_layout[4]);
     } else {
         let no_team = Paragraph::new("No team selected or no teams found.")
             .block(Block::default().borders(Borders::ALL));
@@ -1202,7 +1245,7 @@ fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
         Line::from(format!("Objective: {}", team.objective)),
         Line::from(format!("Status: {}", team.status)),
         Line::from(format!(
-            "Open tasks: {} of {}",
+            "Open task cards: {} of {}",
             team.open_task_count, team.task_count
         )),
     ];
@@ -1220,7 +1263,7 @@ fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
         || team.lead_fallback_model.is_some();
     if has_lead {
         lines.push(Line::from(format!(
-            "Lead: runtime={} model={} fallback={}",
+            "Lead profile: runtime={} model={} fallback={}",
             team.lead_runtime.as_deref().unwrap_or("-"),
             team.lead_model.as_deref().unwrap_or("-"),
             format_fallback_target(
@@ -1228,6 +1271,19 @@ fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
                 team.lead_fallback_model.as_deref()
             )
         )));
+    }
+    lines.push(Line::from(format!(
+        "Current lead: {} runtime={} model={} session={} status={}",
+        team.current_lead_member_id,
+        team.current_lead_runtime.as_deref().unwrap_or("-"),
+        team.current_lead_model.as_deref().unwrap_or("-"),
+        team.current_lead_session_id.as_deref().unwrap_or("-"),
+        team.current_lead_session_status
+            .map(|status| status.as_str())
+            .unwrap_or("-")
+    )));
+    if let Some(attention) = &team.current_lead_attention {
+        lines.push(Line::from(format!("Lead attention: {attention}")));
     }
 
     if team.member_routing.is_empty() {
@@ -1239,6 +1295,180 @@ fn render_team_detail(team: Option<&CoreTeamSummary>) -> Vec<Line<'static>> {
         }
     }
 
+    lines
+}
+
+fn render_dashboard_mission_lines(
+    team: &TeamManifest,
+    snapshot: Option<&AppSnapshot>,
+) -> Vec<String> {
+    let mut lines = vec![format!("Objective: {}", team.objective)];
+    let review_queue = team
+        .tasks
+        .iter()
+        .filter(|task| task.state == TaskCardState::Review)
+        .count();
+    let consolidation_queue = team
+        .tasks
+        .iter()
+        .filter(|task| task.state == TaskCardState::Done && task.slot_id.is_some())
+        .count();
+    let session = team.current_lead_session_id().and_then(|session_id| {
+        snapshot.and_then(|snapshot| {
+            snapshot
+                .sessions
+                .iter()
+                .find(|session| session.id == session_id)
+        })
+    });
+    lines.push(format!(
+        "Current lead: {} session={} status={}",
+        team.current_lead_member_id(),
+        team.current_lead_session_id().unwrap_or("-"),
+        session
+            .map(|session| session.status.as_str())
+            .unwrap_or("-")
+    ));
+    lines.push(format!(
+        "Review queue: {} | Consolidation cleanup: {}",
+        review_queue, consolidation_queue
+    ));
+    if let Some(attention) =
+        dashboard_current_lead_attention(team, session, team.current_lead_session_id().is_some())
+    {
+        lines.push(format!("Lead attention: {attention}"));
+    }
+    lines
+}
+
+fn dashboard_current_lead_attention(
+    team: &TeamManifest,
+    session: Option<&SessionSummary>,
+    has_session_id: bool,
+) -> Option<String> {
+    match session.map(|session| session.status) {
+        Some(SessionStatus::Running) => None,
+        Some(SessionStatus::Prepared) => {
+            Some("Current lead session is prepared but not yet running.".to_string())
+        }
+        Some(SessionStatus::Completed) => Some(
+            "Current lead session completed. Start another lead task or promote a replacement if coordination should continue."
+                .to_string(),
+        ),
+        Some(SessionStatus::Failed) => Some(match session.and_then(|session| session.end_reason) {
+            Some(SessionEndReason::Timeout) => {
+                "Current lead session timed out. Inspect logs and hand off or restart the lead."
+                    .to_string()
+            }
+            Some(SessionEndReason::TokenExhausted) => {
+                "Current lead session appears to have exhausted tokens or context budget. Inspect logs and hand off or restart the lead."
+                    .to_string()
+            }
+            _ => "Current lead session failed. This can happen after runtime errors, token exhaustion, or timeout; inspect logs and hand off or restart the lead."
+                .to_string(),
+        }),
+        Some(SessionStatus::Cancelled) => Some(
+            "Current lead session was cancelled. Restart the lead or promote another member before continuing."
+                .to_string(),
+        ),
+        None if has_session_id => Some(
+            "Tracked current lead session is missing. Inspect logs and replace or restart the lead session."
+                .to_string(),
+        ),
+        None if matches!(
+            team.status,
+            awo_core::TeamStatus::Running | awo_core::TeamStatus::Blocked
+        ) => Some(
+            "No active current lead session is tracked. Promote another member or start a new lead session if coordination should continue."
+                .to_string(),
+        ),
+        None => None,
+    }
+}
+
+fn render_dashboard_task_detail_lines(
+    team: &TeamManifest,
+    selected_task_idx: usize,
+    snapshot: Option<&AppSnapshot>,
+) -> Vec<String> {
+    let Some(task) = team.tasks.get(selected_task_idx) else {
+        return vec!["Select a task card to inspect its review state.".to_string()];
+    };
+
+    let session = task.result_session_id.as_deref().and_then(|session_id| {
+        snapshot.and_then(|snapshot| {
+            snapshot
+                .sessions
+                .iter()
+                .find(|session| session.id == session_id)
+        })
+    });
+    let slot = task.slot_id.as_deref().and_then(|slot_id| {
+        snapshot.and_then(|snapshot| snapshot.slots.iter().find(|slot| slot.id == slot_id))
+    });
+
+    let mut lines = vec![
+        format!("Task: {} ({})", task.title, task.task_id),
+        format!("Owner: {} state={}", task.owner_id, task.state),
+    ];
+    if task.runtime.is_some() || task.model.is_some() {
+        lines.push(format!(
+            "Requested runtime/model: {}/{}",
+            task.runtime.as_deref().unwrap_or("-"),
+            task.model.as_deref().unwrap_or("-"),
+        ));
+    }
+    let queue_label = match task.state {
+        TaskCardState::Review => "review queue",
+        TaskCardState::Done if task.slot_id.is_some() => "consolidation cleanup",
+        TaskCardState::Done => "done",
+        TaskCardState::InProgress => "running",
+        TaskCardState::Blocked => "blocked",
+        TaskCardState::Todo => "todo",
+    };
+    lines.push(format!("Queue role: {queue_label}"));
+    if let Some(result_summary) = &task.result_summary {
+        lines.push(format!("Result: {result_summary}"));
+    }
+    if let Some(handoff_note) = &task.handoff_note {
+        lines.push(format!("Handoff: {handoff_note}"));
+    }
+    if let Some(session_id) = &task.result_session_id {
+        lines.push(format!(
+            "Session: {} status={} reason={} cap={}",
+            session_id,
+            session
+                .map(|session| session.status.as_str())
+                .unwrap_or("-"),
+            session
+                .and_then(|session| session.end_reason)
+                .map(SessionEndReason::as_str)
+                .unwrap_or("-"),
+            session
+                .map(|session| session.capacity_status.as_str())
+                .unwrap_or("-"),
+        ));
+    }
+    if let Some(slot_id) = &task.slot_id {
+        lines.push(format!(
+            "Slot: {} status={} strategy={} branch={}",
+            slot_id,
+            slot.map(|slot| slot.status.as_str()).unwrap_or("-"),
+            slot.map(|slot| slot.strategy.as_str()).unwrap_or("-"),
+            task.branch_name.as_deref().unwrap_or("-"),
+        ));
+        if let Some(slot) = slot {
+            lines.push(format!("Path: {}", slot.slot_path));
+            if task.state == TaskCardState::Done {
+                lines.push(
+                    "Cleanup: press X to release/retain-for-reuse, or K to delete now.".to_string(),
+                );
+            }
+        }
+    }
+    if let Some(log_path) = &task.output_log_path {
+        lines.push(format!("Log: {log_path}"));
+    }
     lines
 }
 
@@ -1373,6 +1603,7 @@ mod tests {
             summary: "Summary".to_string(),
             owner_id: owner_id.to_string(),
             runtime: Some("shell".to_string()),
+            model: None,
             slot_id: None,
             branch_name: None,
             read_only: false,
@@ -1383,6 +1614,8 @@ mod tests {
             depends_on: Vec::new(),
             state: TaskCardState::Todo,
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
         }
     }
@@ -1446,6 +1679,8 @@ mod tests {
             status: awo_core::TeamStatus::Planning,
             routing_preferences: None,
             lead: test_member("lead", "lead", None, true),
+            current_lead_member_id: Some("lead".to_string()),
+            current_lead_session_id: None,
             members: vec![test_member("worker-a", "worker", Some("shell"), false)],
             tasks: vec![test_task("task-1", "worker-a")],
         }];
@@ -1474,6 +1709,46 @@ mod tests {
             lines
                 .iter()
                 .any(|line| line.to_string().contains("Teams panel"))
+        );
+    }
+
+    #[test]
+    fn team_detail_includes_current_lead_summary() {
+        let team = CoreTeamSummary {
+            team_id: "alpha".to_string(),
+            repo_id: "repo-1".to_string(),
+            status: awo_core::TeamStatus::Running,
+            objective: "Ship".to_string(),
+            member_count: 2,
+            write_member_count: 1,
+            task_count: 2,
+            open_task_count: 1,
+            routing_preferences: None,
+            lead_fallback_runtime: None,
+            lead_fallback_model: None,
+            lead_runtime: Some("claude".to_string()),
+            lead_model: Some("sonnet".to_string()),
+            current_lead_member_id: "worker-a".to_string(),
+            current_lead_runtime: Some("codex".to_string()),
+            current_lead_model: None,
+            current_lead_session_id: Some("session-1".to_string()),
+            current_lead_session_status: Some(SessionStatus::Failed),
+            current_lead_attention: Some(
+                "Current lead session failed. This can happen after runtime errors, token exhaustion, or timeout; inspect logs and hand off or restart the lead.".to_string(),
+            ),
+            member_routing: Vec::new(),
+        };
+
+        let lines = render_team_detail(Some(&team));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Current lead: worker-a"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Lead attention"))
         );
     }
 }

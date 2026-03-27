@@ -13,6 +13,7 @@ fn sample_paths(root: &Path) -> AppPaths {
         logs_dir: root.join("data/logs"),
         repos_dir: root.join("config/repos"),
         clones_dir: root.join("data/clones"),
+        worktrees_dir: root.join("data/worktrees"),
         teams_dir: root.join("config/teams"),
     }
 }
@@ -40,6 +41,7 @@ fn running_oneshot_session(session_id: &str) -> SessionRecord {
         stdout_path: Some("/tmp/stdout.log".to_string()),
         stderr_path: Some("/tmp/stderr.log".to_string()),
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -62,6 +64,7 @@ fn running_supervised_session(session_id: &str) -> SessionRecord {
         stdout_path: Some(format!("/tmp/{session_id}.pty.log")),
         stderr_path: None,
         exit_code: None,
+        end_reason: None,
         timeout_secs: None,
         started_at: None,
         created_at: String::new(),
@@ -122,6 +125,23 @@ fn sync_oneshot_marks_missing_process_as_failed() -> Result<()> {
 }
 
 #[test]
+fn sync_oneshot_timeout_sets_timeout_end_reason() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    fs::create_dir_all(paths.logs_dir.join("sessions"))?;
+
+    let mut session = running_oneshot_session("sess-timeout");
+    session.timeout_secs = Some(1);
+    session.started_at = Some((Utc::now() - chrono::Duration::seconds(5)).to_rfc3339());
+
+    assert!(sync_session(&paths, &mut session)?);
+    assert_eq!(session.status, SessionStatus::Failed);
+    assert_eq!(session.end_reason, Some(SessionEndReason::Timeout));
+    assert_eq!(session.capacity_status(), SessionCapacityStatus::TimedOut);
+    Ok(())
+}
+
+#[test]
 fn sync_oneshot_uses_exit_sidecar_when_process_is_gone() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let paths = sample_paths(temp_dir.path());
@@ -135,6 +155,30 @@ fn sync_oneshot_uses_exit_sidecar_when_process_is_gone() -> Result<()> {
     assert_eq!(session.status, SessionStatus::Completed);
     assert_eq!(session.exit_code, Some(0));
     assert!(!pid_path(&sessions_dir, "sess-3").exists());
+    Ok(())
+}
+
+#[test]
+fn sync_oneshot_detects_token_exhaustion_from_logs() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(pid_path(&sessions_dir, "sess-tokens"), "999999")?;
+    fs::write(exit_path(&sessions_dir, "sess-tokens"), "1")?;
+
+    let mut session = running_oneshot_session("sess-tokens");
+    let stdout_path = sessions_dir.join("sess-tokens.out.log");
+    fs::write(
+        &stdout_path,
+        "model stopped: out of tokens while generating response\n",
+    )?;
+    session.stdout_path = Some(stdout_path.display().to_string());
+
+    assert!(sync_session(&paths, &mut session)?);
+    assert_eq!(session.status, SessionStatus::Failed);
+    assert_eq!(session.end_reason, Some(SessionEndReason::TokenExhausted));
+    assert_eq!(session.capacity_status(), SessionCapacityStatus::Exhausted);
     Ok(())
 }
 

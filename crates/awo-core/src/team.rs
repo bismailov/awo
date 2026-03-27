@@ -110,6 +110,8 @@ pub struct TaskCard {
     pub summary: String,
     pub owner_id: String,
     pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub slot_id: Option<String>,
     pub branch_name: Option<String>,
     pub read_only: bool,
@@ -122,6 +124,10 @@ pub struct TaskCard {
     pub state: TaskCardState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_log_path: Option<String>,
 }
@@ -187,6 +193,10 @@ pub struct TeamManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing_preferences: Option<crate::routing::RoutingPreferences>,
     pub lead: TeamMember,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lead_member_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lead_session_id: Option<String>,
     pub members: Vec<TeamMember>,
     pub tasks: Vec<TaskCard>,
 }
@@ -215,6 +225,12 @@ impl TeamManifest {
             if !member_ids.insert(member.member_id.as_str()) {
                 awo_bail!("duplicate team member id `{}`", member.member_id);
             }
+        }
+
+        if let Some(member_id) = self.current_lead_member_id.as_deref()
+            && !member_ids.contains(member_id)
+        {
+            awo_bail!("current lead references unknown member `{member_id}`");
         }
 
         let mut task_ids = std::collections::BTreeSet::new();
@@ -247,6 +263,48 @@ impl TeamManifest {
         }
 
         Ok(())
+    }
+
+    pub fn current_lead_member_id(&self) -> &str {
+        self.current_lead_member_id
+            .as_deref()
+            .unwrap_or(self.lead.member_id.as_str())
+    }
+
+    pub fn current_lead_member(&self) -> Option<&TeamMember> {
+        self.member(self.current_lead_member_id())
+    }
+
+    pub fn current_lead_session_id(&self) -> Option<&str> {
+        self.current_lead_session_id.as_deref()
+    }
+
+    pub fn promote_current_lead(&mut self, member_id: &str) -> AwoResult<()> {
+        if self.member(member_id).is_none() {
+            awo_bail!("unknown team member `{member_id}`");
+        }
+        self.current_lead_member_id = Some(member_id.to_string());
+        self.current_lead_session_id = None;
+        self.validate()
+    }
+
+    pub fn bind_current_lead_session(
+        &mut self,
+        member_id: &str,
+        session_id: Option<String>,
+    ) -> AwoResult<()> {
+        if self.current_lead_member_id() != member_id {
+            awo_bail!(
+                "cannot bind current lead session for `{member_id}` because current lead is `{}`",
+                self.current_lead_member_id()
+            );
+        }
+        self.current_lead_session_id = session_id;
+        self.validate()
+    }
+
+    pub fn clear_current_lead_session(&mut self) {
+        self.current_lead_session_id = None;
     }
 
     pub fn member(&self, member_id: &str) -> Option<&TeamMember> {
@@ -316,7 +374,7 @@ impl TeamManifest {
     }
 
     pub fn remove_member(&mut self, member_id: &str) -> AwoResult<()> {
-        if self.lead.member_id == member_id {
+        if self.current_lead_member_id() == member_id {
             awo_bail!("cannot remove the team lead");
         }
         if self.tasks.iter().any(|task| task.owner_id == member_id) {
@@ -352,6 +410,33 @@ impl TeamManifest {
         self.validate()
     }
 
+    pub fn accept_task(&mut self, task_id: &str) -> AwoResult<()> {
+        let task = self
+            .task(task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
+        if task.state != TaskCardState::Review && task.state != TaskCardState::Done {
+            awo_bail!(
+                "task `{}` must be in `review` before it can be accepted",
+                task_id
+            );
+        }
+        self.set_task_state(task_id, TaskCardState::Done)
+    }
+
+    pub fn request_task_rework(&mut self, task_id: &str) -> AwoResult<()> {
+        let task = self
+            .task(task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
+        if task.state != TaskCardState::Review && task.state != TaskCardState::Done {
+            awo_bail!(
+                "task `{}` must be in `review` or `done` before it can be sent back for rework",
+                task_id
+            );
+        }
+        self.clear_task_result(task_id)?;
+        self.set_task_state(task_id, TaskCardState::Todo)
+    }
+
     pub fn assign_member_slot(
         &mut self,
         member_id: &str,
@@ -377,6 +462,17 @@ impl TeamManifest {
             .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
         task.slot_id = Some(slot_id.to_string());
         task.branch_name = Some(branch_name.to_string());
+        self.validate()
+    }
+
+    pub fn clear_task_result(&mut self, task_id: &str) -> AwoResult<()> {
+        let task = self
+            .task_mut(task_id)
+            .ok_or_else(|| AwoError::validation("unknown task `{task_id}`"))?;
+        task.result_summary = None;
+        task.result_session_id = None;
+        task.handoff_note = None;
+        task.output_log_path = None;
         self.validate()
     }
 
@@ -427,8 +523,22 @@ impl TeamManifest {
             format!("Deliverable: {}", task.deliverable),
         ];
 
-        if let Some(runtime) = task.runtime.as_deref().or(owner.runtime.as_deref()) {
-            lines.push(format!("Requested runtime: {runtime}"));
+        if task.runtime.is_some()
+            || owner.runtime.is_some()
+            || task.model.is_some()
+            || owner.model.is_some()
+        {
+            let runtime = task
+                .runtime
+                .as_deref()
+                .or(owner.runtime.as_deref())
+                .unwrap_or("-");
+            let model = task
+                .model
+                .as_deref()
+                .or(owner.model.as_deref())
+                .unwrap_or("-");
+            lines.push(format!("Requested runtime/model: {runtime}/{model}"));
         }
 
         lines.push(if task.read_only || owner.read_only {
@@ -574,6 +684,10 @@ impl TeamManifest {
             task.state = TaskCardState::Todo;
             task.slot_id = None;
             task.branch_name = None;
+            task.result_summary = None;
+            task.result_session_id = None;
+            task.handoff_note = None;
+            task.output_log_path = None;
         }
         self.lead.slot_id = None;
         self.lead.branch_name = None;
@@ -581,6 +695,7 @@ impl TeamManifest {
             member.slot_id = None;
             member.branch_name = None;
         }
+        self.current_lead_session_id = None;
         self.status = TeamStatus::Planning;
     }
 }
@@ -660,6 +775,8 @@ pub fn starter_team_manifest(
             fallback_model: fallback_model.map(str::to_string),
             routing_preferences: None,
         },
+        current_lead_member_id: Some("lead".to_string()),
+        current_lead_session_id: None,
         members: Vec::new(),
         tasks: Vec::new(),
     }

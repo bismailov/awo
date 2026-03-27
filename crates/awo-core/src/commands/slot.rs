@@ -225,6 +225,118 @@ impl<'a> CommandRunner<'a> {
         ))
     }
 
+    pub(super) fn run_slot_delete(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
+        let slot = self
+            .store
+            .get_slot(&slot_id)?
+            .ok_or_else(|| self.slot_not_found_error(&slot_id))?;
+        let slot_path = PathBuf::from(&slot.slot_path);
+        let repo = self.store.get_repository(&slot.repo_id)?;
+        self.sync_runtime_state(Some(&slot.repo_id))?;
+
+        let sessions = self.store.list_sessions_for_slot(&slot.id)?;
+        if sessions.iter().any(|session| !session.is_terminal()) {
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` still has pending session(s); cancel them before deleting the worktree"
+            )));
+        }
+
+        if slot.status == SlotStatus::Active {
+            return Err(AwoError::invalid_state(format!(
+                "slot `{slot_id}` is still active; release it first so retention vs deletion stays explicit"
+            )));
+        }
+
+        let had_worktree = slot_path.exists();
+        if had_worktree {
+            if let Some(repo) = repo.as_ref() {
+                if !git::is_clean(&slot_path)? {
+                    return Err(AwoError::invalid_state(format!(
+                        "slot `{slot_id}` has uncommitted changes; commit or stash them before deleting the worktree"
+                    )));
+                }
+                git::remove_worktree(Path::new(&repo.repo_root), &slot_path)?;
+            } else {
+                fs::remove_dir_all(&slot_path).map_err(|source| {
+                    AwoError::io("delete orphaned worktree", &slot_path, source)
+                })?;
+            }
+        }
+
+        self.store.delete_slot(&slot.id)?;
+        self.store
+            .insert_action("slot_delete", &format!("slot_id={}", slot.id))?;
+
+        Ok(CommandOutcome::with_events(
+            format!("Deleted slot `{}`.", slot.id),
+            vec![
+                DomainEvent::CommandReceived {
+                    command: "slot_delete".to_string(),
+                },
+                DomainEvent::SlotDeleted {
+                    slot_id: slot.id,
+                    had_worktree,
+                },
+            ],
+        ))
+    }
+
+    pub(super) fn run_slot_prune(&mut self, repo_id: Option<String>) -> AwoResult<CommandOutcome> {
+        self.sync_runtime_state(repo_id.as_deref())?;
+        let candidate_ids = self
+            .store
+            .list_slots(repo_id.as_deref())?
+            .into_iter()
+            .filter(|slot| matches!(slot.status, SlotStatus::Released | SlotStatus::Missing))
+            .map(|slot| slot.id)
+            .collect::<Vec<_>>();
+
+        let mut pruned = 0usize;
+        let mut skipped = 0usize;
+        let mut events = vec![DomainEvent::CommandReceived {
+            command: "slot_prune".to_string(),
+        }];
+
+        for slot_id in candidate_ids {
+            match self.run_slot_delete(slot_id) {
+                Ok(outcome) => {
+                    pruned += 1;
+                    events.extend(
+                        outcome
+                            .events
+                            .into_iter()
+                            .filter(|event| !matches!(event, DomainEvent::CommandReceived { .. })),
+                    );
+                }
+                Err(_) => skipped += 1,
+            }
+        }
+
+        self.store.insert_action(
+            "slot_prune",
+            &format!(
+                "repo_id={} pruned={} skipped={}",
+                repo_id.as_deref().unwrap_or("all"),
+                pruned,
+                skipped
+            ),
+        )?;
+        events.push(DomainEvent::SlotPruned {
+            repo_id: repo_id.clone(),
+            pruned,
+            skipped,
+        });
+
+        let scope = repo_id
+            .as_deref()
+            .map(|repo_id| format!(" for repo `{repo_id}`"))
+            .unwrap_or_default();
+        Ok(CommandOutcome::with_events(
+            format!("Pruned {pruned} released slot(s){scope}; skipped {skipped}."),
+            events,
+        ))
+    }
+
     pub(super) fn run_slot_refresh(&mut self, slot_id: String) -> AwoResult<CommandOutcome> {
         let mut slot = self
             .store

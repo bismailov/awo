@@ -231,7 +231,7 @@ pub fn print_sessions(snapshot: &AppSnapshot, repo_filter: Option<&str>) {
     println!("Sessions:");
     for session in sessions {
         println!(
-            "- {} [{}] slot={} status={} read_only={} dry_run={} supervisor={} exit={}",
+            "- {} [{}] slot={} status={} read_only={} dry_run={} supervisor={} exit={} reason={} cap={}",
             session.runtime,
             session.id,
             session.slot_id,
@@ -242,7 +242,12 @@ pub fn print_sessions(snapshot: &AppSnapshot, repo_filter: Option<&str>) {
             session
                 .exit_code
                 .map(|code| code.to_string())
-                .unwrap_or_else(|| "-".to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            session
+                .end_reason
+                .map(|reason| reason.as_str())
+                .unwrap_or("-"),
+            session.capacity_status.as_str(),
         );
         if let Some(log_path) = &session.log_path {
             println!("  log={log_path}");
@@ -294,11 +299,13 @@ pub fn print_runtime_capabilities(capabilities: &[RuntimeCapabilityDescriptor]) 
     println!("Runtime capabilities:");
     for capability in capabilities {
         println!(
-            "- {} ({}) tier={} limit={} launch={} subagents={} teams={} skills={}",
+            "- {} ({}) tier={} limit={} usage={} capacity={} launch={} subagents={} teams={} skills={}",
             capability.display_name,
             capability.runtime,
             capability.cost_tier.as_str(),
             capability.limit_profile.as_str(),
+            capability.usage_reporting.as_str(),
+            capability.capacity_reporting.as_str(),
             capability.default_launch_mode,
             capability.inline_subagents.as_str(),
             capability.multi_session_teams.as_str(),
@@ -488,6 +495,19 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
     } else {
         println!("- lead skills: {}", manifest.lead.skills.join(", "));
     }
+    println!(
+        "- current lead: {} runtime={} model={} session={}",
+        manifest.current_lead_member_id(),
+        manifest
+            .current_lead_member()
+            .and_then(|member| member.runtime.as_deref())
+            .unwrap_or("-"),
+        manifest
+            .current_lead_member()
+            .and_then(|member| member.model.as_deref())
+            .unwrap_or("-"),
+        manifest.current_lead_session_id().unwrap_or("-"),
+    );
 
     if manifest.members.is_empty() {
         println!("- members: none");
@@ -538,6 +558,13 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
                 "  - {} owner={} state={} deliverable={}",
                 task.title, task.owner_id, task.state, task.deliverable
             );
+            if task.runtime.is_some() || task.model.is_some() {
+                println!(
+                    "    requested={} model={}",
+                    task.runtime.as_deref().unwrap_or("-"),
+                    task.model.as_deref().unwrap_or("-")
+                );
+            }
             println!(
                 "    scope={} verify={}",
                 if task.write_scope.is_empty() {
@@ -551,6 +578,18 @@ pub fn print_team_manifest(manifest: &TeamManifest) {
                     task.verification.join(", ")
                 }
             );
+            if let Some(result_session_id) = &task.result_session_id {
+                println!("    result_session={result_session_id}");
+            }
+            if let Some(result_summary) = &task.result_summary {
+                println!("    result={result_summary}");
+            }
+            if let Some(handoff_note) = &task.handoff_note {
+                println!("    handoff={handoff_note}");
+            }
+            if let Some(output_log_path) = &task.output_log_path {
+                println!("    log={output_log_path}");
+            }
         }
     }
 }

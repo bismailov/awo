@@ -40,6 +40,7 @@ impl TestHarness {
                     logs_dir,
                     repos_dir,
                     clones_dir,
+                    worktrees_dir: data_dir.join("worktrees"),
                     teams_dir,
                 },
                 settings: AppSettings::default(),
@@ -342,6 +343,110 @@ fn deleting_terminal_session_removes_it_from_state() -> Result<()> {
             .all(|session| session.id != session_id)
     );
 
+    Ok(())
+}
+
+#[test]
+fn deleting_released_warm_slot_removes_worktree_and_state() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("delete-slot")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id,
+        task_name: "cleanup me".to_string(),
+        strategy: SlotStrategy::Warm,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.task_name == "cleanup me")
+        .context("missing cleanup slot")?;
+
+    core.dispatch(Command::SlotRelease {
+        slot_id: slot.id.clone(),
+    })?;
+    assert!(Path::new(&slot.slot_path).exists());
+
+    core.dispatch(Command::SlotDelete {
+        slot_id: slot.id.clone(),
+    })?;
+
+    assert!(
+        core.snapshot()?
+            .slots
+            .into_iter()
+            .all(|candidate| candidate.id != slot.id)
+    );
+    assert!(!Path::new(&slot.slot_path).exists());
+    Ok(())
+}
+
+#[test]
+fn deleting_active_slot_requires_release_first() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("delete-active-slot")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id,
+        task_name: "still active".to_string(),
+        strategy: SlotStrategy::Warm,
+    })?;
+    let slot = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .find(|slot| slot.task_name == "still active")
+        .context("missing slot")?;
+
+    let error = core
+        .dispatch(Command::SlotDelete {
+            slot_id: slot.id.clone(),
+        })
+        .expect_err("active slot delete should fail");
+    assert!(error.to_string().contains("release it first"));
+    Ok(())
+}
+
+#[test]
+fn pruning_released_slots_removes_multiple_retained_worktrees() -> Result<()> {
+    let harness = TestHarness::new()?;
+    let repo_id = harness.register_repo(harness.create_repo("prune-slots")?)?;
+    let mut core = harness.core()?;
+
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "keep-one".to_string(),
+        strategy: SlotStrategy::Warm,
+    })?;
+    core.dispatch(Command::SlotAcquire {
+        repo_id: repo_id.clone(),
+        task_name: "keep-two".to_string(),
+        strategy: SlotStrategy::Warm,
+    })?;
+
+    let slots = core
+        .snapshot()?
+        .slots
+        .into_iter()
+        .filter(|slot| slot.repo_id == repo_id)
+        .collect::<Vec<_>>();
+    assert_eq!(slots.len(), 2);
+
+    for slot in &slots {
+        core.dispatch(Command::SlotRelease {
+            slot_id: slot.id.clone(),
+        })?;
+        assert!(Path::new(&slot.slot_path).exists());
+    }
+
+    let outcome = core.dispatch(Command::SlotPrune {
+        repo_id: Some(repo_id),
+    })?;
+    assert!(outcome.summary.contains("Pruned 2 released slot(s)"));
+    assert!(core.snapshot()?.slots.is_empty());
     Ok(())
 }
 

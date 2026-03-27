@@ -96,6 +96,10 @@ pub enum Command {
     SlotList { repo_id: Option<String> },
     #[serde(rename = "slot.release")]
     SlotRelease { slot_id: String },
+    #[serde(rename = "slot.delete")]
+    SlotDelete { slot_id: String },
+    #[serde(rename = "slot.prune")]
+    SlotPrune { repo_id: Option<String> },
     #[serde(rename = "slot.refresh")]
     SlotRefresh { slot_id: String },
     #[serde(rename = "session.start")]
@@ -142,8 +146,20 @@ pub enum Command {
     },
     #[serde(rename = "team.member.add")]
     TeamMemberAdd { team_id: String, member: TeamMember },
+    #[serde(rename = "team.lead.replace")]
+    TeamLeadReplace { team_id: String, member_id: String },
     #[serde(rename = "team.task.add")]
     TeamTaskAdd { team_id: String, task: TaskCard },
+    #[serde(rename = "team.task.state")]
+    TeamTaskState {
+        team_id: String,
+        task_id: String,
+        state: crate::team::TaskCardState,
+    },
+    #[serde(rename = "team.task.accept")]
+    TeamTaskAccept { team_id: String, task_id: String },
+    #[serde(rename = "team.task.rework")]
+    TeamTaskRework { team_id: String, task_id: String },
     #[serde(rename = "team.task.start")]
     TeamTaskStart { options: TeamTaskStartOptions },
     #[serde(rename = "team.task.delegate")]
@@ -191,6 +207,8 @@ impl Command {
             Self::SlotAcquire { .. } => "slot.acquire",
             Self::SlotList { .. } => "slot.list",
             Self::SlotRelease { .. } => "slot.release",
+            Self::SlotDelete { .. } => "slot.delete",
+            Self::SlotPrune { .. } => "slot.prune",
             Self::SlotRefresh { .. } => "slot.refresh",
             Self::SessionStart { .. } => "session.start",
             Self::SessionList { .. } => "session.list",
@@ -202,7 +220,11 @@ impl Command {
             Self::TeamShow { .. } => "team.show",
             Self::TeamInit { .. } => "team.init",
             Self::TeamMemberAdd { .. } => "team.member.add",
+            Self::TeamLeadReplace { .. } => "team.lead.replace",
             Self::TeamTaskAdd { .. } => "team.task.add",
+            Self::TeamTaskState { .. } => "team.task.state",
+            Self::TeamTaskAccept { .. } => "team.task.accept",
+            Self::TeamTaskRework { .. } => "team.task.rework",
             Self::TeamTaskStart { .. } => "team.task.start",
             Self::TeamTaskDelegate { .. } => "team.task.delegate",
             Self::TeamReset { .. } => "team.reset",
@@ -396,6 +418,8 @@ impl<'a> CommandRunner<'a> {
             } => self.run_slot_acquire(repo_id, task_name, strategy),
             Command::SlotList { repo_id } => self.run_slot_list(repo_id),
             Command::SlotRelease { slot_id } => self.run_slot_release(slot_id),
+            Command::SlotDelete { slot_id } => self.run_slot_delete(slot_id),
+            Command::SlotPrune { repo_id } => self.run_slot_prune(repo_id),
             Command::SlotRefresh { slot_id } => self.run_slot_refresh(slot_id),
             Command::SessionStart {
                 slot_id,
@@ -451,7 +475,21 @@ impl<'a> CommandRunner<'a> {
                 force,
             ),
             Command::TeamMemberAdd { team_id, member } => self.run_team_member_add(team_id, member),
+            Command::TeamLeadReplace { team_id, member_id } => {
+                self.run_team_lead_replace(team_id, member_id)
+            }
             Command::TeamTaskAdd { team_id, task } => self.run_team_task_add(team_id, task),
+            Command::TeamTaskState {
+                team_id,
+                task_id,
+                state,
+            } => self.run_team_task_state(team_id, task_id, state),
+            Command::TeamTaskAccept { team_id, task_id } => {
+                self.run_team_task_accept(team_id, task_id)
+            }
+            Command::TeamTaskRework { team_id, task_id } => {
+                self.run_team_task_rework(team_id, task_id)
+            }
             Command::TeamTaskStart { options } => self.run_team_task_start(options),
             Command::TeamTaskDelegate { options } => self.run_team_task_delegate(options),
             Command::TeamReset { team_id, force } => self.run_team_reset(team_id, force),

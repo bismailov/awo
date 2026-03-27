@@ -150,7 +150,24 @@ pub(crate) fn handle_key_event(
             KeyOutcome::Continue
         }
         KeyCode::Char('X') => {
-            if let Some(slot) = selected_slot(snapshot, state) {
+            if state.focus == TuiFocus::TeamDashboard
+                && state.team_dashboard.focus == TeamDashboardFocus::Task
+            {
+                if let Some(slot_id) =
+                    selected_dashboard_task(state).and_then(|task| task.slot_id.clone())
+                {
+                    state.status = "Working...".to_string();
+                    state.pending_ops += 1;
+                    dispatch_in_background(
+                        core.paths().clone(),
+                        Command::SlotRelease { slot_id },
+                        tx,
+                    );
+                } else {
+                    state.status =
+                        "Error: selected task card has no bound slot to release.".to_string();
+                }
+            } else if let Some(slot) = selected_slot(snapshot, state) {
                 state.status = "Working...".to_string();
                 state.pending_ops += 1;
                 dispatch_in_background(
@@ -242,9 +259,41 @@ pub(crate) fn handle_key_event(
             }
             KeyOutcome::Continue
         }
+        KeyCode::Char('A') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_task_accept_confirm(state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('W') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_task_rework_confirm(state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('o') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_selected_task_log(core, state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('K') => {
+            if state.focus == TuiFocus::TeamDashboard {
+                open_slot_delete_confirm(state);
+            }
+            KeyOutcome::Continue
+        }
         KeyCode::Char('m') => {
             if state.focus == TuiFocus::TeamDashboard {
                 open_member_add_form(state);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('L') => {
+            if state.focus == TuiFocus::TeamDashboard
+                && state.team_dashboard.focus == TeamDashboardFocus::Member
+            {
+                open_promote_lead_confirm(state);
             }
             KeyOutcome::Continue
         }
@@ -455,6 +504,22 @@ fn handle_confirm_key(core: &mut AppCore, state: &mut TuiState, key: KeyCode) {
                         }
                     }
                 }
+                ConfirmAction::PromoteLead { team_id, member_id } => {
+                    apply_command(core, state, Command::TeamLeadReplace { team_id, member_id });
+                    refresh_team_dashboard_data(core, state);
+                }
+                ConfirmAction::AcceptTask { team_id, task_id } => {
+                    apply_command(core, state, Command::TeamTaskAccept { team_id, task_id });
+                    refresh_team_dashboard_data(core, state);
+                }
+                ConfirmAction::ReworkTask { team_id, task_id } => {
+                    apply_command(core, state, Command::TeamTaskRework { team_id, task_id });
+                    refresh_team_dashboard_data(core, state);
+                }
+                ConfirmAction::DeleteSlot { slot_id } => {
+                    apply_command(core, state, Command::SlotDelete { slot_id });
+                    refresh_team_dashboard_data(core, state);
+                }
             }
         }
         _ => {}
@@ -483,6 +548,8 @@ fn submit_form(
             let repo_id = required_value(form, "repo_id", "Repository")?;
             let team_id = required_value(form, "team_id", "Team ID")?;
             let objective = required_value(form, "objective", "Objective")?;
+            let lead_runtime = form.value("lead_runtime").and_then(blank_to_none);
+            let lead_model = form.value("lead_model").and_then(blank_to_none);
             apply_form_command(
                 core,
                 state,
@@ -490,8 +557,8 @@ fn submit_form(
                     team_id,
                     repo_id,
                     objective,
-                    lead_runtime: None,
-                    lead_model: None,
+                    lead_runtime,
+                    lead_model,
                     execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
                     fallback_runtime: None,
                     fallback_model: None,
@@ -566,6 +633,7 @@ fn submit_form(
             let summary = required_value(form, "summary", "Summary")?;
             let deliverable = required_value(form, "deliverable", "Deliverable")?;
             let runtime = form.value("runtime").and_then(blank_to_none);
+            let model = form.value("model").and_then(blank_to_none);
             let read_only = parse_bool(form, "read_only")?;
             let write_scope = form.value("write_scope").map(split_csv).unwrap_or_default();
             let verification = form
@@ -585,6 +653,7 @@ fn submit_form(
                         summary,
                         owner_id,
                         runtime,
+                        model,
                         slot_id: None,
                         branch_name: None,
                         read_only,
@@ -595,6 +664,8 @@ fn submit_form(
                         depends_on,
                         state: TaskCardState::Todo,
                         result_summary: None,
+                        result_session_id: None,
+                        handoff_note: None,
                         output_log_path: None,
                     },
                 },
@@ -775,10 +846,15 @@ fn move_selection_down(state: &mut TuiState, snapshot: &AppSnapshot) {
 fn handle_enter(core: &mut AppCore, state: &mut TuiState, snapshot: &AppSnapshot) {
     if state.focus == TuiFocus::TeamDashboard {
         if state.team_dashboard.focus == TeamDashboardFocus::Task {
-            if let Some(team) = selected_dashboard_team(state)
-                && let Some(task) = team.tasks.get(state.team_dashboard.selected_task_idx)
-            {
-                state.status = format!("Task: {} - {}", task.task_id, task.title);
+            let result_session_id =
+                selected_dashboard_task(state).and_then(|task| task.result_session_id.clone());
+            if let Some(task) = selected_dashboard_task(state) {
+                if let Some(session_id) = result_session_id.as_deref() {
+                    fetch_session_log(core, state, session_id);
+                    state.log_scroll = u16::MAX;
+                } else {
+                    state.status = format!("Task: {} - {}", task.task_id, task.title);
+                }
             }
         } else if state.team_dashboard.focus == TeamDashboardFocus::Member
             && let Some(member) = selected_dashboard_member(state)
@@ -864,6 +940,25 @@ fn open_member_remove_confirm(state: &mut TuiState) {
     ));
 }
 
+fn open_promote_lead_confirm(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(member) = selected_dashboard_member(state) else {
+        state.status = "Error: select a member to promote.".to_string();
+        return;
+    };
+    if team.current_lead_member_id() == member.member_id {
+        state.status = format!("`{}` is already the current lead.", member.member_id);
+        return;
+    }
+    state.input_mode = InputMode::Confirm(ConfirmState::promote_lead(
+        team.team_id.clone(),
+        member.member_id.clone(),
+    ));
+}
+
 fn open_task_add_form(state: &mut TuiState) {
     let Some(team) = selected_dashboard_team(state) else {
         state.status = "Error: select a team in the Team Dashboard first.".to_string();
@@ -883,7 +978,7 @@ fn open_task_delegate_form(state: &mut TuiState) {
         return;
     };
     let Some(task) = team.tasks.get(state.team_dashboard.selected_task_idx) else {
-        state.status = "Error: select a task to delegate.".to_string();
+        state.status = "Error: select a task card to delegate.".to_string();
         return;
     };
     let target_member_ids = dashboard_member_ids(team)
@@ -901,11 +996,58 @@ fn open_task_delegate_form(state: &mut TuiState) {
     ));
 }
 
+fn open_task_accept_confirm(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card to accept.".to_string();
+        return;
+    };
+    state.input_mode = InputMode::Confirm(ConfirmState::accept_task(
+        team.team_id.clone(),
+        task.task_id.clone(),
+    ));
+}
+
+fn open_task_rework_confirm(state: &mut TuiState) {
+    let Some(team) = selected_dashboard_team(state) else {
+        state.status = "Error: select a team in the Team Dashboard first.".to_string();
+        return;
+    };
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card to send back for rework.".to_string();
+        return;
+    };
+    state.input_mode = InputMode::Confirm(ConfirmState::rework_task(
+        team.team_id.clone(),
+        task.task_id.clone(),
+    ));
+}
+
+fn open_slot_delete_confirm(state: &mut TuiState) {
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card first.".to_string();
+        return;
+    };
+    let Some(slot_id) = task.slot_id.clone() else {
+        state.status = "Error: selected task card has no bound slot.".to_string();
+        return;
+    };
+    state.input_mode = InputMode::Confirm(ConfirmState::delete_slot(slot_id));
+}
+
 fn selected_dashboard_team(state: &TuiState) -> Option<&awo_core::TeamManifest> {
     state
         .team_dashboard
         .teams
         .get(state.team_dashboard.selected_team_idx)
+}
+
+fn selected_dashboard_task(state: &TuiState) -> Option<&TaskCard> {
+    let team = selected_dashboard_team(state)?;
+    team.tasks.get(state.team_dashboard.selected_task_idx)
 }
 
 fn selected_dashboard_member_count(state: &TuiState) -> usize {
@@ -926,8 +1068,23 @@ fn selected_dashboard_member(state: &TuiState) -> Option<&TeamMember> {
 
 fn selected_dashboard_task_ids(state: &TuiState) -> Option<(String, String)> {
     let team = selected_dashboard_team(state)?;
-    let task = team.tasks.get(state.team_dashboard.selected_task_idx)?;
+    let task = selected_dashboard_task(state)?;
     Some((team.team_id.clone(), task.task_id.clone()))
+}
+
+fn open_selected_task_log(core: &mut AppCore, state: &mut TuiState) {
+    let Some(session_id) =
+        selected_dashboard_task(state).and_then(|task| task.result_session_id.clone())
+    else {
+        if selected_dashboard_task(state).is_none() {
+            state.status = "Error: select a task card first.".to_string();
+        } else {
+            state.status = "Error: selected task card has no result session log yet.".to_string();
+        }
+        return;
+    };
+    fetch_session_log(core, state, &session_id);
+    state.log_scroll = u16::MAX;
 }
 
 fn dashboard_member_ids(team: &awo_core::TeamManifest) -> Vec<String> {
@@ -1316,6 +1473,17 @@ mod tests {
 
         super::refresh_team_dashboard_data(&core, &mut state);
         state.team_dashboard.selected_member_idx = 1;
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('L'),
+            tx.clone(),
+        );
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx.clone());
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.current_lead_member_id(), "worker-1");
+
         state.input_mode = InputMode::Form(FormState::member_update(
             "alpha".to_string(),
             &core.load_team_manifest("alpha")?.members[0],
@@ -1373,6 +1541,16 @@ mod tests {
         assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
 
         state.team_dashboard.focus = TeamDashboardFocus::Member;
+        state.team_dashboard.selected_member_idx = 0;
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('L'),
+            tx.clone(),
+        );
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx.clone());
+
         state.team_dashboard.selected_member_idx = 1;
         state.input_mode = InputMode::Confirm(super::ConfirmState::remove_member(
             "alpha".to_string(),
@@ -1382,6 +1560,167 @@ mod tests {
         let manifest = core.load_team_manifest("alpha")?;
         assert!(manifest.members.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn accept_action_marks_selected_review_task_done() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("review-accept");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Review and accept".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+        core.dispatch(Command::TeamTaskAdd {
+            team_id: "alpha".to_string(),
+            task: awo_core::TaskCard {
+                task_id: "task-1".to_string(),
+                title: "Ship it".to_string(),
+                summary: "Ready for review".to_string(),
+                owner_id: "lead".to_string(),
+                runtime: None,
+                model: None,
+                slot_id: None,
+                branch_name: None,
+                read_only: false,
+                write_scope: Vec::new(),
+                deliverable: "Patch".to_string(),
+                verification: vec!["cargo test".to_string()],
+                verification_command: None,
+                depends_on: Vec::new(),
+                state: TaskCardState::Todo,
+                result_summary: None,
+                result_session_id: None,
+                handoff_note: None,
+                output_log_path: None,
+            },
+        })?;
+        core.dispatch(Command::TeamTaskState {
+            team_id: "alpha".to_string(),
+            task_id: "task-1".to_string(),
+            state: TaskCardState::Review,
+        })?;
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Task;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('A'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Confirm(_)));
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx);
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.tasks[0].state, TaskCardState::Done);
+        Ok(())
+    }
+
+    #[test]
+    fn rework_action_clears_review_result_and_reopens_task() -> Result<()> {
+        let env = TestEnv::new();
+        let repo_dir = env.create_repo("review-rework");
+        let mut core = env.core();
+        let repo_outcome = core.dispatch(Command::RepoAdd { path: repo_dir })?;
+        let repo_id = repo_outcome
+            .events
+            .iter()
+            .find_map(|event| match event {
+                awo_core::DomainEvent::RepoRegistered { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("repo id");
+        core.dispatch(Command::TeamInit {
+            team_id: "alpha".to_string(),
+            repo_id,
+            objective: "Review and rework".to_string(),
+            lead_runtime: None,
+            lead_model: None,
+            execution_mode: TeamExecutionMode::ExternalSlots.as_str().to_string(),
+            fallback_runtime: None,
+            fallback_model: None,
+            routing_preferences: None,
+            force: false,
+        })?;
+        core.dispatch(Command::TeamTaskAdd {
+            team_id: "alpha".to_string(),
+            task: awo_core::TaskCard {
+                task_id: "task-1".to_string(),
+                title: "Needs another pass".to_string(),
+                summary: "Ready for review".to_string(),
+                owner_id: "lead".to_string(),
+                runtime: None,
+                model: None,
+                slot_id: None,
+                branch_name: None,
+                read_only: false,
+                write_scope: Vec::new(),
+                deliverable: "Patch".to_string(),
+                verification: vec!["cargo test".to_string()],
+                verification_command: None,
+                depends_on: Vec::new(),
+                state: TaskCardState::Review,
+                result_summary: Some("Found follow-up work".to_string()),
+                result_session_id: Some("session-1".to_string()),
+                handoff_note: Some("Please tighten the edge cases".to_string()),
+                output_log_path: Some("/tmp/log".to_string()),
+            },
+        })?;
+        let path = awo_core::team::default_team_manifest_path(core.paths(), "alpha");
+        let mut manifest = awo_core::team::load_team_manifest(&path)?;
+        manifest.tasks[0].state = TaskCardState::Review;
+        manifest.tasks[0].result_summary = Some("Found follow-up work".to_string());
+        manifest.tasks[0].result_session_id = Some("session-1".to_string());
+        manifest.tasks[0].handoff_note = Some("Please tighten the edge cases".to_string());
+        manifest.tasks[0].output_log_path = Some("/tmp/log".to_string());
+        awo_core::team::save_team_manifest(core.paths(), &manifest)?;
+
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::TeamDashboard;
+        state.team_dashboard.focus = TeamDashboardFocus::Task;
+        super::refresh_team_dashboard_data(&core, &mut state);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('W'),
+            tx.clone(),
+        );
+        assert!(matches!(state.input_mode, InputMode::Confirm(_)));
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Enter, tx);
+
+        let manifest = core.load_team_manifest("alpha")?;
+        assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
+        assert!(manifest.tasks[0].result_summary.is_none());
+        assert!(manifest.tasks[0].handoff_note.is_none());
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use super::{CommandOutcome, CommandRunner};
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
-use crate::team::{TaskCard, TeamManifestGuard, TeamMember, TeamTaskStartOptions};
+use crate::team::{TaskCard, TaskCardState, TeamManifestGuard, TeamMember, TeamTaskStartOptions};
 
 impl CommandRunner<'_> {
     pub(super) fn run_team_list(&self, repo_id: Option<String>) -> AwoResult<CommandOutcome> {
@@ -130,6 +130,25 @@ impl CommandRunner<'_> {
         ))
     }
 
+    pub(super) fn run_team_lead_replace(
+        &self,
+        team_id: String,
+        member_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().promote_current_lead(&member_id)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!(
+                "Current lead for team `{}` is now `{}`.",
+                team_id, member_id
+            ),
+            vec![DomainEvent::TeamLeadReplaced { team_id, member_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
     pub(super) fn run_team_task_add(
         &self,
         team_id: String,
@@ -143,6 +162,60 @@ impl CommandRunner<'_> {
         Ok(CommandOutcome::with_all(
             format!("Added task `{}` to team `{}`.", task_id, team_id),
             vec![DomainEvent::TeamTaskAdded { team_id, task_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_task_state(
+        &self,
+        team_id: String,
+        task_id: String,
+        state: TaskCardState,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().set_task_state(&task_id, state)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_data(
+            format!(
+                "Set task `{}` in team `{}` to `{}`.",
+                task_id, team_id, state
+            ),
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_task_accept(
+        &self,
+        team_id: String,
+        task_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().accept_task(&task_id)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!("Accepted task `{}` in team `{}`.", task_id, team_id),
+            vec![DomainEvent::TeamTaskAccepted { team_id, task_id }],
+            serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
+        ))
+    }
+
+    pub(super) fn run_team_task_rework(
+        &self,
+        team_id: String,
+        task_id: String,
+    ) -> AwoResult<CommandOutcome> {
+        let mut guard = TeamManifestGuard::load(&self.config.paths, &team_id)?;
+        guard.manifest_mut().request_task_rework(&task_id)?;
+        guard.save()?;
+
+        Ok(CommandOutcome::with_all(
+            format!(
+                "Sent task `{}` back for rework in team `{}`.",
+                task_id, team_id
+            ),
+            vec![DomainEvent::TeamTaskReworkRequested { team_id, task_id }],
             serde_json::to_value(guard.manifest()).unwrap_or(serde_json::Value::Null),
         ))
     }
@@ -208,13 +281,19 @@ impl CommandRunner<'_> {
         report.push_str(&format!("**Objective**: {}\n", manifest.objective));
         report.push_str(&format!("**Status**: {}\n\n", manifest.status));
 
-        report.push_str("## Tasks\n\n");
+        report.push_str("## Task Cards\n\n");
         for task in &manifest.tasks {
             report.push_str(&format!("### Task: {} ({})\n", task.title, task.task_id));
             report.push_str(&format!("- **State**: {}\n", task.state));
             report.push_str(&format!("- **Owner**: {}\n", task.owner_id));
+            if let Some(session_id) = &task.result_session_id {
+                report.push_str(&format!("- **Result Session**: {}\n", session_id));
+            }
             if let Some(summary) = &task.result_summary {
                 report.push_str(&format!("- **Result**: {}\n", summary));
+            }
+            if let Some(handoff_note) = &task.handoff_note {
+                report.push_str(&format!("- **Handoff**: {}\n", handoff_note));
             }
             report.push_str(&format!("- **Deliverable**: {}\n\n", task.deliverable));
 

@@ -13,6 +13,7 @@ fn sample_paths(root: &Path) -> AppPaths {
         logs_dir: root.join("data/logs"),
         repos_dir: root.join("config/repos"),
         clones_dir: root.join("data/clones"),
+        worktrees_dir: root.join("data/worktrees"),
         teams_dir: root.join("config/teams"),
     }
 }
@@ -42,6 +43,8 @@ fn sample_manifest() -> TeamManifest {
             fallback_model: None,
             routing_preferences: None,
         },
+        current_lead_member_id: Some("lead".to_string()),
+        current_lead_session_id: None,
         members: vec![TeamMember {
             member_id: "worker-a".to_string(),
             role: "implementer".to_string(),
@@ -65,6 +68,7 @@ fn sample_manifest() -> TeamManifest {
             summary: "Persist the session before one-shot completion.".to_string(),
             owner_id: "worker-a".to_string(),
             runtime: Some("codex".to_string()),
+            model: None,
             slot_id: Some("slot-1".to_string()),
             branch_name: Some("awo/worker-a".to_string()),
             read_only: false,
@@ -74,6 +78,8 @@ fn sample_manifest() -> TeamManifest {
             verification_command: Some("cargo test".to_string()),
             depends_on: Vec::new(),
             result_summary: None,
+            result_session_id: None,
+            handoff_note: None,
             output_log_path: None,
             state: TaskCardState::Todo,
         }],
@@ -126,6 +132,8 @@ fn starter_manifest_defaults_to_planning_lead() {
     assert_eq!(manifest.status, TeamStatus::Planning);
     assert_eq!(manifest.routing_preferences, None);
     assert_eq!(manifest.lead.member_id, "lead");
+    assert_eq!(manifest.current_lead_member_id(), "lead");
+    assert_eq!(manifest.current_lead_session_id(), None);
     assert_eq!(manifest.lead.runtime.as_deref(), Some("claude"));
     assert!(manifest.members.is_empty());
     assert!(manifest.tasks.is_empty());
@@ -166,6 +174,7 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         summary: "Add the missing feature.".to_string(),
         owner_id: "worker-a".to_string(),
         runtime: None,
+        model: None,
         slot_id: None,
         branch_name: None,
         read_only: false,
@@ -175,6 +184,8 @@ fn add_member_and_task_render_prompt() -> Result<()> {
         verification_command: None,
         depends_on: Vec::new(),
         result_summary: None,
+        result_session_id: None,
+        handoff_note: None,
         output_log_path: None,
         state: TaskCardState::Todo,
     })?;
@@ -183,6 +194,50 @@ fn add_member_and_task_render_prompt() -> Result<()> {
     assert!(prompt.contains("Team objective"));
     assert!(prompt.contains("Relevant skills"));
     assert!(prompt.contains("Verification"));
+    Ok(())
+}
+
+#[test]
+fn current_lead_can_be_promoted_to_member() -> Result<()> {
+    let mut manifest = sample_manifest();
+
+    manifest.promote_current_lead("worker-a")?;
+
+    assert_eq!(manifest.current_lead_member_id(), "worker-a");
+    assert_eq!(
+        manifest
+            .current_lead_member()
+            .map(|member| member.member_id.as_str()),
+        Some("worker-a")
+    );
+    assert_eq!(manifest.current_lead_session_id(), None);
+    Ok(())
+}
+
+#[test]
+fn removing_current_lead_member_is_rejected() {
+    let mut manifest = sample_manifest();
+    manifest
+        .promote_current_lead("worker-a")
+        .expect("promotion should succeed");
+
+    let error = manifest
+        .remove_member("worker-a")
+        .expect_err("remove should fail");
+    assert!(error.to_string().contains("cannot remove the team lead"));
+}
+
+#[test]
+fn binding_current_lead_session_requires_matching_member() -> Result<()> {
+    let mut manifest = sample_manifest();
+
+    manifest.bind_current_lead_session("lead", Some("session-1".to_string()))?;
+    assert_eq!(manifest.current_lead_session_id(), Some("session-1"));
+
+    let error = manifest
+        .bind_current_lead_session("worker-a", Some("session-2".to_string()))
+        .expect_err("binding should fail");
+    assert!(error.to_string().contains("current lead is `lead`"));
     Ok(())
 }
 
@@ -386,6 +441,41 @@ fn reset_archived_team_returns_to_planning() {
 
     assert_eq!(manifest.status, TeamStatus::Planning);
     assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
+}
+
+#[test]
+fn accept_task_marks_review_ready_task_done() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Review;
+    manifest.tasks[0].result_summary = Some("Ready for review.".to_string());
+
+    manifest.accept_task("task-1")?;
+
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Done);
+    assert_eq!(
+        manifest.tasks[0].result_summary.as_deref(),
+        Some("Ready for review.")
+    );
+    Ok(())
+}
+
+#[test]
+fn request_task_rework_clears_review_result_and_reopens_todo() -> Result<()> {
+    let mut manifest = sample_manifest();
+    manifest.tasks[0].state = TaskCardState::Review;
+    manifest.tasks[0].result_summary = Some("Needs follow-up".to_string());
+    manifest.tasks[0].result_session_id = Some("session-1".to_string());
+    manifest.tasks[0].handoff_note = Some("please tighten tests".to_string());
+    manifest.tasks[0].output_log_path = Some("/tmp/log".to_string());
+
+    manifest.request_task_rework("task-1")?;
+
+    assert_eq!(manifest.tasks[0].state, TaskCardState::Todo);
+    assert!(manifest.tasks[0].result_summary.is_none());
+    assert!(manifest.tasks[0].result_session_id.is_none());
+    assert!(manifest.tasks[0].handoff_note.is_none());
+    assert!(manifest.tasks[0].output_log_path.is_none());
+    Ok(())
 }
 
 // ── Storage remove test ────────────────────────────────────────────

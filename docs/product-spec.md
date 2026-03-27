@@ -13,6 +13,7 @@ For the local product to count as "done enough" for release-quality use, it shou
 - stay transparent about slot reuse, health, and recovery decisions
 - support local team orchestration and delegation safely
 - treat the TUI as the main operator surface and CLI/MCP as automation surfaces
+- let operators choose where managed clones and default worktrees live
 - retain enough history for debugging, reports, and audit without becoming a transcript product
 - work honestly on both Unix and Windows
 
@@ -101,6 +102,16 @@ A runtime instance attached to a slot, including:
 - transcript/log pointers
 - task brief
 - timing and exit metadata
+- terminal end reason
+- honest capacity state such as `unknown`, `unsupported`, `timed_out`, or `exhausted`
+
+### Current Lead
+The active orchestrator for a team at this moment.
+
+This is intentionally separate from the durable structural lead profile:
+- the current lead can be replaced without rewriting the team definition
+- the current lead can also execute task cards as a worker
+- if the lead session fails, times out, or likely runs out of tokens, the operator should be able to hand orchestration to another member quickly
 
 ### Task Brief
 The operator-facing task brief should use a **hybrid model**:
@@ -116,9 +127,13 @@ V1/V1.5 history ownership should be intentionally bounded. The product should re
 - session metadata
 - log locations
 - task result summaries
+- task result session references
+- handoff notes extracted or recorded at task completion
 - recent or fetchable logs needed for debugging
 
 The product should not try to become a full transcript archive in this stage.
+
+When runtimes do not expose reliable usage or token telemetry, the product should say `unknown` or `unsupported` plainly rather than fabricating precision.
 
 ### Context Pack
 The durable project memory and standards shared with every session. At minimum:

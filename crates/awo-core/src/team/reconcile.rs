@@ -1,9 +1,10 @@
 use crate::error::AwoResult;
-use crate::runtime::SessionStatus;
+use crate::runtime::{SessionEndReason, SessionStatus};
 use crate::slot::SlotStatus;
 use crate::store::Store;
 use crate::team::{TaskCardState, TeamManifest, TeamMember, TeamStatus, TeamTeardownPlan};
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -113,8 +114,11 @@ pub fn reconcile_team_manifest_state(
                         task.state = TaskCardState::Review;
                         changed = true;
                     }
-                    task.result_summary = Some("Session completed successfully.".to_string());
+                    task.result_session_id = Some(session.id.clone());
                     task.output_log_path = session.stdout_path.clone();
+                    task.handoff_note = extract_handoff_note(session);
+                    task.result_summary =
+                        Some("Session completed successfully. Ready for review.".to_string());
 
                     if let Some(cmd) = &task.verification_command
                         && let Some(ref s) = slot
@@ -127,7 +131,8 @@ pub fn reconcile_team_manifest_state(
                             .output()
                         {
                             Ok(output) if output.status.success() => {
-                                task.result_summary = Some("Verification passed.".to_string());
+                                task.result_summary =
+                                    Some("Verification passed. Ready for review.".to_string());
                             }
                             Ok(output) => {
                                 task.state = TaskCardState::Blocked;
@@ -150,15 +155,10 @@ pub fn reconcile_team_manifest_state(
                         task.state = TaskCardState::Blocked;
                         changed = true;
                     }
-                    task.result_summary = Some(format!(
-                        "Session {}: exit={}",
-                        session.status,
-                        session
-                            .exit_code
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "-".to_string())
-                    ));
+                    task.result_session_id = Some(session.id.clone());
                     task.output_log_path = session.stdout_path.clone();
+                    task.handoff_note = extract_handoff_note(session);
+                    task.result_summary = Some(describe_terminal_failure(session));
                 }
                 _ => {}
             }
@@ -197,12 +197,72 @@ pub fn reconcile_team_manifest_state(
         }
     }
 
+    if let Some(session_id) = manifest.current_lead_session_id().map(str::to_string) {
+        let clear = match store.get_session(&session_id)? {
+            Some(session) => session.is_terminal(),
+            None => true,
+        };
+        if clear {
+            manifest.clear_current_lead_session();
+            changed = true;
+        }
+    }
+
     if changed {
         manifest.refresh_status();
         manifest.validate()?;
     }
 
     Ok(changed)
+}
+
+fn describe_terminal_failure(session: &crate::runtime::SessionRecord) -> String {
+    match session.end_reason {
+        Some(SessionEndReason::Timeout) => match session.timeout_secs {
+            Some(timeout_secs) => format!("Session timed out after {timeout_secs}s."),
+            None => "Session timed out.".to_string(),
+        },
+        Some(SessionEndReason::TokenExhausted) => {
+            "Session appears to have run out of tokens or context budget.".to_string()
+        }
+        Some(SessionEndReason::OperatorCancelled) | Some(SessionEndReason::Completed) => {
+            "Session was cancelled by the operator.".to_string()
+        }
+        Some(SessionEndReason::RuntimeFailure) | None => format!(
+            "Session failed: exit={}",
+            session
+                .exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ),
+    }
+}
+
+fn extract_handoff_note(session: &crate::runtime::SessionRecord) -> Option<String> {
+    [
+        session.stdout_path.as_deref(),
+        session.stderr_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(read_last_meaningful_line)
+    .find(|line| !line.is_empty())
+}
+
+fn read_last_meaningful_line(path: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let line = content
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && *line != "```")?;
+    let truncated = if line.chars().count() > 240 {
+        let prefix = line.chars().take(237).collect::<String>();
+        format!("{prefix}...")
+    } else {
+        line.to_string()
+    };
+    Some(truncated)
 }
 
 fn should_clear_member_slot_binding(

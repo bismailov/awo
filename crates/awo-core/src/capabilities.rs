@@ -66,6 +66,8 @@ pub struct RuntimeCapabilityDescriptor {
     pub default_launch_mode: String,
     pub cost_tier: CostTier,
     pub limit_profile: LimitProfile,
+    pub usage_reporting: CapabilitySupport,
+    pub capacity_reporting: CapabilitySupport,
     pub operator_note: String,
     pub inline_subagents: CapabilitySupport,
     pub multi_session_teams: CapabilitySupport,
@@ -87,6 +89,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Premium,
             limit_profile: LimitProfile::ApiMetered,
+            usage_reporting: CapabilitySupport::Unknown,
+            capacity_reporting: CapabilitySupport::Unknown,
             operator_note: "High intelligence, higher spend. Use for complex planning and difficult code review."
                 .to_string(),
             inline_subagents: CapabilitySupport::Native,
@@ -109,6 +113,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Standard,
             limit_profile: LimitProfile::ApiMetered,
+            usage_reporting: CapabilitySupport::Unknown,
+            capacity_reporting: CapabilitySupport::Unknown,
             operator_note: "Good default balance for one-shot implementation and review loops."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
@@ -131,6 +137,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Cheap,
             limit_profile: LimitProfile::ApiMetered,
+            usage_reporting: CapabilitySupport::Unknown,
+            capacity_reporting: CapabilitySupport::Unknown,
             operator_note: "Useful for large-context reads, audits, and lower-cost fallback work."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unknown,
@@ -152,6 +160,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Local,
             limit_profile: LimitProfile::LocalUnlimited,
+            usage_reporting: CapabilitySupport::Unsupported,
+            capacity_reporting: CapabilitySupport::Unsupported,
             operator_note: "Local validation and orchestration helper with no model quota pressure."
                 .to_string(),
             inline_subagents: CapabilitySupport::Unsupported,

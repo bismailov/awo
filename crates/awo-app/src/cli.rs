@@ -268,7 +268,7 @@ pub enum TeamCommand {
         #[command(subcommand)]
         command: TeamMemberCommand,
     },
-    /// Manage team tasks.
+    /// Manage team task cards.
     Task {
         #[command(subcommand)]
         command: TeamTaskCommand,
@@ -378,6 +378,8 @@ pub enum TeamMemberCommand {
     },
     /// Remove a member from the team.
     Remove { team_id: String, member_id: String },
+    /// Switch the current lead/orchestrator to another team member.
+    PromoteLead { team_id: String, member_id: String },
     /// Manually assign a worktree slot to a member.
     AssignSlot {
         team_id: String,
@@ -388,7 +390,7 @@ pub enum TeamMemberCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TeamTaskCommand {
-    /// Add a new task to the team manifest.
+    /// Add a new task card to the team manifest.
     Add {
         team_id: String,
         task_id: String,
@@ -401,6 +403,9 @@ pub enum TeamTaskCommand {
         /// Task-specific runtime override.
         #[arg(long)]
         runtime: Option<String>,
+        /// Task-specific model override.
+        #[arg(long)]
+        model: Option<String>,
         /// Ensure no modifications are made during this task.
         #[arg(long)]
         read_only: bool,
@@ -424,13 +429,17 @@ pub enum TeamTaskCommand {
         /// Target state (e.g. todo, in_progress, review, done, blocked).
         state: String,
     },
+    /// Accept a review-ready task card and mark it done.
+    Accept { team_id: String, task_id: String },
+    /// Send a reviewed task card back to todo and clear its review result.
+    Rework { team_id: String, task_id: String },
     /// Manually bind a worktree slot to a task.
     BindSlot {
         team_id: String,
         task_id: String,
         slot_id: String,
     },
-    /// Start execution of a team task (acquires slot and starts session).
+    /// Start execution of a team task card (acquires slot and starts session).
     Start {
         team_id: String,
         task_id: String,
@@ -459,7 +468,7 @@ pub enum TeamTaskCommand {
         #[arg(long)]
         no_fallback: bool,
     },
-    /// Delegate an existing task to a new owner with specific notes.
+    /// Delegate an existing task card to a new owner with specific notes.
     Delegate {
         team_id: String,
         task_id: String,
@@ -504,6 +513,13 @@ pub enum SlotCommand {
     },
     /// Release a slot and remove its associated worktree.
     Release { slot_id: String },
+    /// Delete a released slot record and remove its worktree immediately.
+    Delete { slot_id: String },
+    /// Delete all released or missing slots, optionally scoped to one repo.
+    Prune {
+        #[arg(long)]
+        repo_id: Option<String>,
+    },
     /// Re-evaluate slot state (dirty checks, fingerprints).
     Refresh { slot_id: String },
 }

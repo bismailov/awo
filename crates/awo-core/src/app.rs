@@ -25,6 +25,7 @@ pub struct AppPaths {
     pub logs_dir: std::path::PathBuf,
     pub repos_dir: std::path::PathBuf,
     pub clones_dir: std::path::PathBuf,
+    pub worktrees_dir: std::path::PathBuf,
     pub teams_dir: std::path::PathBuf,
 }
 
@@ -92,7 +93,9 @@ impl AppCore {
 
     pub fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
         match &command {
-            Command::SlotRelease { slot_id } | Command::SlotRefresh { slot_id } => {
+            Command::SlotRelease { slot_id }
+            | Command::SlotDelete { slot_id }
+            | Command::SlotRefresh { slot_id } => {
                 self.dirty_cache.borrow_mut().invalidate(slot_id);
             }
             _ => {}

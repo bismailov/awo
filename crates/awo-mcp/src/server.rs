@@ -948,6 +948,8 @@ fn map_tool_to_command(
             let owner_id = require_string(args, "owner_id")?;
             let prompt = require_string(args, "prompt")?;
             let deliverable = require_string(args, "deliverable")?;
+            let runtime = optional_string(args, "runtime");
+            let model = optional_string(args, "model");
             let write_scope = optional_string_array(args, "write_scope");
             let verification = optional_string_array(args, "verification");
             let verification_command = optional_string(args, "verification_command");
@@ -957,7 +959,8 @@ fn map_tool_to_command(
                 title,
                 summary: prompt,
                 owner_id,
-                runtime: None,
+                runtime,
+                model,
                 slot_id: None,
                 branch_name: None,
                 read_only: false,
@@ -968,6 +971,8 @@ fn map_tool_to_command(
                 depends_on,
                 state: awo_core::TaskCardState::Todo,
                 result_summary: None,
+                result_session_id: None,
+                handoff_note: None,
                 output_log_path: None,
             };
             Ok(awo_core::Command::TeamTaskAdd { team_id, task })

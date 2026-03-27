@@ -953,6 +953,14 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                     print_team_manifest(&manifest);
                 }
             }
+            TeamMemberCommand::PromoteLead { team_id, member_id } => {
+                let outcome = backend.dispatch(Command::TeamLeadReplace { team_id, member_id })?;
+                if output.json {
+                    print_json_response(&outcome.data, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                }
+            }
             TeamMemberCommand::AssignSlot {
                 team_id,
                 member_id,
@@ -974,6 +982,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 title,
                 summary,
                 runtime,
+                model,
                 read_only,
                 write_scope,
                 deliverable,
@@ -988,6 +997,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         summary,
                         owner_id,
                         runtime: parse_optional_runtime(runtime.as_deref())?,
+                        model,
                         slot_id: None,
                         branch_name: None,
                         read_only,
@@ -998,6 +1008,8 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                         depends_on,
                         state: TaskCardState::Todo,
                         result_summary: None,
+                        result_session_id: None,
+                        handoff_note: None,
                         output_log_path: None,
                     },
                 })?;
@@ -1012,14 +1024,51 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
                 task_id,
                 state,
             } => {
-                let manifest = core.set_team_task_state(
-                    &team_id,
-                    &task_id,
-                    state.parse::<TaskCardState>().map_err(anyhow::Error::msg)?,
+                let outcome = backend.dispatch(Command::TeamTaskState {
+                    team_id,
+                    task_id,
+                    state: state.parse::<TaskCardState>().map_err(anyhow::Error::msg)?,
+                })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
                 )?;
                 if output.json {
-                    print_json_response(&manifest, None);
+                    print_json_response(&manifest, Some(&outcome));
                 } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamTaskCommand::Accept { team_id, task_id } => {
+                let outcome = backend.dispatch(Command::TeamTaskAccept { team_id, task_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
+                    print_team_manifest(&manifest);
+                }
+            }
+            TeamTaskCommand::Rework { team_id, task_id } => {
+                let outcome = backend.dispatch(Command::TeamTaskRework { team_id, task_id })?;
+                let manifest: TeamManifest = serde_json::from_value(
+                    outcome
+                        .data
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("missing manifest data"))?,
+                )?;
+                if output.json {
+                    print_json_response(&manifest, Some(&outcome));
+                } else {
+                    print_outcome(&outcome);
                     print_team_manifest(&manifest);
                 }
             }
@@ -1258,7 +1307,7 @@ fn run_team(command: TeamCommand, output: OutputMode) -> Result<()> {
 fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
     let mut backend = bootstrap_backend(output)?;
     let repo_filter = match &command {
-        SlotCommand::List { repo_id } => repo_id.clone(),
+        SlotCommand::List { repo_id } | SlotCommand::Prune { repo_id } => repo_id.clone(),
         _ => None,
     };
     let outcome = match command {
@@ -1275,6 +1324,8 @@ fn run_slot(command: SlotCommand, output: OutputMode) -> Result<()> {
         })?,
         SlotCommand::List { repo_id } => backend.dispatch(Command::SlotList { repo_id })?,
         SlotCommand::Release { slot_id } => backend.dispatch(Command::SlotRelease { slot_id })?,
+        SlotCommand::Delete { slot_id } => backend.dispatch(Command::SlotDelete { slot_id })?,
+        SlotCommand::Prune { repo_id } => backend.dispatch(Command::SlotPrune { repo_id })?,
         SlotCommand::Refresh { slot_id } => backend.dispatch(Command::SlotRefresh { slot_id })?,
     };
 

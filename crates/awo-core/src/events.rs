@@ -71,6 +71,15 @@ pub enum DomainEvent {
         slot_id: String,
         strategy: String,
     },
+    SlotDeleted {
+        slot_id: String,
+        had_worktree: bool,
+    },
+    SlotPruned {
+        repo_id: Option<String>,
+        pruned: usize,
+        skipped: usize,
+    },
     SlotRefreshed {
         slot_id: String,
         dirty: bool,
@@ -143,7 +152,19 @@ pub enum DomainEvent {
         team_id: String,
         member_id: String,
     },
+    TeamLeadReplaced {
+        team_id: String,
+        member_id: String,
+    },
     TeamTaskAdded {
+        team_id: String,
+        task_id: String,
+    },
+    TeamTaskAccepted {
+        team_id: String,
+        task_id: String,
+    },
+    TeamTaskReworkRequested {
         team_id: String,
         task_id: String,
     },
@@ -227,6 +248,26 @@ impl DomainEvent {
             Self::SlotReleased { slot_id, strategy } => {
                 format!("Released {strategy} slot `{slot_id}`")
             }
+            Self::SlotDeleted {
+                slot_id,
+                had_worktree,
+            } => {
+                if *had_worktree {
+                    format!("Deleted slot `{slot_id}` and removed its worktree")
+                } else {
+                    format!("Deleted slot `{slot_id}` from local state")
+                }
+            }
+            Self::SlotPruned {
+                repo_id,
+                pruned,
+                skipped,
+            } => match repo_id {
+                Some(repo_id) => format!(
+                    "Pruned {pruned} released slot(s) for repo `{repo_id}`; skipped {skipped}"
+                ),
+                None => format!("Pruned {pruned} released slot(s); skipped {skipped}"),
+            },
             Self::SlotRefreshed {
                 slot_id,
                 dirty,
@@ -327,8 +368,17 @@ impl DomainEvent {
             Self::TeamMemberAdded { team_id, member_id } => {
                 format!("Added member `{member_id}` to team `{team_id}`")
             }
+            Self::TeamLeadReplaced { team_id, member_id } => {
+                format!("Current lead for team `{team_id}` is now `{member_id}`")
+            }
             Self::TeamTaskAdded { team_id, task_id } => {
                 format!("Added task `{task_id}` to team `{team_id}`")
+            }
+            Self::TeamTaskAccepted { team_id, task_id } => {
+                format!("Accepted task `{task_id}` in team `{team_id}`")
+            }
+            Self::TeamTaskReworkRequested { team_id, task_id } => {
+                format!("Sent task `{task_id}` back for rework in team `{team_id}`")
             }
             Self::TeamReportGenerated {
                 team_id,

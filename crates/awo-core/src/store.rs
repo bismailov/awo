@@ -1,6 +1,6 @@
 use crate::error::{AwoError, AwoResult};
 use crate::repo::RegisteredRepo;
-use crate::runtime::{SessionRecord, SessionStatus};
+use crate::runtime::{SessionEndReason, SessionRecord, SessionStatus};
 use crate::slot::{FingerprintStatus, SlotRecord, SlotStatus, SlotStrategy};
 use crate::snapshot::CommandLogEntry;
 use r2d2::Pool;
@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::str::FromStr;
 
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 const BASE_SCHEMA_VERSION: i64 = 3;
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -89,6 +89,9 @@ const MIGRATION_V6_NORMALIZE_SLOT_ENUMS_SQL: &str = r#"
     UPDATE slots SET fingerprint_status = 'stale' WHERE fingerprint_status = 'Stale';
     UPDATE slots SET fingerprint_status = 'missing' WHERE fingerprint_status = 'Missing';
 "#;
+
+const MIGRATION_V7_ADD_SESSION_END_REASON_SQL: &str =
+    "ALTER TABLE sessions ADD COLUMN end_reason TEXT;";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -351,6 +354,14 @@ impl Store {
         Ok(slot)
     }
 
+    pub fn delete_slot(&self, slot_id: &str) -> AwoResult<()> {
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM slots WHERE id = ?1", [slot_id])
+            .map_err(|e| AwoError::store(format!("failed to delete slot `{slot_id}`"), e))?;
+        Ok(())
+    }
+
     pub fn list_slots(&self, repo_id: Option<&str>) -> AwoResult<Vec<SlotRecord>> {
         let connection = self.connection()?;
         let query = if repo_id.is_some() {
@@ -420,8 +431,8 @@ impl Store {
             .execute(
                 "INSERT INTO sessions (
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code, timeout_secs, started_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                    command_line, stdout_path, stderr_path, exit_code, end_reason, timeout_secs, started_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(id) DO UPDATE SET
                     repo_id = excluded.repo_id,
                     slot_id = excluded.slot_id,
@@ -435,6 +446,7 @@ impl Store {
                     stdout_path = excluded.stdout_path,
                     stderr_path = excluded.stderr_path,
                     exit_code = excluded.exit_code,
+                    end_reason = excluded.end_reason,
                     timeout_secs = excluded.timeout_secs,
                     started_at = excluded.started_at,
                     updated_at = CURRENT_TIMESTAMP",
@@ -452,6 +464,7 @@ impl Store {
                     session.stdout_path,
                     session.stderr_path,
                     session.exit_code,
+                    session.end_reason.map(SessionEndReason::as_str),
                     session.timeout_secs,
                     session.started_at,
                 ],
@@ -475,7 +488,7 @@ impl Store {
         let query = if repo_id.is_some() {
             "SELECT
                 id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                command_line, stdout_path, stderr_path, exit_code, end_reason, created_at, updated_at,
                 timeout_secs, started_at
              FROM sessions
              WHERE repo_id = ?1
@@ -483,7 +496,7 @@ impl Store {
         } else {
             "SELECT
                 id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                command_line, stdout_path, stderr_path, exit_code, end_reason, created_at, updated_at,
                 timeout_secs, started_at
              FROM sessions
              ORDER BY created_at DESC"
@@ -514,7 +527,7 @@ impl Store {
             .prepare(
                 "SELECT
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                    command_line, stdout_path, stderr_path, exit_code, end_reason, created_at, updated_at,
                     timeout_secs, started_at
                  FROM sessions
                  WHERE id = ?1",
@@ -534,7 +547,7 @@ impl Store {
             .prepare(
                 "SELECT
                     id, repo_id, slot_id, runtime, supervisor, prompt, status, read_only, dry_run,
-                    command_line, stdout_path, stderr_path, exit_code, created_at, updated_at,
+                    command_line, stdout_path, stderr_path, exit_code, end_reason, created_at, updated_at,
                     timeout_secs, started_at
                  FROM sessions
                  WHERE slot_id = ?1
@@ -619,10 +632,22 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
         stdout_path: row.get(10)?,
         stderr_path: row.get(11)?,
         exit_code: row.get(12)?,
-        timeout_secs: row.get(15)?,
-        started_at: row.get(16)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        end_reason: row
+            .get::<_, Option<String>>(13)?
+            .map(|value| {
+                SessionEndReason::from_str(&value).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        13,
+                        rusqlite::types::Type::Text,
+                        Box::new(AwoError::unsupported("session end reason", value)),
+                    )
+                })
+            })
+            .transpose()?,
+        timeout_secs: row.get(16)?,
+        started_at: row.get(17)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
@@ -685,6 +710,14 @@ fn apply_schema_migrations(connection: &Connection, schema_version: i64) -> AwoR
         connection
             .execute_batch(MIGRATION_V6_NORMALIZE_SLOT_ENUMS_SQL)
             .map_err(|e| AwoError::store("failed to normalize slot enum values", e))?;
+    }
+
+    if schema_version < 7 {
+        connection
+            .execute(MIGRATION_V7_ADD_SESSION_END_REASON_SQL, [])
+            .map_err(|e| {
+                AwoError::store("failed to add `end_reason` column to sessions table", e)
+            })?;
     }
 
     Ok(())

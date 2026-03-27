@@ -70,7 +70,7 @@ pub fn register_repo(
         .default_base_branch
         .unwrap_or(git.default_base_branch);
     let id = build_repo_id(&canonical_root, git.remote_url.as_deref(), &name);
-    let worktree_root = default_worktree_root(&canonical_root, &name);
+    let worktree_root = default_worktree_root(paths, &id);
 
     let overlay = LocalRepoOverlay {
         repo_id: id.clone(),
@@ -223,9 +223,8 @@ fn write_local_overlay(paths: &AppPaths, overlay: &LocalRepoOverlay) -> AwoResul
     Ok(overlay_path)
 }
 
-fn default_worktree_root(repo_root: &Path, repo_name: &str) -> PathBuf {
-    let parent = repo_root.parent().unwrap_or(repo_root);
-    parent.join(format!("{}.worktrees", slugify(repo_name)))
+fn default_worktree_root(paths: &AppPaths, repo_id: &str) -> PathBuf {
+    paths.worktrees_dir.join(slugify(repo_id))
 }
 
 fn build_repo_id(repo_root: &Path, remote_url: Option<&str>, name: &str) -> String {
@@ -261,7 +260,7 @@ fn slugify(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_clone_destination, describe_remote, remote_label};
+    use super::{default_clone_destination, default_worktree_root, describe_remote, remote_label};
     use crate::app::AppPaths;
     use std::path::PathBuf;
 
@@ -292,6 +291,7 @@ mod tests {
             logs_dir: PathBuf::from("/tmp/logs"),
             repos_dir: PathBuf::from("/tmp/repos"),
             clones_dir: PathBuf::from("/tmp/clones"),
+            worktrees_dir: PathBuf::from("/tmp/worktrees"),
             teams_dir: PathBuf::from("/tmp/teams"),
         };
         let destination =
@@ -303,6 +303,25 @@ mod tests {
         assert_eq!(
             remote_label(Some("https://github.com/acme/awesome-repo.git")),
             "github"
+        );
+    }
+
+    #[test]
+    fn default_worktree_root_uses_configured_global_worktrees_dir() {
+        let paths = AppPaths {
+            config_dir: PathBuf::from("/tmp/config"),
+            data_dir: PathBuf::from("/tmp/data"),
+            state_db_path: PathBuf::from("/tmp/state.sqlite3"),
+            logs_dir: PathBuf::from("/tmp/logs"),
+            repos_dir: PathBuf::from("/tmp/repos"),
+            clones_dir: PathBuf::from("/tmp/clones"),
+            worktrees_dir: PathBuf::from("/tmp/worktrees"),
+            teams_dir: PathBuf::from("/tmp/teams"),
+        };
+
+        assert_eq!(
+            default_worktree_root(&paths, "repo-123abc"),
+            PathBuf::from("/tmp/worktrees/repo-123abc")
         );
     }
 }

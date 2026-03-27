@@ -205,9 +205,20 @@ Focus:
 - stronger delegation/handoff
 - automatic context passing
 - improved result synthesis and reporting
+- first-class lead-session orchestration
+- planning-to-task-card workflow
+- review/consolidation cockpit in the TUI
+- capacity-aware recovery for lead/worker sessions
 
 Primary job card:
 - [job-card-T-orchestration-intelligence.md](/Users/bismailov/Documents/chaban/planning/job-card-T-orchestration-intelligence.md)
+
+Supporting orchestration package:
+- [2026-03-27-lead-agent-task-card-orchestration-plan.md](/Users/bismailov/Documents/chaban/planning/2026-03-27-lead-agent-task-card-orchestration-plan.md)
+- [job-card-X-lead-session-and-task-card-model.md](/Users/bismailov/Documents/chaban/planning/job-card-X-lead-session-and-task-card-model.md)
+- [job-card-Y-output-ingestion-and-capacity-state.md](/Users/bismailov/Documents/chaban/planning/job-card-Y-output-ingestion-and-capacity-state.md)
+- [job-card-Z-consolidation-cockpit-and-retention-controls.md](/Users/bismailov/Documents/chaban/planning/job-card-Z-consolidation-cockpit-and-retention-controls.md)
+- [job-card-AA-configurable-storage-roots.md](/Users/bismailov/Documents/chaban/planning/job-card-AA-configurable-storage-roots.md)
 
 Exit criteria:
 - local multi-agent coordination is a meaningful product advantage

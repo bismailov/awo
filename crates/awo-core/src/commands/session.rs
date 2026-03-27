@@ -3,8 +3,8 @@ use crate::context::{discover_repo_context, plan_session_context, render_session
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::runtime::{
-    SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session, detect_runtime,
-    detect_tmux, execute_prepared_session, prepare_session,
+    SessionEndReason, SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session,
+    detect_runtime, detect_tmux, execute_prepared_session, prepare_session,
 };
 use crate::slot::{FingerprintStatus, SlotStatus};
 use std::path::Path;
@@ -116,6 +116,7 @@ impl<'a> CommandRunner<'a> {
                     .get_session(&session_id)?
                     .ok_or_else(|| self.session_not_found_error(&session_id))?;
                 failed.status = SessionStatus::Failed;
+                failed.end_reason = Some(SessionEndReason::RuntimeFailure);
                 self.store.upsert_session(&failed)?;
                 return Err(AwoError::runtime_launch(format!(
                     "session `{session_id}` for slot `{slot_id_for_error}` failed to launch: {error}"

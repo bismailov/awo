@@ -517,6 +517,10 @@ mod tests {
                     routing_preferences: None,
                 },
             },
+            Command::TeamLeadReplace {
+                team_id: "team".to_string(),
+                member_id: "worker-a".to_string(),
+            },
             Command::TeamTaskAdd {
                 team_id: "team".to_string(),
                 task: TaskCard {
@@ -525,6 +529,7 @@ mod tests {
                     summary: "s".to_string(),
                     owner_id: "o".to_string(),
                     runtime: None,
+                    model: None,
                     slot_id: None,
                     branch_name: None,
                     read_only: false,
@@ -535,6 +540,8 @@ mod tests {
                     state: crate::team::TaskCardState::Todo,
                     verification_command: None,
                     result_summary: None,
+                    result_session_id: None,
+                    handoff_note: None,
                     output_log_path: None,
                 },
             },

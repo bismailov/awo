@@ -36,6 +36,7 @@ fn setup_runner() -> Result<(TempDir, AppConfig, Store)> {
             logs_dir,
             repos_dir,
             clones_dir,
+            worktrees_dir: data_dir.join("worktrees"),
             teams_dir,
         },
         settings: AppSettings::default(),

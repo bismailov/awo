@@ -155,9 +155,16 @@ impl FormState {
                 FormField::choice("repo_id", "Repository", repo_ids, default_repo),
                 FormField::text("team_id", "Team ID", ""),
                 FormField::text("objective", "Objective", ""),
+                FormField::choice(
+                    "lead_runtime",
+                    "Lead runtime",
+                    optional_runtime_options(),
+                    "",
+                ),
+                FormField::text("lead_model", "Lead model", ""),
             ],
         )
-        .with_footer("Defaults: external_slots lead with no runtime/model overrides")
+        .with_footer("Defaults: external_slots lead; choose runtime/model only if you want an explicit orchestrator profile")
     }
 
     pub fn member_add(team_id: String) -> Self {
@@ -271,7 +278,7 @@ impl FormState {
         let default_owner = owner_ids.first().cloned().unwrap_or_default();
         Self::new(
             FormKind::TaskAdd { team_id },
-            "Add Task",
+            "Add Task Card",
             "Add",
             vec![
                 FormField::text("task_id", "Task ID", ""),
@@ -284,6 +291,7 @@ impl FormState {
                     optional_runtime_options(),
                     "",
                 ),
+                FormField::text("model", "Model override", ""),
                 FormField::choice(
                     "read_only",
                     "Read-only",
@@ -302,7 +310,7 @@ impl FormState {
         let default_target = target_member_ids.first().cloned().unwrap_or_default();
         Self::new(
             FormKind::TaskDelegate { team_id, task_id },
-            "Delegate Task",
+            "Delegate Task Card",
             "Delegate",
             vec![
                 FormField::choice(
@@ -328,6 +336,10 @@ impl FormState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConfirmAction {
     RemoveMember { team_id: String, member_id: String },
+    PromoteLead { team_id: String, member_id: String },
+    AcceptTask { team_id: String, task_id: String },
+    ReworkTask { team_id: String, task_id: String },
+    DeleteSlot { slot_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -345,6 +357,46 @@ impl ConfirmState {
                 "Remove member `{member_id}` from team `{team_id}`?\nPress Enter to confirm or Esc to cancel."
             ),
             action: ConfirmAction::RemoveMember { team_id, member_id },
+        }
+    }
+
+    pub fn promote_lead(team_id: String, member_id: String) -> Self {
+        Self {
+            title: "Replace Current Lead".to_string(),
+            message: format!(
+                "Make `{member_id}` the current lead for team `{team_id}`?\nPress Enter to confirm or Esc to cancel."
+            ),
+            action: ConfirmAction::PromoteLead { team_id, member_id },
+        }
+    }
+
+    pub fn accept_task(team_id: String, task_id: String) -> Self {
+        Self {
+            title: "Accept Task Card".to_string(),
+            message: format!(
+                "Accept task card `{task_id}` in team `{team_id}` and mark it done?\nPress Enter to confirm or Esc to cancel."
+            ),
+            action: ConfirmAction::AcceptTask { team_id, task_id },
+        }
+    }
+
+    pub fn rework_task(team_id: String, task_id: String) -> Self {
+        Self {
+            title: "Request Rework".to_string(),
+            message: format!(
+                "Send task card `{task_id}` in team `{team_id}` back to todo and clear its review result?\nPress Enter to confirm or Esc to cancel."
+            ),
+            action: ConfirmAction::ReworkTask { team_id, task_id },
+        }
+    }
+
+    pub fn delete_slot(slot_id: String) -> Self {
+        Self {
+            title: "Delete Worktree".to_string(),
+            message: format!(
+                "Delete released slot `{slot_id}` and remove its worktree now?\nPress Enter to confirm or Esc to cancel."
+            ),
+            action: ConfirmAction::DeleteSlot { slot_id },
         }
     }
 }
@@ -429,6 +481,16 @@ mod tests {
         );
 
         assert_eq!(form.value("repo_id"), Some("repo-b"));
+        assert_eq!(form.value("lead_runtime"), Some(""));
+        assert_eq!(form.value("lead_model"), Some(""));
+    }
+
+    #[test]
+    fn task_add_form_exposes_model_override() {
+        let form = FormState::task_add("team-a".to_string(), vec!["lead".to_string()]);
+
+        assert_eq!(form.value("runtime"), Some(""));
+        assert_eq!(form.value("model"), Some(""));
     }
 
     #[test]

@@ -43,7 +43,9 @@ pub use routing::{
     RoutingContext, RoutingDecision, RoutingPreferences, RoutingRecommendation, RoutingSource,
     RoutingTarget, RuntimePressure, route_runtime,
 };
-pub use runtime::{RuntimeKind, SessionLaunchMode, SessionStatus};
+pub use runtime::{
+    RuntimeKind, SessionCapacityStatus, SessionEndReason, SessionLaunchMode, SessionStatus,
+};
 pub use skills::{
     RepoSkillCatalog, SkillDoctorReport, SkillLinkMode, SkillLinkReport, SkillRuntime,
 };

@@ -46,7 +46,8 @@ The manifest stores:
 - team identity
 - repo identity
 - shared objective
-- lead agent
+- durable lead profile
+- current lead session/member state
 - member roster
 - task cards
 - status
@@ -71,6 +72,8 @@ write_scope = []
 context_packs = ["architecture"]
 skills = ["planning-with-files"]
 
+current_lead_member_id = "lead"
+
 [[members]]
 member_id = "worker-a"
 role = "implementer"
@@ -90,6 +93,7 @@ title = "Implement running-session persistence"
 summary = "Persist the session before one-shot completion."
 owner_id = "worker-a"
 runtime = "codex"
+model = "gpt-5.4-mini"
 slot_id = "slot-1"
 branch_name = "awo/worker-a"
 read_only = false
@@ -114,12 +118,27 @@ state = "todo"
 
 Every task card should define:
 - owner
+- runtime/model intent when it differs from the owner's default
 - write scope
 - deliverable
 - verification
 - dependencies
 
+Task cards may also retain bounded review data after execution:
+- result summary
+- result session id
+- handoff note
+- output log path
+
 That keeps parallel work explicit and makes merge/review safer.
+
+## Current Lead Rules
+
+- The manifest keeps a durable structural `lead` profile for defaults and team identity.
+- The operator may replace the **current lead** with another member when the active orchestrator runs out of tokens, times out, or otherwise needs handoff.
+- The current lead may also own executable task cards directly.
+- Replacing the current lead does not rewrite task history; it only changes who is considered the active orchestrator now.
+- If the current lead session fails, is cancelled, or goes missing, the TUI should surface that as a handoff-needed operator condition rather than silently pretending orchestration is still active.
 
 ## Team Lifecycle: Archive and Reset
 
