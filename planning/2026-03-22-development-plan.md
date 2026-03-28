@@ -152,22 +152,33 @@ The most important remaining work now falls into six buckets.
 - production-grade daemon lifecycle and degraded-state handling still need more real-world hardening
 - daemon health now requires a bounded RPC roundtrip instead of a bare socket connect
 - daemon clients now apply bounded stream I/O timeouts so unresponsive brokers fail more predictably
+- the TUI now reacts to event-bus wakeups for command-driven changes instead of relying primarily on periodic blind refreshes
+- the MCP facade now supports resource subscriptions and emits bounded update notifications for subscribed broker resources
 - broker-mode concurrency validation should deepen further
 - push/subscription-style event delivery should replace more polling behavior over time
 
 ### 3. Platform Maturity
-- Windows ConPTY completion and workflow validation remain open
-- Named Pipe transport for the Windows daemon remains open
+- Windows ConPTY and Named Pipe implementations now exist in the codebase
+- real Windows workflow validation remains open
+- the current macOS environment still cannot finish Windows-target verification because bundled `libsqlite3-sys` cross-compilation fails before the full Rust workspace can be validated
 
 ### 4. Runtime Usage Truth
 - provider-specific usage/capacity telemetry is still mostly advisory rather than structured
 - lead/worker recovery guidance is honest, but richer adapter-fed budget and lifetime data still needs work
+- runtime capability output now distinguishes `planned` adapter work from permanently `unknown` support for provider-backed telemetry
+- provider-specific usage notes now point operators at the best current truth source when the CLI adapter cannot surface spend directly
+- provider quota/rate-limit failures are now distinguished from true token/context exhaustion
+- capability descriptors now reflect real local CLI surfaces for:
+  - Claude budget guardrails and structured output
+  - Codex structured output
+  - Gemini structured output
 
 ### 5. Hardening And CI Maturity
 - `EventBus` poison handling now recovers and warns instead of panicking immediately
 - output serialization no longer panics on unexpected JSON serialization failures
-- CI is now wired to run `cargo audit` and `cargo deny`, but `cargo-deny` configuration still needs local validation
+- CI is now wired to run `cargo audit` and `cargo deny`, and both have now been validated locally
 - `cargo audit` currently reports one known warning: `RUSTSEC-2017-0008` (`serial` via `portable-pty`), and `deny.toml` now ignores that advisory explicitly pending an upstream/runtime change
+- `deny.toml` now also reflects the real Windows-transport dependency graph, including explicit `0BSD` allowance
 
 ### 6. Middleware Enrichment
 - automated context-pack generation
@@ -198,37 +209,43 @@ Goal: keep the operator surface fast and maintainable as orchestration state gro
 
 ### Milestone 2: Broker Hardening
 Goal: make the daemon feel like a dependable local broker.
-- completed so far: harden lifecycle/status/cleanup behavior around stale artifacts, degraded states, RPC health checks, and client I/O timeouts
+- completed so far: harden lifecycle/status/cleanup behavior around stale artifacts, degraded states, RPC health checks, client I/O timeouts, event-driven TUI refresh triggers, and MCP resource-subscription notifications
 - validate broker-mode concurrency
 - upgrade event delivery for live clients
 
 ### Milestone 3: Windows Completion
 Goal: achieve honest local parity on Windows.
-- finish ConPTY workflow parity
-- implement Named Pipes for the daemon
+- completed so far: implement Named Pipes for the daemon
+- completed so far: fix the concrete ConPTY exit-code and process-tree cancellation issues found during audit
+- next: validate the main operator workflows on a real Windows environment
+- next: resolve or work around the bundled SQLite cross-toolchain blocker for off-host validation
 
 ### Milestone 4: Runtime Usage Truth
 Goal: turn advisory recovery messaging into stronger runtime-backed operator signals where possible.
+- completed so far: mark provider-backed telemetry for Claude/Codex/Gemini as `planned` rather than permanently `unknown`
+- completed so far: point usage notes at provider-specific truth sources instead of generic “check dashboards” guidance
+- completed so far: distinguish `provider_limited` failures from `exhausted` failures in runtime/session truth
+- completed so far: reflect real local CLI capability surfaces for Claude/Codex/Gemini structured output, and Claude budget guardrails
 - add adapter-fed usage/capacity support where runtimes expose it
 - keep `unknown`/`unsupported` explicit where they do not
-- improve lead/worker handoff guidance around timeouts and token exhaustion
+- improve lead/worker handoff guidance around timeouts, quota pressure, and token exhaustion
 
 ### Milestone 5: Hardening And CI Maturity
 Goal: reduce avoidable crash/supply-chain risk before final release work.
 - completed so far: remove the remaining high-risk production panic paths in `EventBus` and JSON output handling
 - completed so far: add `cargo audit` and `cargo deny` steps plus `deny.toml`
 - completed so far: record an explicit temporary ignore for `RUSTSEC-2017-0008` (`portable-pty -> serial`) in `deny.toml`
-- next: validate `cargo deny` locally
+- completed so far: validate `cargo deny` locally and fix `deny.toml` drift
 
 ### Milestone 6: Local-First Enrichment And Release Finalization
 Goal: deepen local orchestration and finish the release story.
-- middleware subscriptions and context-pack generation
-- richer lead/worker handoff and synthesis
-- help text, manual scenarios, known-limitations docs, and release polish
+- completed so far: bounded MCP subscriptions and broker-backed update notifications
+- completed so far: help text, manual scenarios, platform docs, and release-audit refresh
+- next: keep Windows validation and richer adapter-fed telemetry as the only major remaining finish-line work
 
 ## Recommended Work Order
 
-1. Finish broker live-event delivery and any remaining degraded-state operator visibility.
+1. Finish broker live-event delivery for daemon/MCP clients and any remaining degraded-state operator visibility.
 2. Complete Windows parity.
 3. Strengthen runtime usage/capacity truth where adapters support it.
 4. Finish validating CI/security checks and set advisory policy.

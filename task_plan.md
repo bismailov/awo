@@ -4,7 +4,7 @@
 Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
 
 ## Current Phase
-Phase 17
+Phase 21
 
 ## Phases
 
@@ -156,9 +156,10 @@ Phase 17
 - [x] Strengthen daemon health probing so “healthy” requires a successful RPC response, not only a socket connect
 - [x] Add degraded-state coverage for sockets that accept connections but never answer RPC health checks
 - [x] Add more broker-mode visibility in operator surfaces where it materially helps
+- [x] React to event-bus wakeups in the TUI instead of relying primarily on blind periodic refreshes
 - [x] Re-run formatting, clippy, targeted daemon/handler tests, and the full workspace test suite
-- [ ] Deepen live-client event delivery beyond poll/long-poll
-- **Status:** in_progress
+- [x] Deepen daemon/MCP live-client event delivery beyond poll/long-poll
+- **Status:** complete
 
 ### Phase 17: Hardening And CI Safety
 - [x] Replace the remaining high-risk production panic paths in JSON output handling
@@ -166,8 +167,42 @@ Phase 17
 - [x] Add a baseline `deny.toml`
 - [x] Validate `cargo audit` locally and record dependency findings
 - [x] Record the temporary policy for `RUSTSEC-2017-0008` in `deny.toml`
-- [ ] Validate `cargo deny` locally
-- **Status:** in_progress
+- [x] Validate `cargo deny` locally
+- **Status:** complete
+
+### Phase 18: Runtime Usage Truth Upgrade
+- [x] Re-read the capability model, current CLI/TUI exposure, and the remaining roadmap intent
+- [x] Choose the smallest honest runtime-usage improvement that does not invent telemetry
+- [x] Implement the bounded runtime-usage slice and add coverage
+- [x] Add runtime/provider-limit classification and guidance without inventing token precision
+- [x] Update capability truth from real CLI surfaces where the adapters can honestly point to it
+- **Status:** complete
+
+### Phase 19: MCP Live Delivery And CI Validation
+- [x] Re-read the broker hardening and MCP live-delivery roadmap notes
+- [x] Add bounded MCP resource subscriptions with update notifications for broker-backed resources
+- [x] Add focused MCP tests for subscribe, unsubscribe, and notification emission
+- [x] Validate `cargo deny` locally and record the result
+- [x] Re-run formatting, clippy, and the full workspace test suite
+- **Status:** complete
+
+### Phase 20: Next Stages Execution Planning
+- [x] Re-read the current next-sessions plan from the latest broker/MCP checkpoint
+- [x] Convert the remaining roadmap into a practical execution sequence with concrete sessions
+- [x] Capture recommended worktree and delegation lanes for the remaining release blockers
+- [x] Update the planning trace for the new execution plan
+- **Status:** complete
+
+### Phase 21: Windows Follow-Through, Release Sweep, And Final Audit
+- [x] Attempt Windows-target validation for the new daemon transport and record the environment blocker honestly
+- [x] Fix the concrete Windows ConPTY exit-code and process-tree cancellation issues found during code review
+- [x] Refresh platform/runtime/release docs so they match the current code instead of the older pre-transport plan
+- [x] Validate `cargo deny` locally and adjust `deny.toml` for the real dependency graph
+- [x] Run isolated CLI smoke workflows against a fresh temporary Git repo
+- [x] Run an isolated TUI startup/quit smoke workflow
+- [x] Re-run formatting, clippy, focused tests, full workspace tests, and `cargo audit`
+- [x] Write the final release-quality audit and refresh the roadmap from that checkpoint
+- **Status:** complete
 
 ## Key Questions
 1. What is the smallest durable lead-session model that keeps older team manifests compatible?
@@ -186,7 +221,7 @@ Phase 17
 | Let reconciliation clear stale current-lead sessions | The current lead pointer should not keep pointing at dead/terminal sessions |
 | Keep task ownership semantics unchanged so the lead can already work as a task owner | This minimizes implementation risk while still enabling lead-as-worker behavior |
 | Treat failed/missing lead sessions as handoff-needed operator conditions | We cannot reliably detect token exhaustion yet, but we can surface the practical recovery action honestly |
-| Model Job Card Y capacity state as `unsupported`, `unknown`, `timed_out`, or `exhausted` | This gives operators actionable truth without faking live token telemetry |
+| Model Job Card Y capacity state as `unsupported`, `unknown`, `timed_out`, `exhausted`, or `provider_limited` | This gives operators actionable truth without faking live token telemetry |
 | Persist task-card `result_session_id` and `handoff_note` instead of inventing a separate review object | That is enough to power review-ready task cards and future review queues with minimal schema churn |
 | Detect token exhaustion only as a best-effort log heuristic | Current adapters do not provide universal structured token telemetry, so exact detection would be dishonest |
 | Model review closeout with semantic `accept` and `rework` commands instead of generic TUI-only state edits | This keeps operator intent explicit and leaves room for richer closeout semantics later |
@@ -210,6 +245,8 @@ Phase 17
 | Treat command-surface parity as a release-level architecture objective, not a background cleanup | It directly affects daemon/direct consistency and the credibility of the core mutation rule |
 | Keep roadmap docs aligned with the real checkpoint after major slices land | Drift now hurts contributor onboarding more than feature ideation helps |
 | Use a session-by-session continuation plan after major audits, not just a broad roadmap | The remaining work is now mostly finish-line sequencing rather than feature discovery |
+| Add MCP resource subscriptions as bounded broker notifications rather than trying to invent a streaming transport first | This improves live integrations now while keeping the synchronous broker model intact |
+| Order the remaining work by release risk, not by subsystem neatness | Windows parity and release-trust issues matter more now than further speculative architecture expansion |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -237,6 +274,7 @@ Phase 17
 | `handlers.rs` was still using `convert_case` without a workspace dependency, which broke the first combined clippy/test pass | 1 | Replaced the dynamic case conversion with a tiny explicit daemon-issue-code helper |
 | The new failing-serializer test helper triggered an unused-variable warning under `-D warnings` | 1 | Renamed the serializer parameter to `_serializer` |
 | `cargo-deny` local installation stalled repeatedly on this machine | 1 | Kept the CI wiring and baseline config in place, validated `cargo-audit` locally, and recorded local `cargo-deny` validation as the remaining gap |
+| The TUI was still doing a blind periodic refresh even after the background snapshot worker landed | 1 | Added an event-bus watcher so command-driven changes trigger immediate refreshes, while preserving a slower fallback refresh for silent runtime-state changes |
 
 ## Notes
 - The orchestration planning package created earlier in this line of work is:

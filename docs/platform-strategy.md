@@ -17,8 +17,10 @@
 ### Windows
 - Repo registration, clone/fetch, slot lifecycle, context discovery, and skills workflows are all expected to work
 - Shell runtime uses `pwsh`, then falls back to `powershell`
-- One-shot session execution is the current default
-- PTY supervision is not implemented yet
+- ConPTY-backed PTY supervision is implemented in the current codebase
+- One-shot execution remains the fallback when PTY launch is not selected
+- Named Pipe-based daemon transport is implemented
+- The remaining gap is deeper workflow validation on a real Windows environment
 - Copy mode is the recommended default for skill projection because Windows symlink behavior is often permission-sensitive
 
 ## Design Direction
@@ -32,7 +34,7 @@ The platform seam should stay explicit:
 The intended backend split is:
 
 - `tmux` supervisor on Unix-like systems
-- future ConPTY-based supervisor on Windows
+- ConPTY-based supervisor on Windows
 - one-shot execution everywhere as the lowest common denominator
 
 ## Practical Implications For V1
@@ -44,9 +46,11 @@ The intended backend split is:
 
 ## Next Platform Work
 
-1. Implement a Windows ConPTY-backed `SessionSupervisor`
+1. Validate the current Windows ConPTY-backed `SessionSupervisor` against the same operator flows used on Unix
+Status: implementation landed; real Windows smoke validation is still pending
 2. Persist supervisor backend metadata instead of inferring it from log layout
-Status: complete in the current tmux-backed implementation
-3. Add CI coverage across macOS, Linux, and Windows
-4. Add platform-specific smoke tests for shell runtime and skills projection
-Status: in progress via the GitHub Actions Linux/macOS/Windows validation matrix; deeper runtime-specific smoke coverage is still pending
+Status: complete
+3. Keep CI coverage across macOS, Linux, and Windows healthy
+Status: complete for the current matrix
+4. Add platform-specific smoke tests for shell runtime, daemon transport, and skills projection
+Status: in progress; deeper Windows runtime-specific smoke coverage is still pending

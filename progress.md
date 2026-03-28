@@ -2,6 +2,79 @@
 
 ## Session: 2026-03-27
 
+### Implementation Session: Windows Follow-Through, Runtime Truth, CI Closure, And Release Sweep
+- **Status:** complete for the current environment
+- **Started:** 2026-03-28
+- Actions taken:
+  - Re-read `project.md`, the execution plan, and the latest roadmap before continuing.
+  - Closed the bounded broker/MCP follow-through by reviewing the new subscription mapping and confirming it already covers the current broker-backed resource model cleanly.
+  - Advanced the Windows slice:
+    - added Windows Named Pipe daemon transport and Windows `DaemonClient` support
+    - wired CLI daemon transport gating to allow Windows
+    - reviewed the ConPTY path and fixed two concrete issues:
+      - preserve the actual exit code instead of collapsing non-zero exits to `1`
+      - use `taskkill /T` for process-tree cancellation
+  - Attempted Windows-target validation from this macOS machine:
+    - `cargo check --target x86_64-pc-windows-msvc` still fails in bundled `libsqlite3-sys` C compilation before full Rust validation can finish
+    - recorded that as an environment/toolchain blocker rather than a reproduced product bug
+  - Deepened runtime/operator truth:
+    - added `provider_limited` session end/capacity classification
+    - improved operator guidance for quota/rate-limit failures
+    - updated capability truth from real installed CLI surfaces:
+      - Claude budget guardrails + structured output
+      - Codex structured output
+      - Gemini structured output
+  - Finished CI/supply-chain closure:
+    - installed and validated `cargo-deny` locally
+    - fixed `deny.toml` schema drift for the installed `cargo-deny`
+    - added `0BSD` to the allowed licenses for the Windows transport dependency chain
+  - Refreshed release-facing docs:
+    - README limitations
+    - platform strategy
+    - product and control-surface wording
+    - manual scenarios
+  - Ran an isolated release smoke sweep in throwaway `AWO_CONFIG_DIR` / `AWO_DATA_DIR` roots:
+    - CLI smoke against a fresh temporary Git repo
+    - repo/runtime/slot/session/team/report/teardown/delete flows
+    - TUI startup and quit smoke
+    - also confirmed that stale-slot and dirty-slot failures on a moving or modified repo still behave as intended guardrails
+  - Wrote a final release-quality audit for the checkpoint and refreshed the roadmap/planning docs around the now-narrow Windows validation blocker.
+- Files created/modified:
+  - `crates/awo-core/src/daemon.rs`
+  - `crates/awo-core/src/runtime.rs`
+  - `crates/awo-core/src/runtime/supervisor/conpty.rs`
+  - `crates/awo-core/src/runtime/tests.rs`
+  - `crates/awo-core/src/capabilities.rs`
+  - `crates/awo-core/src/team/reconcile.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `deny.toml`
+  - `README.md`
+  - `docs/platform-strategy.md`
+  - `docs/product-spec.md`
+  - `docs/v1-control-surface.md`
+  - `MANUAL_TEST_SCENARIOS.md`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-28-audit-and-quality-review.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `planning/2026-03-28-next-stages-execution-plan.md`
+  - `planning/2026-03-28-release-finalization-audit.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo test -q sync_oneshot_detects_provider_limits_from_logs`
+  - `cargo test -q session_recovery_guidance_distinguishes_timeout_exhaustion_and_provider_limits`
+  - `cargo test -q lead_attention_mentions_provider_limits`
+  - `cargo deny check`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test`
+  - `cargo audit`
+  - `cargo check --target x86_64-pc-windows-msvc`
+    - expected environment/toolchain blocker remains in bundled `libsqlite3-sys` C compilation on this macOS machine
+  - isolated CLI smoke workflow against a fresh temporary Git repo
+  - isolated TUI startup/quit smoke
+
 ### Implementation Session: Broker Hardening Follow-Through
 - **Status:** complete for the current slice
 - **Started:** 2026-03-28
@@ -676,6 +749,9 @@
   - Recorded an explicit temporary ignore for `RUSTSEC-2017-0008` in `deny.toml` so CI policy is intentional.
   - Ran a broader review pass, found a stale `convert_case` usage in daemon-status JSON output, fixed it, and added a focused regression test for `RpcUnresponsive` text output.
   - Discovered stale background `cargo test` processes holding build/package locks, cleaned them up, and reran full verification.
+  - Added an event-bus watcher in the TUI so command-driven broker activity triggers immediate snapshot refresh instead of waiting for the old 5-second blind refresh loop.
+  - Kept a slower fallback refresh interval in place so off-thread runtime-state reconciliation still lands even when no domain events are published.
+  - Tightened the runtime capability story by marking provider-backed telemetry for Claude/Codex/Gemini as `planned` and pointing usage notes at the provider-side truth sources that exist today.
 - Files created/modified:
   - `.github/workflows/ci.yml`
   - `deny.toml`
@@ -694,6 +770,7 @@
   - `task_plan.md`
   - `findings.md`
   - `progress.md`
+  - `docs/interface-strategy.md`
 
 ## Test Results
 | Test | Input | Expected | Actual | Status |
@@ -726,6 +803,10 @@
 | Local dependency audit | `cargo audit` | No vulnerability blockers; document any warnings honestly | Passed with warning (`RUSTSEC-2017-0008` via `portable-pty -> serial`) | ✓ |
 | Broker/CI hardening linting | `cargo clippy --all-targets -- -D warnings` | Workspace remains warning-free after daemon/output/CI hardening changes | Passed | ✓ |
 | Broker/CI hardening full workspace tests | `cargo test` | Full workspace stays green after broker/status/output/CI wiring changes | Passed | ✓ |
+| Focused MCP subscription tests | `cargo test -p awo-mcp -- --nocapture` | MCP resource subscribe/unsubscribe and update notification flows work end to end | Passed | ✓ |
+| Full workspace linting after MCP subscriptions | `cargo clippy --all-targets -- -D warnings` | Workspace remains warning-free after MCP live-delivery changes | Passed | ✓ |
+| Full workspace tests after MCP subscriptions | `cargo test -q` | Whole workspace remains green after MCP live-delivery and runtime-note changes | Passed | ✓ |
+| Next-stages execution planning | Planning/doc updates only | Remaining roadmap converted into a concrete execution sequence with worktree/delegation lanes | Completed | ✓ |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -742,6 +823,8 @@
 | 2026-03-28 | `handlers.rs` still referenced `convert_case` without a dependency after the broker-status work settled | 1 | Replaced the dynamic conversion with an explicit daemon-issue-code helper and reran clippy/test |
 | 2026-03-28 | The new failing-serializer test helper triggered an unused-variable warning under `-D warnings` | 1 | Renamed the serializer parameter to `_serializer` |
 | 2026-03-28 | Local `cargo-deny` installation repeatedly stalled on this machine | 1 | Kept CI wiring and `deny.toml` in place, validated `cargo-audit`, and recorded local `cargo-deny` validation as remaining follow-through |
+| 2026-03-28 | The first MCP subscription implementation mismatched `DomainEvent` and `EventEntry` types and used the wrong `BTreeSet::contains` borrow shape | 1 | Narrowed notification routing to `DomainEvent`, iterated with `for &uri`, and reran the MCP test lane plus workspace verification |
+| 2026-03-28 | The apparent isolated operator-flow hang was not reproducible once rerun cleanly | 1 | Verified `team_init_creates_manifest_and_shows_it` in isolation, then completed a fresh full `cargo test -q` run successfully |
 
 ## 5-Question Reboot Check
 | Question | Answer |
@@ -750,4 +833,4 @@
 | Where am I going? | Toward the remaining release blockers: broker live-event delivery, Windows parity, stronger runtime usage truth, and final release documentation/manual validation |
 | What's the goal? | Finalize Awo as a local orchestration console where a replaceable lead agent plans, dispatches, reviews, and consolidates task cards through Awo |
 | What have I learned? | The biggest remaining gaps are no longer foundational features; they are finish-line trust issues like broker live updates, platform parity, and explicit security/advisory policy |
-| What have I done? | Finished the high-value bounded broker hardening slice, tightened panic handling in the shell, added CI security wiring, validated `cargo audit`, and re-verified the workspace with `cargo fmt`, `cargo clippy`, and full `cargo test` |
+| What have I done? | Added bounded MCP resource subscriptions and update notifications, clarified runtime truth notes, re-verified the workspace, and turned the remaining roadmap into a concrete next-stages execution plan |

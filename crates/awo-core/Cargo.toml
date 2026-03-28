@@ -35,6 +35,7 @@ nix = { version = "0.31.2", features = ["signal", "process"] }
 signal-hook = "0.4.3"
 
 [target.'cfg(windows)'.dependencies]
+interprocess = "2.4.0"
 portable-pty = "0.8"
 
 [dev-dependencies]

@@ -13,6 +13,33 @@
 - Commit and push the resulting checkpoint.
 
 ## Research Findings
+- The bounded broker/MCP completion slice is now effectively closed for the local product:
+  - the TUI wakes on broker events
+  - MCP supports resource subscriptions
+  - no obvious subscribed-resource blind spot remained in the current resource model
+- The Windows daemon transport code can be implemented locally, but full Windows validation is still environment-bound:
+  - the current macOS machine can compile deep into the Windows target graph
+  - bundled `libsqlite3-sys` still fails before a full Rust-level Windows parity check can finish
+  - this is a real toolchain/environment blocker, not a reproduced application bug
+- The Windows ConPTY implementation had one concrete correctness issue worth fixing now:
+  - it was collapsing all non-zero exits to `1` instead of preserving the actual exit code
+  - `taskkill /T` is the safer process-tree cancellation shape for supervised Windows sessions
+- Runtime/operator truth improves meaningfully when provider-limit failures are separated from token exhaustion:
+  - `rate limit` / `quota exceeded` / `insufficient_quota` should not be described as “out of tokens”
+  - operators need different recovery guidance for budget/quota pressure than for context exhaustion
+- Real local CLI surfaces can sharpen capability truth without inventing adapter telemetry:
+  - Claude print mode exposes `--max-budget-usd`, JSON output, and JSON-schema validation
+  - Codex `exec` exposes JSON output and JSON-schema-constrained final responses
+  - Gemini headless mode exposes `json` and `stream-json` output modes
+- Local `cargo-deny` validation was worth doing because CI wiring alone was not enough:
+  - the checked-in `deny.toml` had schema drift for the installed `cargo-deny`
+  - the new Windows transport dependency chain introduced OSI-approved `0BSD` licenses that needed explicit allowance
+- Release smoke validation is much cleaner in an isolated temporary Git repo than in the actively changing `chaban` worktree:
+  - using the dev repo itself immediately exercised legitimate stale-slot and dirty-slot safety guards
+  - that is good product behavior, but not a clean release smoke target
+- Two “failures” in the release smoke were actually confirmations of correct guardrails:
+  - stale slots on a moving repo correctly refuse session start without refresh or read-only intent
+  - dirty task-card slots correctly refuse teardown/release until the worktree is clean
 - The existing team model already supports “lead as worker” because task ownership can point at the structural lead member today.
 - The missing behavior for Job Card X was not a new task model, but a replaceable “current lead” layer on top of the durable structural lead profile.
 - The smallest backward-compatible schema is:
@@ -112,6 +139,9 @@
 | Add task-card `model` as a first-class field and route `task.model.or(owner.model)` | This gives per-task budget steering while keeping member defaults intact |
 | Resolve clone/worktree roots with `env override -> settings.json -> data-dir default` | This gives operators immediate control while staying deterministic and easy to document |
 | Add `slot.prune` for released or missing slots only | Bulk cleanup should remain a safe, explicit operation focused on retained inventory |
+| Distinguish `provider_limited` from `exhausted` in runtime/session truth | Rate limits and quota failures require different operator actions than context-window exhaustion |
+| Treat real local CLI flags as capability truth even before the adapters ingest their full telemetry | This lets operator surfaces be more accurate without faking end-to-end usage accounting |
+| Allow `0BSD` in `deny.toml` | The new Windows transport dependency chain legitimately brings in OSI-approved `0BSD` crates via `interprocess` |
 | Order the next local iterations as: immutable recovery -> diff/review cockpit -> planning flow -> runtime-usage upgrades | This sequence best completes the operator loop with the least ambiguity |
 | Implement immutable recovery as command-backed `team.task.cancel` and `team.task.supersede` | This keeps CLI, TUI, and future MCP surfaces aligned on one mutation path |
 | Keep `review.diff` bounded and command-backed | The lead needs TUI-visible diff inspection now, but not a full embedded pager yet |
@@ -156,6 +186,13 @@
 | CI security hardening is now mostly a policy/config problem rather than a code-architecture problem | The workflow and baseline `deny.toml` are easy to add; the real follow-through is validating `cargo-deny` locally |
 | `cargo audit` currently reports a single ecosystem warning rather than a vulnerability blocker | `RUSTSEC-2017-0008` reaches this workspace through `portable-pty -> serial`, and `deny.toml` now records that temporary ignore explicitly so CI behavior is intentional |
 | Long-lived orphaned cargo test binaries can distort local verification signal | The apparent “hung test suite” in this session was caused by stale background test processes holding locks, not by the current code under test |
+| The TUI does not need to choose between blind polling and perfect push semantics | A hybrid model works well here: wake immediately on event-bus activity for command-driven changes, then keep a slower fallback refresh for off-thread runtime reconciliation that does not publish events yet |
+| “Unknown” is too pessimistic when provider telemetry exists but the current adapter does not ingest it yet | Marking Claude/Codex/Gemini usage and capacity reporting as `planned` is a truer operator signal than implying the product has no path to structured truth |
+| Runtime usage notes are more actionable when they name the current best truth source | Pointing operators toward Anthropic, OpenAI, or Google usage surfaces is more useful than a generic “check dashboards” note |
+| MCP resource subscriptions are the right bounded next step for live integrations | They let external clients react to broker-backed resource changes without forcing a streaming transport rewrite or deeper async refactor |
+| The isolated `team_init_creates_manifest_and_shows_it` slowdown signal was environmental noise, not a reproduced product regression | The targeted test passed cleanly once stale background cargo processes were cleared and rerun in isolation |
+| The remaining roadmap is now dominated by release blockers rather than missing core product concepts | The practical order is broker completion, Windows parity, runtime telemetry improvement, CI closure, then release finalization |
+| Windows parity is the clearest external-agent lane | It is the largest remaining release blocker and benefits the most from a dedicated environment or separate worktree |
 
 ## Resources
 - `/Users/bismailov/Documents/chaban/project.md`

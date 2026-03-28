@@ -4,16 +4,19 @@
 //! returns optional responses.  The stdio loop in `main.rs` handles I/O.
 
 use crate::protocol::{
-    INTERNAL_ERROR, InitializeResult, JsonRpcMessage, JsonRpcResponse, METHOD_NOT_FOUND,
-    ResourceContent, ResourceDefinition, ResourcesCapability, ServerCapabilities, ServerInfo,
-    ToolCallResult, ToolContent, ToolDefinition, ToolsCapability,
+    INTERNAL_ERROR, InitializeResult, JsonRpcMessage, JsonRpcNotification, JsonRpcResponse,
+    METHOD_NOT_FOUND, ResourceContent, ResourceDefinition, ResourcesCapability, ServerCapabilities,
+    ServerInfo, ToolCallResult, ToolContent, ToolDefinition, ToolsCapability,
 };
 use awo_core::dispatch::Dispatcher;
+use std::collections::BTreeSet;
 
 /// An MCP tool-serving server backed by an awo [`Dispatcher`].
 pub struct McpServer {
     dispatcher: Box<dyn Dispatcher>,
     initialized: bool,
+    subscribed_resources: BTreeSet<String>,
+    pending_notifications: Vec<JsonRpcNotification>,
 }
 
 impl McpServer {
@@ -21,6 +24,8 @@ impl McpServer {
         Self {
             dispatcher,
             initialized: false,
+            subscribed_resources: BTreeSet::new(),
+            pending_notifications: Vec::new(),
         }
     }
 
@@ -41,6 +46,8 @@ impl McpServer {
             "tools/call" => self.handle_tools_call(&msg.params),
             "resources/list" => self.handle_resources_list(),
             "resources/read" => self.handle_resources_read(&msg.params),
+            "resources/subscribe" => self.handle_resources_subscribe(&msg.params),
+            "resources/unsubscribe" => self.handle_resources_unsubscribe(&msg.params),
             other => {
                 return Some(JsonRpcResponse::error(
                     id,
@@ -73,7 +80,7 @@ impl McpServer {
             capabilities: ServerCapabilities {
                 tools: Some(ToolsCapability {}),
                 resources: Some(ResourcesCapability {
-                    subscribe: false,
+                    subscribe: true,
                     list_changed: false,
                 }),
             },
@@ -124,6 +131,7 @@ impl McpServer {
 
         match self.dispatcher.dispatch(command) {
             Ok(outcome) => {
+                self.queue_resource_notifications(&outcome.events);
                 // Include events as structured JSON if any exist
                 if outcome.events.is_empty() {
                     ToolCallResult::text(outcome.summary)
@@ -175,6 +183,36 @@ impl McpServer {
         let content = self.read_resource(uri)?;
         serde_json::to_value(serde_json::json!({ "contents": [content] }))
             .map_err(|e| e.to_string())
+    }
+
+    fn handle_resources_subscribe(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let uri = params
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'uri' in resources/subscribe params".to_string())?;
+        self.ensure_known_resource(uri)?;
+        self.subscribed_resources.insert(uri.to_string());
+        serde_json::to_value(serde_json::json!({ "subscribed": true, "uri": uri }))
+            .map_err(|e| e.to_string())
+    }
+
+    fn handle_resources_unsubscribe(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let uri = params
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'uri' in resources/unsubscribe params".to_string())?;
+        self.ensure_known_resource(uri)?;
+        let removed = self.subscribed_resources.remove(uri);
+        serde_json::to_value(
+            serde_json::json!({ "subscribed": false, "uri": uri, "removed": removed }),
+        )
+        .map_err(|e| e.to_string())
     }
 
     fn read_resource(&mut self, uri: &str) -> Result<ResourceContent, String> {
@@ -268,6 +306,99 @@ impl McpServer {
             }
             _ => Err(format!("unknown resource URI: {uri}")),
         }
+    }
+
+    fn ensure_known_resource(&self, uri: &str) -> Result<(), String> {
+        if resource_definitions()
+            .iter()
+            .any(|resource| resource.uri == uri)
+        {
+            Ok(())
+        } else {
+            Err(format!("unknown resource URI: {uri}"))
+        }
+    }
+
+    pub fn take_pending_notifications(&mut self) -> Vec<JsonRpcNotification> {
+        std::mem::take(&mut self.pending_notifications)
+    }
+
+    fn queue_resource_notifications(&mut self, events: &[awo_core::DomainEvent]) {
+        if self.subscribed_resources.is_empty() || events.is_empty() {
+            return;
+        }
+
+        let mut changed_resources = BTreeSet::new();
+        for event in events {
+            for &uri in subscribed_resource_uris_for_event(event) {
+                if self.subscribed_resources.contains(uri) {
+                    changed_resources.insert(uri.to_string());
+                }
+            }
+        }
+
+        self.pending_notifications
+            .extend(changed_resources.into_iter().map(|uri| {
+                JsonRpcNotification::new(
+                    "notifications/resources/updated",
+                    serde_json::json!({ "uri": uri }),
+                )
+            }));
+    }
+}
+
+fn subscribed_resource_uris_for_event(event: &awo_core::DomainEvent) -> &'static [&'static str] {
+    match event {
+        awo_core::DomainEvent::CommandReceived { .. } => &["awo://events"],
+        awo_core::DomainEvent::NoOpCompleted { .. } => &["awo://events"],
+        awo_core::DomainEvent::RepoRegistered { .. }
+        | awo_core::DomainEvent::RepoRemoved { .. }
+        | awo_core::DomainEvent::RepoListLoaded { .. }
+        | awo_core::DomainEvent::ContextLoaded { .. }
+        | awo_core::DomainEvent::ContextDoctorCompleted { .. }
+        | awo_core::DomainEvent::SkillsCatalogLoaded { .. }
+        | awo_core::DomainEvent::SkillsDoctorCompleted { .. }
+        | awo_core::DomainEvent::SkillsLinked { .. }
+        | awo_core::DomainEvent::SkillsSynced { .. } => &["awo://repos", "awo://events"],
+        awo_core::DomainEvent::SlotAcquired { .. }
+        | awo_core::DomainEvent::SlotListLoaded { .. }
+        | awo_core::DomainEvent::SlotReleased { .. }
+        | awo_core::DomainEvent::SlotDeleted { .. }
+        | awo_core::DomainEvent::SlotPruned { .. }
+        | awo_core::DomainEvent::SlotRefreshed { .. } => {
+            &["awo://slots", "awo://review", "awo://events"]
+        }
+        awo_core::DomainEvent::SessionContextPrepared { .. }
+        | awo_core::DomainEvent::SessionStarted { .. }
+        | awo_core::DomainEvent::SessionCancelled { .. }
+        | awo_core::DomainEvent::SessionDeleted { .. }
+        | awo_core::DomainEvent::SessionListLoaded { .. }
+        | awo_core::DomainEvent::SessionLogLoaded { .. } => &["awo://sessions", "awo://events"],
+        awo_core::DomainEvent::ReviewStatusLoaded { .. }
+        | awo_core::DomainEvent::ReviewDiffLoaded { .. } => &["awo://review", "awo://events"],
+        awo_core::DomainEvent::TeamArchived { .. }
+        | awo_core::DomainEvent::TeamReset { .. }
+        | awo_core::DomainEvent::TeamTaskStarted { .. }
+        | awo_core::DomainEvent::TeamTaskDelegated { .. }
+        | awo_core::DomainEvent::TeamListLoaded { .. }
+        | awo_core::DomainEvent::TeamLoaded { .. }
+        | awo_core::DomainEvent::TeamCreated { .. }
+        | awo_core::DomainEvent::TeamMemberAdded { .. }
+        | awo_core::DomainEvent::TeamMemberUpdated { .. }
+        | awo_core::DomainEvent::TeamMemberRemoved { .. }
+        | awo_core::DomainEvent::TeamMemberSlotAssigned { .. }
+        | awo_core::DomainEvent::TeamLeadReplaced { .. }
+        | awo_core::DomainEvent::TeamPlanAdded { .. }
+        | awo_core::DomainEvent::TeamPlanApproved { .. }
+        | awo_core::DomainEvent::TeamPlanGenerated { .. }
+        | awo_core::DomainEvent::TeamTaskAdded { .. }
+        | awo_core::DomainEvent::TeamTaskSlotBound { .. }
+        | awo_core::DomainEvent::TeamTaskAccepted { .. }
+        | awo_core::DomainEvent::TeamTaskReworkRequested { .. }
+        | awo_core::DomainEvent::TeamTaskCancelled { .. }
+        | awo_core::DomainEvent::TeamTaskSuperseded { .. }
+        | awo_core::DomainEvent::TeamReportGenerated { .. }
+        | awo_core::DomainEvent::TeamDeleted { .. } => &["awo://teams", "awo://events"],
     }
 }
 
@@ -1081,6 +1212,7 @@ fn optional_string_array(args: &serde_json::Value, key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use awo_core::DomainEvent;
     use awo_core::commands::{Command, CommandOutcome};
     use awo_core::dispatch::Dispatcher;
     use awo_core::error::AwoResult;
@@ -1095,8 +1227,34 @@ mod tests {
         }
     }
 
+    struct EventfulDispatcher;
+    impl Dispatcher for EventfulDispatcher {
+        fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
+            let event = match command {
+                Command::RepoList => DomainEvent::RepoListLoaded { count: 1 },
+                Command::SlotList { .. } => DomainEvent::SlotListLoaded { count: 1 },
+                Command::SessionList { .. } => DomainEvent::SessionListLoaded { count: 1 },
+                Command::ReviewStatus { .. } => {
+                    DomainEvent::ReviewStatusLoaded { dirty: 0, stale: 0 }
+                }
+                Command::TeamList { .. } => DomainEvent::TeamListLoaded {
+                    repo_id: None,
+                    count: 1,
+                },
+                other => DomainEvent::CommandReceived {
+                    command: other.method_name().to_string(),
+                },
+            };
+            Ok(CommandOutcome::with_events("eventful", vec![event]))
+        }
+    }
+
     fn make_server() -> McpServer {
         McpServer::new(Box::new(EchoDispatcher))
+    }
+
+    fn make_eventful_server() -> McpServer {
+        McpServer::new(Box::new(EventfulDispatcher))
     }
 
     fn request(method: &str, params: serde_json::Value) -> JsonRpcMessage {
@@ -1309,6 +1467,15 @@ mod tests {
     }
 
     #[test]
+    fn initialize_advertises_resource_subscriptions() {
+        let mut server = make_server();
+        let msg = request("initialize", serde_json::json!({}));
+        let resp = server.handle_message(&msg).unwrap();
+        let result = resp.result.unwrap();
+        assert_eq!(result["capabilities"]["resources"]["subscribe"], true);
+    }
+
+    #[test]
     fn resources_read_dispatches_command() {
         let mut server = make_server();
         let msg = request("resources/read", serde_json::json!({"uri": "awo://repos"}));
@@ -1331,6 +1498,90 @@ mod tests {
         let resp = server.handle_message(&msg).unwrap();
         assert!(resp.error.is_some());
         assert!(resp.error.unwrap().message.contains("unknown resource URI"));
+    }
+
+    #[test]
+    fn resources_subscribe_tracks_known_uri() {
+        let mut server = make_server();
+        let msg = request(
+            "resources/subscribe",
+            serde_json::json!({"uri": "awo://repos"}),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result["subscribed"], true);
+        assert_eq!(result["uri"], "awo://repos");
+    }
+
+    #[test]
+    fn resources_subscribe_rejects_unknown_uri() {
+        let mut server = make_server();
+        let msg = request(
+            "resources/subscribe",
+            serde_json::json!({"uri": "awo://unknown"}),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        assert!(resp.error.is_some());
+        assert!(resp.error.unwrap().message.contains("unknown resource URI"));
+    }
+
+    #[test]
+    fn subscribed_resources_receive_update_notifications_after_tool_calls() {
+        let mut server = make_eventful_server();
+        let subscribe = request(
+            "resources/subscribe",
+            serde_json::json!({"uri": "awo://repos"}),
+        );
+        server.handle_message(&subscribe).unwrap();
+        assert!(server.take_pending_notifications().is_empty());
+
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "list_repos",
+                "arguments": {}
+            }),
+        );
+        let resp = server.handle_message(&msg).unwrap();
+        assert!(resp.error.is_none());
+
+        let notifications = server.take_pending_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].method, "notifications/resources/updated");
+        assert_eq!(
+            notifications[0].params.as_ref().unwrap()["uri"],
+            "awo://repos"
+        );
+    }
+
+    #[test]
+    fn unsubscribed_resources_do_not_receive_notifications() {
+        let mut server = make_eventful_server();
+        let subscribe = request(
+            "resources/subscribe",
+            serde_json::json!({"uri": "awo://repos"}),
+        );
+        server.handle_message(&subscribe).unwrap();
+        server.take_pending_notifications();
+
+        let unsubscribe = request(
+            "resources/unsubscribe",
+            serde_json::json!({"uri": "awo://repos"}),
+        );
+        let resp = server.handle_message(&unsubscribe).unwrap();
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap()["removed"], true);
+
+        let msg = request(
+            "tools/call",
+            serde_json::json!({
+                "name": "list_repos",
+                "arguments": {}
+            }),
+        );
+        server.handle_message(&msg).unwrap();
+        assert!(server.take_pending_notifications().is_empty());
     }
 
     #[test]

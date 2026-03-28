@@ -111,13 +111,7 @@ pub fn launch(
 
         // Wait for the child process to finish and write exit code
         let exit_code = match child.wait() {
-            Ok(status) => {
-                if status.success() {
-                    0
-                } else {
-                    1
-                }
-            }
+            Ok(status) => i64::from(status.exit_code()),
             Err(e) => {
                 tracing::warn!("failed to wait for ConPTY child: {e}");
                 -1
@@ -151,7 +145,7 @@ pub fn kill(paths: &AppPaths, session_id: &str) -> AwoResult<()> {
         && pid > 0
         && super::process_is_running(pid)
         && let Err(err) = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
+            .args(["/PID", &pid.to_string(), "/F", "/T"])
             .output()
     {
         tracing::debug!(pid, %err, "taskkill failed (process may already be dead)");

@@ -21,6 +21,8 @@ The product is in a strong state for a local-first orchestration tool:
 
 I did not find a blocking correctness bug in the newly added orchestration slices during this pass.
 
+See also `planning/2026-03-28-release-finalization-audit.md` for the later same-day release-candidate checkpoint after Windows follow-through, runtime-truth upgrades, local `cargo-deny` validation, and release smoke testing.
+
 ## Findings
 
 ### Resolved During This Audit
@@ -62,7 +64,7 @@ An additional external audit was reviewed after this document was first written.
 ### Residual Risks
 
 1. Broker live-update delivery is still thinner than the long-term design wants.
-   The broker is healthier and more explicit about degraded states now, but event delivery still leans on polling/long-polling more than the final local operating model should.
+   The TUI now reacts to event-bus wakeups for command-driven changes, and the MCP facade now supports resource subscriptions with bounded `notifications/resources/updated` emissions for subscribed resources. That is materially better, but daemon/MCP live delivery still leans on per-request notifications and polling/long-polling more than the final local operating model should.
 
 2. TUI module bloat and boundary drift remain a watch item.
    The router split is materially better than before, but more bounded extraction will still help if another major dashboard slice lands.
@@ -71,10 +73,10 @@ An additional external audit was reviewed after this document was first written.
    The product now gives honest recovery hints, which is good, but adapter-fed token or budget telemetry is still thin. That is acceptable for now as long as `unknown` and `unsupported` remain explicit, but it is still an important remaining product gap.
 
 4. Windows completion remains a release blocker.
-   The Unix/local story is much stronger than the Windows story today. Release confidence still depends on finishing the Windows daemon/supervision path and validating the same operator workflows there.
+   The Windows daemon transport and ConPTY implementation have advanced since this audit, but final confidence still depends on validating the same operator workflows on a real Windows environment.
 
 5. CI security policy still needs finishing work.
-   The workflow and config are now present, `cargo audit` locally reports one known warning (`RUSTSEC-2017-0008` through `portable-pty -> serial`), and `deny.toml` now ignores that advisory explicitly. `cargo-deny` still needs local validation.
+   This was true at the time of the audit. It has since been followed through locally: `cargo-deny` was validated, `deny.toml` schema drift was fixed, and `0BSD` was added for the Windows transport dependency chain.
 
 ## Strengths
 

@@ -25,6 +25,9 @@ use std::thread;
 use std::time::Duration;
 use tracing::info;
 
+const SNAPSHOT_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const EVENT_REFRESH_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub(crate) struct BackgroundResult {
     summary: String,
     events: Vec<DomainEvent>,
@@ -35,6 +38,10 @@ pub(crate) struct SnapshotRefreshResult {
     snapshot: Option<AppSnapshot>,
     teams: Vec<TeamManifest>,
     error: Option<String>,
+}
+
+struct EventRefreshTrigger {
+    head_seq: u64,
 }
 
 struct TerminalGuard;
@@ -170,10 +177,17 @@ pub fn run_tui() -> Result<()> {
 
     let (tx, rx) = crossbeam_channel::unbounded::<BackgroundResult>();
     let (snapshot_tx, snapshot_rx) = crossbeam_channel::unbounded::<SnapshotRefreshResult>();
+    let (event_refresh_tx, event_refresh_rx) =
+        crossbeam_channel::unbounded::<EventRefreshTrigger>();
 
     state.last_snapshot = Some(core.snapshot()?);
     state.last_snapshot_time = Some(std::time::Instant::now());
     refresh_team_dashboard_data(core.paths(), &mut state);
+    request_event_refresh_on_new_events(
+        core.event_bus().clone(),
+        core.event_bus().head_seq(),
+        event_refresh_tx,
+    );
 
     info!("TUI started");
 
@@ -201,10 +215,28 @@ pub fn run_tui() -> Result<()> {
             apply_snapshot_refresh_result(&mut state, result);
         }
 
+        let mut event_refresh_requested = false;
+        let mut latest_event_head_seq = None;
+        while let Ok(trigger) = event_refresh_rx.try_recv() {
+            latest_event_head_seq = Some(trigger.head_seq);
+            event_refresh_requested = true;
+        }
+
+        if event_refresh_requested && !state.snapshot_refresh_in_flight {
+            state.status = match latest_event_head_seq {
+                Some(head_seq) => {
+                    format!("Broker activity detected (event seq {head_seq}); refreshing snapshot.")
+                }
+                None => "Broker activity detected; refreshing snapshot.".to_string(),
+            };
+            state.snapshot_refresh_in_flight = true;
+            request_snapshot_refresh(core.paths().clone(), snapshot_tx.clone());
+        }
+
         let needs_refresh = state.last_snapshot.is_none()
             || state
                 .last_snapshot_time
-                .is_none_or(|t| t.elapsed() > Duration::from_secs(5));
+                .is_none_or(|t| t.elapsed() > SNAPSHOT_FALLBACK_REFRESH_INTERVAL);
 
         if needs_refresh && !state.snapshot_refresh_in_flight {
             state.snapshot_refresh_in_flight = true;
@@ -609,6 +641,32 @@ fn request_snapshot_refresh(paths: awo_core::app::AppPaths, tx: Sender<SnapshotR
             },
         };
         let _ = tx.send(result);
+    });
+}
+
+fn request_event_refresh_on_new_events(
+    event_bus: awo_core::EventBus,
+    since_seq: u64,
+    tx: Sender<EventRefreshTrigger>,
+) {
+    thread::spawn(move || {
+        let mut last_seen_seq = since_seq;
+        loop {
+            let result = event_bus.wait(last_seen_seq, 1, EVENT_REFRESH_WAIT_TIMEOUT);
+            if result.head_seq <= last_seen_seq || result.entries.is_empty() {
+                continue;
+            }
+
+            last_seen_seq = result.head_seq;
+            if tx
+                .send(EventRefreshTrigger {
+                    head_seq: last_seen_seq,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
     });
 }
 
@@ -1579,6 +1637,10 @@ fn dashboard_current_lead_attention(
                 "Current lead session appears to have exhausted tokens or context budget. Inspect logs and hand off or restart the lead."
                     .to_string()
             }
+            Some(SessionEndReason::ProviderLimited) => {
+                "Current lead session hit a provider quota or rate limit. Inspect logs, adjust spend or concurrency, and hand off or restart the lead."
+                    .to_string()
+            }
             _ => "Current lead session failed. This can happen after runtime errors, token exhaustion, or timeout; inspect logs and hand off or restart the lead."
                 .to_string(),
         }),
@@ -2016,6 +2078,22 @@ mod tests {
     }
 
     #[test]
+    fn event_refresh_watcher_emits_on_new_events() {
+        let bus = awo_core::EventBus::new();
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        request_event_refresh_on_new_events(bus.clone(), 0, tx);
+        bus.publish(&[DomainEvent::CommandReceived {
+            command: "refresh".to_string(),
+        }]);
+
+        let trigger = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("event refresh trigger");
+        assert_eq!(trigger.head_seq, 1);
+    }
+
+    #[test]
     fn repo_empty_state_describes_path_based_add() {
         let lines = render_repo_detail(None, &[], &[]);
         assert!(
@@ -2092,6 +2170,44 @@ mod tests {
 
         assert!(lines.iter().any(|line| line.contains("Usage:")));
         assert!(lines.iter().any(|line| line.contains("Recovery:")));
+    }
+
+    #[test]
+    fn lead_attention_mentions_provider_limits() {
+        let team = TeamManifest {
+            version: 1,
+            team_id: "alpha".to_string(),
+            repo_id: "repo-1".to_string(),
+            objective: "Ship".to_string(),
+            status: awo_core::TeamStatus::Running,
+            routing_preferences: None,
+            lead: test_member("lead", "lead", Some("claude"), true),
+            current_lead_member_id: Some("lead".to_string()),
+            current_lead_session_id: Some("session-1".to_string()),
+            plan_items: Vec::new(),
+            members: Vec::new(),
+            tasks: Vec::new(),
+        };
+        let session = SessionSummary {
+            id: "session-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            slot_id: "slot-1".to_string(),
+            runtime: "claude".to_string(),
+            supervisor: None,
+            status: SessionStatus::Failed,
+            read_only: false,
+            dry_run: false,
+            log_path: Some("/tmp/session.log".to_string()),
+            exit_code: Some(1),
+            end_reason: Some(SessionEndReason::ProviderLimited),
+            capacity_status: awo_core::runtime::SessionCapacityStatus::ProviderLimited,
+            usage_note: None,
+            recovery_hint: None,
+        };
+
+        let attention =
+            dashboard_current_lead_attention(&team, Some(&session), true).expect("lead attention");
+        assert!(attention.contains("provider quota or rate limit"));
     }
 
     #[test]

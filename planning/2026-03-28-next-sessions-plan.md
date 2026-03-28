@@ -4,6 +4,8 @@
 
 Turn the latest audit findings into a concrete sequence of implementation sessions.
 
+For the sharper post-broker checkpoint execution order, see `planning/2026-03-28-next-stages-execution-plan.md`.
+
 This plan is not another broad roadmap. It is the practical continuation plan from the current checkpoint, ordered around the real remaining risks:
 
 1. TUI responsiveness and decomposition
@@ -12,6 +14,13 @@ This plan is not another broad roadmap. It is the practical continuation plan fr
 4. runtime usage truth
 5. hardening and CI safety
 6. release finalization
+
+Status update after the current execution pass:
+- Session 3 broker hardening follow-through is complete for the bounded local-product scope
+- Session 5 runtime usage truth is complete for the current honest-adapter slice
+- Session 6 hardening/CI safety is complete
+- Session 7 release finalization is complete for the current platform
+- the remaining material blocker is real Windows workflow validation on a Windows-capable environment
 
 ## Current Starting Point
 
@@ -135,10 +144,11 @@ Current progress:
 - lifecycle and degraded-state regression coverage was extended for that case
 - daemon clients now use bounded read/write I/O timeouts instead of waiting forever on a sick broker
 - CLI daemon status text/json now carries clearer degraded-state detail and issue codes
+- the TUI now reacts to event-bus wakeups for command-driven changes and only falls back to a slower periodic refresh for non-evented runtime-state reconciliation
+- the MCP facade now advertises resource subscriptions and emits `notifications/resources/updated` for subscribed broker resources after command-driven changes
 
 Remaining scope:
-- deepen live-client event delivery where long-polling still feels too primitive
-- decide whether any additional broker status should be surfaced in operator-facing CLI/TUI views
+- no blocking local-product work remains in this slice; future broker work is now optional follow-on enrichment
 
 ### Session 4: Windows Parity Completion
 
@@ -149,8 +159,8 @@ Why third:
 - the Unix story is now ahead enough that platform parity is the main gap in product completeness
 
 Target scope:
-- complete ConPTY workflow validation
-- implement/finish Named Pipe daemon transport
+- validate the current ConPTY workflow end to end on Windows
+- validate the implemented Named Pipe daemon transport on Windows
 - verify the same operator workflows that already work on Unix:
   - repo add
   - slot acquire/release/delete/prune
@@ -161,6 +171,12 @@ Target scope:
 Definition of done:
 - Windows behavior is no longer “partial support”
 - known platform limitations are small, explicit, and documented
+
+Current progress:
+- Windows Named Pipe daemon transport is implemented
+- Windows `DaemonClient` support is implemented
+- ConPTY supervision exists and now preserves actual exit codes and kills the process tree with `taskkill /T`
+- off-host verification from this macOS machine still stops in bundled `libsqlite3-sys` C compilation before full Rust-level Windows validation can finish
 
 ### Session 5: Runtime Usage Truth Upgrade
 
@@ -182,6 +198,14 @@ Target scope:
 
 Definition of done:
 - operators get more useful capacity guidance without the product overstating certainty
+
+Current progress:
+- runtime capability output for Claude, Codex, and Gemini now marks usage/capacity telemetry as `planned` instead of permanently `unknown`
+- provider-specific usage notes now point operators at Anthropic, OpenAI, or Google truth sources when the current CLI adapter cannot surface spend directly
+- targeted operator-flow regression investigation showed the earlier `team_init_creates_manifest_and_shows_it` hang signal was not reproducible in isolation
+
+Remaining scope:
+- future adapter-fed spend/quota ingestion remains optional follow-on work
 
 ### Session 6: Hardening And CI Safety
 
@@ -211,7 +235,7 @@ Current progress:
 - `deny.toml` now ignores `RUSTSEC-2017-0008` explicitly so CI policy is documented rather than accidental
 
 Remaining scope:
-- validate `cargo deny` locally
+- no remaining scope in this slice
 
 ### Session 7: Release-Finalization Pass
 
@@ -231,6 +255,11 @@ Definition of done:
 - the project has a clean contributor/operator story
 - the remaining limitations are explicit and reasonable
 - the local product feels shippable
+
+Current progress:
+- manuals, README limitations, platform docs, and release-oriented wording were refreshed
+- isolated CLI and TUI smoke workflows passed in temporary Awo roots
+- a fresh release-quality audit was written in `planning/2026-03-28-release-finalization-audit.md`
 
 ## Recommended Worktree / Delegation Pattern
 
@@ -259,6 +288,6 @@ Good worktree candidates:
 
 If we start one implementation session next, it should be:
 
-**Session 3: Broker Hardening Follow-Through**
+**Session 5: Runtime Usage Truth Upgrade**
 
-The broker slice now has better status truth and safer failure behavior, but live-event delivery is still the biggest remaining gap before this area feels truly finished.
+The local broker story is now much stronger. The next best non-platform slice is improving runtime/capacity truth where we can do so honestly without inventing telemetry.

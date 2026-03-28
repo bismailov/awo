@@ -322,7 +322,15 @@ test -d <WARM_SLOT_PATH>
 # 1. List available runtimes and their capabilities
 ./target/debug/awo runtime list
 ./target/debug/awo runtime show claude
+./target/debug/awo runtime show codex
+./target/debug/awo runtime show gemini
 ./target/debug/awo runtime show shell
+
+# Expect:
+# - Claude shows native budget guardrails and structured output support
+# - Codex shows native structured output support for exec-mode JSON/JSON-schema flows
+# - Gemini shows native structured output support for headless JSON/stream-json output
+# - Usage/capacity reporting for provider CLIs is still honest-but-advisory unless the adapter exposes structured telemetry
 
 # 2. Preview routing decisions
 ./target/debug/awo runtime route-preview --primary claude --primary-model sonnet

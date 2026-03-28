@@ -12,7 +12,7 @@
 mod protocol;
 mod server;
 
-use protocol::{JsonRpcMessage, JsonRpcResponse};
+use protocol::{JsonRpcMessage, JsonRpcNotification, JsonRpcResponse};
 use server::McpServer;
 use std::io::{BufRead, BufReader, Write};
 use tracing_subscriber::EnvFilter;
@@ -68,6 +68,10 @@ fn main() {
         if let Some(response) = server.handle_message(&msg) {
             write_response(&mut stdout, &response);
         }
+
+        for notification in server.take_pending_notifications() {
+            write_notification(&mut stdout, &notification);
+        }
     }
 
     tracing::info!("awo-mcp shutting down");
@@ -81,6 +85,18 @@ fn write_response(writer: &mut impl Write, response: &JsonRpcResponse) {
         }
         Err(error) => {
             tracing::error!(%error, "failed to serialize MCP response");
+        }
+    }
+}
+
+fn write_notification(writer: &mut impl Write, notification: &JsonRpcNotification) {
+    match serde_json::to_string(notification) {
+        Ok(json) => {
+            let _ = writeln!(writer, "{json}");
+            let _ = writer.flush();
+        }
+        Err(error) => {
+            tracing::error!(%error, "failed to serialize MCP notification");
         }
     }
 }

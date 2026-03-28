@@ -107,7 +107,7 @@ fn bootstrap_backend(_output: OutputMode) -> Result<CliBackend> {
     CliBackend::bootstrap()
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn bootstrap_daemon_transport(
     paths: &awo_core::AppPaths,
 ) -> (Option<awo_core::DaemonClient>, Option<String>) {
@@ -183,12 +183,12 @@ fn bootstrap_daemon_transport(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn connect_daemon_client(paths: &awo_core::AppPaths) -> AwoResult<awo_core::DaemonClient> {
     awo_core::DaemonClient::connect(&paths.daemon_socket_path())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_for_daemon_client(
     paths: &awo_core::AppPaths,
     timeout: Duration,

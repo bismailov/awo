@@ -103,6 +103,10 @@ If the CLI falls back to direct mode, that fallback should be visible to the ope
 For live interfaces, prefer bounded event delivery over blind polling loops:
 - cheap cursor polling when freshness is not urgent
 - broker-backed long-poll waits when a client wants to sleep until new events appear
+- broker-backed resource subscriptions when an MCP client wants change notifications without managing its own poll cadence
+- hybrid operator surfaces are acceptable when some state changes are not yet evented:
+  - react immediately to event-bus wakeups for command-driven changes
+  - keep a slower fallback refresh for silent runtime-state reconciliation such as sessions completing off-thread
 
 ### Layer 3: MCP Facade (Outside)
 

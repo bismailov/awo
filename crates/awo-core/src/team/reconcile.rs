@@ -240,6 +240,9 @@ fn describe_terminal_failure(session: &crate::runtime::SessionRecord) -> String 
         Some(SessionEndReason::TokenExhausted) => {
             "Session appears to have run out of tokens or context budget.".to_string()
         }
+        Some(SessionEndReason::ProviderLimited) => {
+            "Session hit a provider quota or rate limit.".to_string()
+        }
         Some(SessionEndReason::OperatorCancelled) | Some(SessionEndReason::Completed) => {
             "Session was cancelled by the operator.".to_string()
         }

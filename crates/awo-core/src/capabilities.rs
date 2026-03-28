@@ -93,9 +93,9 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Premium,
             limit_profile: LimitProfile::ApiMetered,
-            usage_reporting: CapabilitySupport::Unknown,
-            capacity_reporting: CapabilitySupport::Unknown,
-            budget_guardrails: CapabilitySupport::Unknown,
+            usage_reporting: CapabilitySupport::Planned,
+            capacity_reporting: CapabilitySupport::Planned,
+            budget_guardrails: CapabilitySupport::Native,
             session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "High intelligence, higher spend. Use for complex planning and difficult code review."
                 .to_string(),
@@ -106,11 +106,13 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             reasoning_mcp_tools: CapabilitySupport::ViaMcp,
             interrupt: CapabilitySupport::Planned,
             resume: CapabilitySupport::Unknown,
-            structured_output: CapabilitySupport::Unknown,
+            structured_output: CapabilitySupport::Native,
             read_only_hint: CapabilitySupport::Native,
             notes: vec![
                 "Claude Code has official subagent and agent-team features.".to_string(),
                 "Agent teams are experimental and should remain an adapter capability, not the core awo model.".to_string(),
+                "Anthropic exposes usage and cost data at the provider layer, but the current awo CLI adapter does not ingest it yet.".to_string(),
+                "Claude CLI exposes `--max-budget-usd`, JSON output, and JSON-schema validation in print mode.".to_string(),
             ],
         },
         RuntimeKind::Codex => RuntimeCapabilityDescriptor {
@@ -119,8 +121,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Standard,
             limit_profile: LimitProfile::ApiMetered,
-            usage_reporting: CapabilitySupport::Unknown,
-            capacity_reporting: CapabilitySupport::Unknown,
+            usage_reporting: CapabilitySupport::Planned,
+            capacity_reporting: CapabilitySupport::Planned,
             budget_guardrails: CapabilitySupport::Unknown,
             session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "Good default balance for one-shot implementation and review loops."
@@ -132,11 +134,13 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             reasoning_mcp_tools: CapabilitySupport::ViaMcp,
             interrupt: CapabilitySupport::Planned,
             resume: CapabilitySupport::Unsupported,
-            structured_output: CapabilitySupport::Unsupported,
+            structured_output: CapabilitySupport::Native,
             read_only_hint: CapabilitySupport::Native,
             notes: vec![
                 "Codex is currently treated as a one-shot runtime in awo.".to_string(),
                 "MCP-backed reasoning tools such as sequential thinking can be layered underneath without changing the orchestration model.".to_string(),
+                "OpenAI exposes usage and cost data at the provider layer, but the current awo CLI adapter does not ingest it yet.".to_string(),
+                "Codex exec exposes JSON event output and JSON-schema-constrained final responses.".to_string(),
             ],
         },
         RuntimeKind::Gemini => RuntimeCapabilityDescriptor {
@@ -145,8 +149,8 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             default_launch_mode: SessionLaunchMode::Oneshot.as_str().to_string(),
             cost_tier: CostTier::Cheap,
             limit_profile: LimitProfile::ApiMetered,
-            usage_reporting: CapabilitySupport::Unknown,
-            capacity_reporting: CapabilitySupport::Unknown,
+            usage_reporting: CapabilitySupport::Planned,
+            capacity_reporting: CapabilitySupport::Planned,
             budget_guardrails: CapabilitySupport::Unknown,
             session_lifetime: CapabilitySupport::AdapterManaged,
             operator_note: "Useful for large-context reads, audits, and lower-cost fallback work."
@@ -158,10 +162,12 @@ pub fn runtime_capabilities(runtime: RuntimeKind) -> RuntimeCapabilityDescriptor
             reasoning_mcp_tools: CapabilitySupport::ViaMcp,
             interrupt: CapabilitySupport::Planned,
             resume: CapabilitySupport::Unsupported,
-            structured_output: CapabilitySupport::Unknown,
+            structured_output: CapabilitySupport::Native,
             read_only_hint: CapabilitySupport::Native,
             notes: vec![
                 "Gemini already surfaces project-local skills, so awo should prefer repo-local context over heavy global projection.".to_string(),
+                "Google exposes usage and quota data at the provider layer, but the current awo CLI adapter does not ingest it yet.".to_string(),
+                "Gemini CLI exposes JSON and stream-json output modes in headless operation.".to_string(),
             ],
         },
         RuntimeKind::Shell => RuntimeCapabilityDescriptor {
@@ -209,9 +215,9 @@ pub fn usage_note_for_runtime(runtime: RuntimeKind) -> String {
         RuntimeKind::Shell => {
             "Shell has no token budget and does not expose model-usage telemetry.".to_string()
         }
-        RuntimeKind::Claude | RuntimeKind::Codex | RuntimeKind::Gemini => {
-            "Structured usage stats are not available through the current CLI adapter; inspect logs or provider dashboards for exact spend.".to_string()
-        }
+        RuntimeKind::Claude => "Structured usage stats are not available through the current Claude CLI adapter; inspect Anthropic usage APIs or dashboards for exact spend.".to_string(),
+        RuntimeKind::Codex => "Structured usage stats are not available through the current Codex CLI adapter; inspect OpenAI usage APIs or dashboards for exact spend.".to_string(),
+        RuntimeKind::Gemini => "Structured usage stats are not available through the current Gemini CLI adapter; inspect Google usage or quota dashboards for exact spend.".to_string(),
     }
 }
 
@@ -242,6 +248,10 @@ pub fn session_recovery_guidance(
             ),
             Some(SessionEndReason::TokenExhausted) => Some(
                 "Session likely exhausted context or token budget. Hand off to another agent, reduce scope, or choose a different model."
+                    .to_string(),
+            ),
+            Some(SessionEndReason::ProviderLimited) => Some(
+                "Session hit a provider quota or rate limit. Retry later, reduce concurrency, switch models, or inspect billing and quota state."
                     .to_string(),
             ),
             Some(SessionEndReason::OperatorCancelled) => Some(
@@ -280,6 +290,10 @@ mod tests {
         assert_eq!(capabilities.skill_preload, CapabilitySupport::Native);
         assert_eq!(capabilities.cost_tier, CostTier::Premium);
         assert_eq!(capabilities.limit_profile, LimitProfile::ApiMetered);
+        assert_eq!(capabilities.usage_reporting, CapabilitySupport::Planned);
+        assert_eq!(capabilities.capacity_reporting, CapabilitySupport::Planned);
+        assert_eq!(capabilities.budget_guardrails, CapabilitySupport::Native);
+        assert_eq!(capabilities.structured_output, CapabilitySupport::Native);
         assert_eq!(
             capabilities.session_lifetime,
             CapabilitySupport::AdapterManaged
@@ -290,12 +304,19 @@ mod tests {
     fn codex_capabilities_reflect_current_awo_model() {
         let capabilities = runtime_capabilities(RuntimeKind::Codex);
         assert_eq!(capabilities.default_launch_mode, "oneshot");
-        assert_eq!(
-            capabilities.structured_output,
-            CapabilitySupport::Unsupported
-        );
+        assert_eq!(capabilities.structured_output, CapabilitySupport::Native);
         assert_eq!(capabilities.cost_tier, CostTier::Standard);
+        assert_eq!(capabilities.usage_reporting, CapabilitySupport::Planned);
+        assert_eq!(capabilities.capacity_reporting, CapabilitySupport::Planned);
         assert_eq!(capabilities.budget_guardrails, CapabilitySupport::Unknown);
+    }
+
+    #[test]
+    fn gemini_capabilities_reflect_headless_output_support() {
+        let capabilities = runtime_capabilities(RuntimeKind::Gemini);
+        assert_eq!(capabilities.structured_output, CapabilitySupport::Native);
+        assert_eq!(capabilities.usage_reporting, CapabilitySupport::Planned);
+        assert_eq!(capabilities.capacity_reporting, CapabilitySupport::Planned);
     }
 
     #[test]
@@ -310,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn session_recovery_guidance_distinguishes_timeout_and_exhaustion() {
+    fn session_recovery_guidance_distinguishes_timeout_exhaustion_and_provider_limits() {
         let timeout = session_recovery_guidance(
             RuntimeKind::Codex,
             SessionStatus::Failed,
@@ -328,5 +349,22 @@ mod tests {
         )
         .expect("exhaustion guidance");
         assert!(exhausted.contains("token budget"));
+
+        let limited = session_recovery_guidance(
+            RuntimeKind::Codex,
+            SessionStatus::Failed,
+            Some(SessionEndReason::ProviderLimited),
+            SessionCapacityStatus::ProviderLimited,
+        )
+        .expect("provider limit guidance");
+        assert!(limited.contains("quota or rate limit"));
+    }
+
+    #[test]
+    fn usage_notes_point_to_provider_truth_sources() {
+        assert!(usage_note_for_runtime(RuntimeKind::Claude).contains("Anthropic"));
+        assert!(usage_note_for_runtime(RuntimeKind::Codex).contains("OpenAI"));
+        assert!(usage_note_for_runtime(RuntimeKind::Gemini).contains("Google"));
+        assert!(usage_note_for_runtime(RuntimeKind::Shell).contains("no token budget"));
     }
 }

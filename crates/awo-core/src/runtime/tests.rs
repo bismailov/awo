@@ -183,6 +183,33 @@ fn sync_oneshot_detects_token_exhaustion_from_logs() -> Result<()> {
 }
 
 #[test]
+fn sync_oneshot_detects_provider_limits_from_logs() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let paths = sample_paths(temp_dir.path());
+    let sessions_dir = paths.logs_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir)?;
+    fs::write(pid_path(&sessions_dir, "sess-provider-limit"), "999999")?;
+    fs::write(exit_path(&sessions_dir, "sess-provider-limit"), "1")?;
+
+    let mut session = running_oneshot_session("sess-provider-limit");
+    let stderr_path = sessions_dir.join("sess-provider-limit.err.log");
+    fs::write(
+        &stderr_path,
+        "request failed: rate limit exceeded for current quota\n",
+    )?;
+    session.stderr_path = Some(stderr_path.display().to_string());
+
+    assert!(sync_session(&paths, &mut session)?);
+    assert_eq!(session.status, SessionStatus::Failed);
+    assert_eq!(session.end_reason, Some(SessionEndReason::ProviderLimited));
+    assert_eq!(
+        session.capacity_status(),
+        SessionCapacityStatus::ProviderLimited
+    );
+    Ok(())
+}
+
+#[test]
 fn running_supervised_session_is_detected_via_supervisor_metadata() {
     let session = running_supervised_session("sess-4");
     assert!(session.is_supervised());

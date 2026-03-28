@@ -103,7 +103,7 @@ A runtime instance attached to a slot, including:
 - task brief
 - timing and exit metadata
 - terminal end reason
-- honest capacity state such as `unknown`, `unsupported`, `timed_out`, or `exhausted`
+- honest capacity state such as `unknown`, `unsupported`, `timed_out`, `exhausted`, or `provider_limited`
 
 ### Current Lead
 The active orchestrator for a team at this moment.
@@ -272,7 +272,7 @@ The product should support:
 
 For runtime usage and recovery, the product should also:
 - expose whether a runtime can report structured usage honestly
-- distinguish explicit timeout, operator cancel, likely exhaustion, and unknown failure
+- distinguish explicit timeout, operator cancel, provider limit/quota failure, likely exhaustion, and unknown failure
 - surface recovery guidance such as handoff, restart, scope reduction, or cleanup instead of just raw status labels
 
 Suggested quality gate prompts:

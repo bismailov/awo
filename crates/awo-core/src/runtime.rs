@@ -83,6 +83,7 @@ impl SessionRecord {
         match self.end_reason {
             Some(SessionEndReason::Timeout) => SessionCapacityStatus::TimedOut,
             Some(SessionEndReason::TokenExhausted) => SessionCapacityStatus::Exhausted,
+            Some(SessionEndReason::ProviderLimited) => SessionCapacityStatus::ProviderLimited,
             _ => match RuntimeKind::from_str(&self.runtime) {
                 Ok(RuntimeKind::Shell) => SessionCapacityStatus::Unsupported,
                 Ok(_) | Err(_) => SessionCapacityStatus::Unknown,
@@ -145,6 +146,7 @@ pub enum SessionEndReason {
     Timeout,
     OperatorCancelled,
     TokenExhausted,
+    ProviderLimited,
 }
 
 impl SessionEndReason {
@@ -173,6 +175,7 @@ pub enum SessionCapacityStatus {
     Unknown,
     TimedOut,
     Exhausted,
+    ProviderLimited,
 }
 
 impl SessionCapacityStatus {
@@ -574,7 +577,9 @@ fn infer_failed_end_reason(
         .collect::<Vec<_>>()
         .join("\n")
         .to_lowercase();
-    if looks_like_token_exhaustion(&combined) {
+    if looks_like_provider_limit(&combined) {
+        SessionEndReason::ProviderLimited
+    } else if looks_like_token_exhaustion(&combined) {
         SessionEndReason::TokenExhausted
     } else {
         SessionEndReason::RuntimeFailure
@@ -593,6 +598,22 @@ fn looks_like_token_exhaustion(text: &str) -> bool {
         "context window",
         "context length",
         "maximum context length",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn looks_like_provider_limit(text: &str) -> bool {
+    [
+        "rate limit",
+        "rate_limit",
+        "quota exceeded",
+        "quota has been exceeded",
+        "insufficient_quota",
+        "billing hard limit",
+        "credit balance is too low",
+        "resource exhausted",
+        "too many requests",
     ]
     .iter()
     .any(|needle| text.contains(needle))

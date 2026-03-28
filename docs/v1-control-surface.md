@@ -242,8 +242,20 @@ Runtime capabilities should distinguish:
 
 Operator surfaces should prefer honest guidance over fake precision:
 - say when usage is unsupported or unknown
-- show timeout vs likely exhaustion vs operator cancel distinctly
+- show timeout vs likely exhaustion vs provider limit vs operator cancel distinctly
 - recommend handoff, restart, scope reduction, or cleanup based on the observed end reason
+
+### MCP Live Interfaces
+The MCP facade should support both bounded polling and lightweight subscriptions:
+- `poll_events` for explicit cursor-based event reads
+- `wait_events` for long-poll event waits
+- `resources/subscribe` and `resources/unsubscribe` for resource-level update notifications on:
+  - `awo://repos`
+  - `awo://slots`
+  - `awo://sessions`
+  - `awo://review`
+  - `awo://teams`
+  - `awo://events`
 
 ### Context Commands
 #### `awo context pack <repo>`

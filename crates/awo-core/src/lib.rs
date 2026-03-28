@@ -26,7 +26,7 @@ pub use capabilities::{
 };
 pub use commands::{Command, CommandOutcome};
 pub use context::{ContextDoctorReport, RepoContext};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use daemon::DaemonClient;
 pub use daemon::{
     DaemonOptions, DaemonServer, DaemonStatus, ShutdownHandle, daemon_is_running,

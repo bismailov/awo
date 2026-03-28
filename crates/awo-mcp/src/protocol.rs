@@ -41,6 +41,15 @@ pub struct JsonRpcResponse {
     pub id: Option<serde_json::Value>,
 }
 
+/// A JSON-RPC 2.0 notification written to stdout.
+#[derive(Debug, Serialize)]
+pub struct JsonRpcNotification {
+    pub jsonrpc: &'static str,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct JsonRpcError {
     pub code: i64,
@@ -63,6 +72,16 @@ impl JsonRpcResponse {
             result: None,
             error: Some(JsonRpcError { code, message }),
             id,
+        }
+    }
+}
+
+impl JsonRpcNotification {
+    pub fn new(method: impl Into<String>, params: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            method: method.into(),
+            params: Some(params),
         }
     }
 }

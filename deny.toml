@@ -13,6 +13,7 @@ ignore = [
 version = 2
 confidence-threshold = 0.8
 allow = [
+    "0BSD",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
@@ -27,7 +28,6 @@ allow = [
 exceptions = []
 
 [bans]
-version = 1
 multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
@@ -36,7 +36,6 @@ skip = []
 skip-tree = []
 
 [sources]
-version = 1
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

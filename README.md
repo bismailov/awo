@@ -343,7 +343,7 @@ Awo Console is promising, but still early.
 Known gaps and active areas:
 
 - embedded terminals in the TUI are not finished
-- Windows PTY supervision is not complete yet
+- Windows daemon transport and ConPTY supervision exist, but deeper Windows workflow validation is still pending
 - daemon lifecycle UX is still maturing
 - richer output normalization and higher-level middleware behavior are still in progress
 - the product is not yet a fully mature "virtual super-agent" layer
