@@ -175,6 +175,39 @@ cargo install --path crates/awo-mcp --bin awo-mcp
 
 Prebuilt archives are published for version tags on [GitHub Releases](https://github.com/bismailov/awo/releases).
 
+## Prebuilt Install Quickstart
+
+For the current release, download the archive for your platform from [GitHub Releases](https://github.com/bismailov/awo/releases).
+
+macOS:
+
+- Apple Silicon: download `awo-v0.1.0-aarch64-apple-darwin.tar.gz`
+- Intel macOS: prebuilt archive not published yet for `v0.1.0`; use the source install above
+- extract the archive and move `awo`, `awod`, and `awo-mcp` into a directory on your `PATH`
+
+Example:
+
+```bash
+tar -xzf awo-v0.1.0-aarch64-apple-darwin.tar.gz
+mkdir -p ~/.local/bin
+cp awo awod awo-mcp ~/.local/bin/
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+awo
+```
+
+Windows:
+
+- download `awo-v0.1.0-x86_64-pc-windows-msvc.zip`
+- extract it to a folder such as `C:\Tools\awo`
+- add that folder to your `PATH`, or run the binaries directly from the extracted folder
+
+Example:
+
+```powershell
+.\awo.exe
+```
+
 Or run directly with Cargo while developing:
 
 ```bash
