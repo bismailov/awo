@@ -1,5 +1,76 @@
 # Progress Log
 
+## Session: 2026-04-01
+
+### Implementation Session: Unix Terminal Workspace Execution
+- **Status:** complete
+- **Started:** 2026-04-01
+- Actions taken:
+  - Added the first Unix-first embedded terminal contract in `awo-core` for supervised-session capture and input forwarding.
+  - Surfaced `embedded_terminal_supported` in session summaries so the app can make honest per-session attach decisions.
+  - Added an embedded terminal pane to the TUI with explicit view and interact modes.
+  - Added bounded operator behavior around the terminal workspace:
+    - search within terminal content
+    - follow mode
+    - page/top/bottom scroll controls
+    - layout cycling between docked, workspace, and focus views
+    - recovery-aware status when a session is no longer interactive
+  - Integrated the richer workspace into existing operator flows:
+    - opening the terminal from the Sessions pane
+    - opening the terminal from Team Dashboard task cards
+    - auto-opening the terminal workspace after supported direct session starts
+    - auto-opening the terminal workspace after supported team task starts
+    - easy escape hatches back to logs and review diffs from the terminal pane
+  - Refreshed operator docs so README and control-surface language match the new macOS/Linux-first terminal workspace and the Windows freeze policy.
+- Files created/modified:
+  - `crates/awo-core/src/runtime.rs`
+  - `crates/awo-core/src/runtime/supervisor.rs`
+  - `crates/awo-core/src/runtime/supervisor/tmux.rs`
+  - `crates/awo-core/src/commands.rs`
+  - `crates/awo-core/src/commands/session.rs`
+  - `crates/awo-core/src/commands/tests.rs`
+  - `crates/awo-core/src/events.rs`
+  - `crates/awo-core/src/lib.rs`
+  - `crates/awo-core/src/runtime/tests.rs`
+  - `crates/awo-core/src/snapshot.rs`
+  - `crates/awo-app/src/tui.rs`
+  - `crates/awo-app/src/tui/action_router.rs`
+  - `crates/awo-app/src/tui/action_router/dialogs.rs`
+  - `crates/awo-app/src/tui/action_router/dashboard.rs`
+  - `crates/awo-app/src/tui/keymap.rs`
+  - `README.md`
+  - `docs/v1-control-surface.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `planning/2026-04-01-terminal-workspace-plan.md`
+- Verification:
+  - `cargo fmt --all`
+  - `cargo test -p awo-app tui::action_router::tests -- --nocapture`
+  - `cargo clippy -p awo-app --tests -- -D warnings`
+  - `cargo test -p awo-core commands::tests::session_terminal_capture_with_nonexistent_session_returns_error -- --exact`
+
+### Planning Session: Embedded Terminal Workspace Direction Reset
+- **Status:** complete
+- **Started:** 2026-04-01
+- Actions taken:
+  - Re-read the active planning docs after the `v0.1.0` release to identify the real next strategic gap.
+  - Reframed the next product wave around an embedded terminal workspace on macOS/Linux rather than generic post-release polish.
+  - Set the platform policy for the next wave:
+    - macOS/Linux advance immediately
+    - Windows feature scope freezes at the current parity baseline except for bug fixes and regressions
+  - Wrote a dedicated strategy document for the terminal-workspace direction with milestones, risk areas, and rough effort bands.
+  - Refreshed the main task/development/continuation planning docs so the repo now points at the new direction explicitly.
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `planning/2026-04-01-terminal-workspace-plan.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `planning/2026-03-22-development-plan.md`
+- Verification:
+  - planning/documentation review against the current release checkpoint and repo-stated TUI limitations
+
 ## Session: 2026-03-27
 
 ### Implementation Session: Native Windows Release-Blocker Closure

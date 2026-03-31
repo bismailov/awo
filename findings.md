@@ -13,6 +13,30 @@
 - Commit and push the resulting checkpoint.
 
 ## Research Findings
+- The embedded terminal workspace is now real on macOS/Linux in the current repo state:
+  - supervised `tmux`-backed sessions can be attached directly inside the TUI
+  - the terminal pane now supports interact/view modes, follow mode, scrollback, search, and layout switching
+  - direct session starts and team task starts can open the richer workspace automatically when the session supports it
+- The right post-implementation product truth is now narrower than before:
+  - macOS/Linux have an early but real embedded terminal workspace
+  - Windows should still remain on the released baseline for this feature area until the Unix design settles further
+- Post-`v0.1.0`, the largest remaining product gap is no longer release wiring or first-line platform parity; it is the gap between the current operator dashboard and a true embedded terminal workspace.
+- The current TUI is now materially stronger as both mission control and a first embedded workspace, but the Unix-first slice should still be treated as an early foundation rather than the final UX.
+- The right sequencing is macOS/Linux first, Windows later:
+  - Unix PTY behavior is the natural place to stabilize attach/detach/reconnect semantics
+  - Windows now has a credible released baseline and should not be destabilized immediately by a terminal-workspace rewrite
+- “Freeze Windows” should mean:
+  - no new terminal-workspace feature expansion there for now
+  - bug fixes, regressions, packaging, and release maintenance still allowed
+- The embedded-terminal wave is not a small polish slice:
+  - single-pane MVP is roughly a 1-2 week effort
+  - solid usable workspace is roughly 4-8 weeks
+  - polished “bells and whistles” is more like 2-4 months
+- The key product risk is not only PTY rendering; it is input routing and lifecycle truth:
+  - global TUI shortcuts
+  - pane-local terminal input
+  - session attach/detach/reconnect
+  - durable log versus live terminal output semantics
 - The current roadmap is effectively complete except for the native Windows blocker surfaced by the real checklist run:
   - JSON CLI integration tests were contaminated by inherited `AWO_*` env vars from the outer `cargo test` environment
   - shell runtime works in `oneshot` mode on Windows
@@ -218,6 +242,8 @@
 | The March 31 Windows checklist report closes the repo's last explicit platform release blocker | The checked-in report shows passing fmt, clippy, serialized tests, repo/slot/session flows, daemon lifecycle, team workflows, and TUI quit smoke on a real Windows 10 machine |
 | The repo's current-state docs drifted behind the new Windows checkpoint immediately | `README.md`, `docs/platform-strategy.md`, and the continuation plans still described Windows validation as pending even after `windows_checklist_report.md` landed |
 | After Windows parity closure, the highest-value next work is operational rather than platform-debugging | The next questions are how to preserve Windows confidence with repeatable smoke coverage and how to package or ship the release candidate cleanly |
+| After `v0.1.0`, the most strategic next move is to deepen the TUI rather than keep polishing generic release notes | The current operator dashboard is useful, but the largest visible product gap is still “embedded terminals in the TUI are not finished” |
+| Windows should be held steady while the richer TUI grows on macOS/Linux | The Unix PTY path is a better place to stabilize the design, and the newly achieved Windows baseline is more valuable as a stable floor than as a moving experimental target |
 | A single shared smoke runner is a better product-quality investment than platform-specific checklist sprawl | `scripts/awo_smoke.py` now validates the core operator loop across macOS, Linux, and Windows with isolated state and machine-readable reports |
 | Release packaging should be reusable outside GitHub Actions | `scripts/package_release.py` keeps archive composition deterministic locally and in CI instead of hiding packaging logic inside workflow YAML |
 | The release path is only trustworthy if it proves the shipped binaries, not just the dev tree | The new `Release` workflow builds release-profile binaries, runs smoke validation against them, packages the archives, and publishes assets on version tags |

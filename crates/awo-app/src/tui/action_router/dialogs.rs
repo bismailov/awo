@@ -2,14 +2,14 @@ use super::super::forms::{
     ConfirmAction, ConfirmState, FormKind, FormState, blank_to_none, routing_preferences_from_form,
     split_csv,
 };
+use super::super::{
+    BackgroundResult, InputAction, InputMode, TeamDashboardFocus, TuiFocus, TuiState,
+    append_events, apply_command, dispatch_in_background, fetch_session_log, open_session_surface,
+    refresh_team_dashboard_data, selected_repo, selected_session, selected_slot, visible_sessions,
+};
 use super::dashboard::{
     dashboard_member_ids, selected_dashboard_member, selected_dashboard_plan,
     selected_dashboard_task, selected_dashboard_team,
-};
-use super::{
-    BackgroundResult, InputAction, InputMode, TeamDashboardFocus, TuiFocus, TuiState,
-    append_events, apply_command, dispatch_in_background, fetch_session_log,
-    refresh_team_dashboard_data, selected_repo, selected_session, selected_slot, visible_sessions,
 };
 use anyhow::{Result, anyhow};
 use awo_core::runtime::{RuntimeKind, SessionLaunchMode};
@@ -88,8 +88,7 @@ pub(super) fn handle_text_input_key(
                         if let Ok(new_snapshot) = core.snapshot()
                             && let Some(session) = visible_sessions(&new_snapshot, state).last()
                         {
-                            fetch_session_log(core, state, &session.id);
-                            state.log_scroll = u16::MAX;
+                            open_session_surface(core, state, session);
                         }
                     }
                 }
@@ -99,6 +98,15 @@ pub(super) fn handle_text_input_key(
                     } else {
                         Some(input.trim().to_lowercase())
                     };
+                }
+                InputAction::SetTerminalSearch => {
+                    state.terminal_search_query = if input.trim().is_empty() {
+                        None
+                    } else {
+                        Some(input.trim().to_string())
+                    };
+                    state.terminal_scroll = 0;
+                    state.terminal_follow_output = false;
                 }
             }
         }

@@ -13,7 +13,7 @@ It answers four questions:
 
 Current baseline for this document:
 - branch: `main`
-- checkpoint: post-Windows validation checkpoint on March 31, 2026
+- checkpoint: post-`v0.1.0` release and terminal-workspace direction reset on April 1, 2026
 
 ## Product Vision
 
@@ -143,12 +143,22 @@ As the project moves toward public development, keep these repository rules in p
 
 The most important remaining work now falls into six buckets.
 
-### 1. TUI Responsiveness And Structure
+### 1. Embedded Terminal Workspace
+- the TUI is still primarily an operator dashboard, not a full in-TUI terminal workspace
+- embedded terminal support remains the largest product-shape gap between the current release and the intended “mission control plus real workspace” experience
+- the next major product wave should focus on macOS/Linux first:
+  - embedded interactive session pane
+  - attach/detach/reconnect
+  - scrollback/search/copy ergonomics
+  - pane/layout management
+- Windows feature scope should stay frozen at the current parity baseline until the Unix design is stable
+
+### 2. TUI Responsiveness And Structure
 - the TUI now refreshes later snapshots from a background worker instead of doing periodic full refreshes on the render loop
 - `snapshot()` still performs runtime sync and manifest reconciliation, so further snapshot-cost reduction remains a polish/performance opportunity rather than a blocker
 - `crates/awo-app/src/tui/action_router.rs` has been reduced by extracting dialog handling, but more decomposition is still desirable before another major cockpit expansion
 
-### 2. Broker Maturity
+### 3. Broker Maturity
 - production-grade daemon lifecycle and degraded-state handling still need more real-world hardening
 - daemon health now requires a bounded RPC roundtrip instead of a bare socket connect
 - daemon clients now apply bounded stream I/O timeouts so unresponsive brokers fail more predictably
@@ -157,13 +167,16 @@ The most important remaining work now falls into six buckets.
 - broker-mode concurrency validation should deepen further
 - push/subscription-style event delivery should replace more polling behavior over time
 
-### 3. Platform Maturity
+### 4. Platform Maturity
 - Windows ConPTY and Named Pipe implementations now exist in the codebase
 - a native Windows 10 checklist run now passes repo, slot, session, daemon, team, and TUI smoke flows
 - the current macOS environment still cannot finish Windows-target verification because bundled `libsqlite3-sys` cross-compilation fails before the full Rust workspace can be validated
-- cross-platform smoke coverage is now scripted and wired into CI/release workflows; the remaining platform work is deeper polish rather than first-line parity validation
+- cross-platform smoke coverage is now scripted and wired into CI/release workflows
+- platform policy for the next wave should be:
+  - macOS/Linux: advance the embedded-terminal workspace aggressively
+  - Windows: hold feature scope steady and accept only bug fixes/regression repair until the Unix workspace design settles
 
-### 4. Runtime Usage Truth
+### 5. Runtime Usage Truth
 - provider-specific usage/capacity telemetry is still mostly advisory rather than structured
 - lead/worker recovery guidance is honest, but richer adapter-fed budget and lifetime data still needs work
 - runtime capability output now distinguishes `planned` adapter work from permanently `unknown` support for provider-backed telemetry
@@ -174,48 +187,54 @@ The most important remaining work now falls into six buckets.
   - Codex structured output
   - Gemini structured output
 
-### 5. Hardening And CI Maturity
+### 6. Hardening And CI Maturity
 - `EventBus` poison handling now recovers and warns instead of panicking immediately
 - output serialization no longer panics on unexpected JSON serialization failures
 - CI is now wired to run `cargo audit` and `cargo deny`, and both have now been validated locally
 - `cargo audit` currently reports one known warning: `RUSTSEC-2017-0008` (`serial` via `portable-pty`), and `deny.toml` now ignores that advisory explicitly pending an upstream/runtime change
 - `deny.toml` now also reflects the real Windows-transport dependency graph, including explicit `0BSD` allowance
 
-### 6. Middleware Enrichment
+### 7. Middleware Enrichment
 - automated context-pack generation
 - shared RPC type cleanup
 - stronger local MCP subscription semantics
 
-### 7. Release Finalization
-- help text and contributor docs still need a polish pass
-- manual scenario coverage needs a fresh full-product release sweep
-- known limitations should be tightened into a cleaner public release story
+### 8. Release Follow-Through
+- the first public release is now real rather than hypothetical
+- install and operator docs still need ongoing polish as the richer TUI lands
+- future releases should continue shipping from the new smoke-and-package pipeline, not from manual ad hoc steps
 
 ## Current Objectives
 
-1. Make the TUI feel responsive and maintainable under larger local workloads.
-2. Make the daemon truly feel like the default local broker.
-3. Keep the automated cross-platform release path healthy and observable.
-4. Deepen structured runtime usage/capacity truth without inventing fake telemetry.
-5. Finish validating and operationalizing the new CI/security checks.
-6. Turn the current strong engineering substrate into a public release-quality local product.
+1. Turn the TUI into a stronger embedded terminal workspace on macOS/Linux.
+2. Keep the TUI responsive and maintainable as that richer workspace lands.
+3. Make the daemon and session model support that richer in-TUI experience cleanly.
+4. Keep the automated cross-platform release path healthy and observable.
+5. Preserve Windows parity without destabilizing it during the Unix-first UX expansion.
+6. Deepen structured runtime usage/capacity truth without inventing fake telemetry.
 
 ## Recommended Next Milestones
 
-### Milestone 1: TUI Responsiveness And Decomposition
-Goal: keep the operator surface fast and maintainable as orchestration state grows.
-- completed: move periodic snapshot refresh off the render loop
-- completed: extract dialog/form-confirm workflow handling from `action_router.rs`
-- next: continue bounded decomposition only where new cockpit work would otherwise regrow the router
+### Milestone 1: Terminal Workspace Contract And Single-Pane MVP
+Goal: move from operator dashboard to embedded Unix session workspace.
+- next: define attach/detach/reconnect semantics
+- next: add a single interactive embedded terminal pane for macOS/Linux
+- next: keep the new path explicitly Unix-first while Windows remains frozen at the current baseline
 
-### Milestone 2: Broker Hardening
-Goal: make the daemon feel like a dependable local broker.
+### Milestone 2: Workspace Layout, Scrollback, And Ergonomics
+Goal: make the richer TUI usable for sustained daily work.
+- next: add pane/layout management
+- next: add reattach/recovery behavior
+- next: add search/copy/scrollback ergonomics
+
+### Milestone 3: Broker And Session Alignment
+Goal: make the daemon/session model feel native to the richer TUI.
 - completed so far: harden lifecycle/status/cleanup behavior around stale artifacts, degraded states, RPC health checks, client I/O timeouts, event-driven TUI refresh triggers, and MCP resource-subscription notifications
-- validate broker-mode concurrency
-- upgrade event delivery for live clients
+- next: validate attach/reconnect behavior under daemon-backed supervision
+- next: deepen live-session coordination where the richer TUI needs it
 
-### Milestone 3: Windows Completion And Regression Protection
-Goal: keep honest local parity on Windows proven and repeatable.
+### Milestone 4: Windows Regression Protection
+Goal: keep honest local parity on Windows proven and repeatable while freezing feature scope.
 - completed so far: implement Named Pipes for the daemon
 - completed so far: fix the concrete ConPTY exit-code and process-tree cancellation issues found during audit
 - completed so far: validate the main operator workflows on a real Windows 10 environment and record the checklist in `windows_checklist_report.md`

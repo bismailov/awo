@@ -2,7 +2,7 @@
 mod conpty;
 mod tmux;
 
-use super::{RuntimeKind, SessionLaunchMode, SessionRecord};
+use super::{RuntimeKind, SessionLaunchMode, SessionRecord, SessionTerminalInput};
 use crate::app::AppPaths;
 use crate::error::{AwoError, AwoResult};
 use crate::platform::{
@@ -139,6 +139,14 @@ impl SessionSupervisor {
         }
     }
 
+    pub(super) fn supports_embedded_terminal(self) -> bool {
+        match self {
+            Self::Tmux => true,
+            #[cfg(windows)]
+            Self::Conpty => false,
+        }
+    }
+
     fn matches_session(self, session: &SessionRecord) -> bool {
         match self {
             Self::Tmux => {
@@ -166,6 +174,36 @@ impl SessionSupervisor {
             "conpty" => Some(Self::Conpty),
             _ => None,
         }
+    }
+}
+
+pub(super) fn capture_embedded_terminal(
+    supervisor: SessionSupervisor,
+    _paths: &AppPaths,
+    session_id: &str,
+    max_lines: usize,
+) -> AwoResult<String> {
+    match supervisor {
+        SessionSupervisor::Tmux => tmux::capture(session_id, max_lines),
+        #[cfg(windows)]
+        SessionSupervisor::Conpty => Err(AwoError::invalid_state(format!(
+            "embedded terminal capture is not implemented for session `{session_id}` on Windows yet"
+        ))),
+    }
+}
+
+pub(super) fn send_embedded_terminal_input(
+    supervisor: SessionSupervisor,
+    _paths: &AppPaths,
+    session_id: &str,
+    input: &SessionTerminalInput,
+) -> AwoResult<()> {
+    match supervisor {
+        SessionSupervisor::Tmux => tmux::send_input(session_id, input),
+        #[cfg(windows)]
+        SessionSupervisor::Conpty => Err(AwoError::invalid_state(format!(
+            "embedded terminal input is not implemented for session `{session_id}` on Windows yet"
+        ))),
     }
 }
 

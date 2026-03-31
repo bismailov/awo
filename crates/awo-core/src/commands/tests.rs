@@ -2,7 +2,7 @@ use super::*;
 use crate::app::AppPaths;
 use crate::config::{AppConfig, AppSettings};
 use crate::error::AwoError;
-use crate::runtime::{RuntimeKind, SessionLaunchMode};
+use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionTerminalInput, SessionTerminalKey};
 use crate::skills::SkillRuntime;
 use crate::slot::SlotStrategy;
 use crate::store::Store;
@@ -138,6 +138,48 @@ fn session_log_with_nonexistent_session_returns_error() -> Result<()> {
         session_id: "nonexistent".to_string(),
         lines: Some(10),
         stream: None,
+    });
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AwoError::Validation { .. })
+            || matches!(err, AwoError::UnknownSessionId { .. })
+    );
+    assert!(err.to_string().contains("unknown session"));
+    Ok(())
+}
+
+#[test]
+fn session_terminal_capture_with_nonexistent_session_returns_error() -> Result<()> {
+    let (_dir, config, store) = setup_runner()?;
+    let mut runner = CommandRunner::new(&config, &store);
+
+    let result = runner.run(Command::SessionTerminalCapture {
+        session_id: "nonexistent".to_string(),
+        max_lines: Some(50),
+    });
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AwoError::Validation { .. })
+            || matches!(err, AwoError::UnknownSessionId { .. })
+    );
+    assert!(err.to_string().contains("unknown session"));
+    Ok(())
+}
+
+#[test]
+fn session_terminal_input_with_nonexistent_session_returns_error() -> Result<()> {
+    let (_dir, config, store) = setup_runner()?;
+    let mut runner = CommandRunner::new(&config, &store);
+
+    let result = runner.run(Command::SessionTerminalInput {
+        session_id: "nonexistent".to_string(),
+        input: SessionTerminalInput::Key {
+            key: SessionTerminalKey::Enter,
+        },
     });
 
     assert!(result.is_err());

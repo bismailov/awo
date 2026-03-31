@@ -1,7 +1,7 @@
 use crate::config::AppConfig;
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
-use crate::runtime::{RuntimeKind, SessionLaunchMode, sync_session};
+use crate::runtime::{RuntimeKind, SessionLaunchMode, SessionTerminalInput, sync_session};
 use crate::skills::{SkillLinkMode, SkillRuntime};
 use crate::slot::{SlotStatus, SlotStrategy};
 use crate::store::Store;
@@ -124,6 +124,16 @@ pub enum Command {
         session_id: String,
         lines: Option<usize>,
         stream: Option<String>,
+    },
+    #[serde(rename = "session.terminal.capture")]
+    SessionTerminalCapture {
+        session_id: String,
+        max_lines: Option<usize>,
+    },
+    #[serde(rename = "session.terminal.input")]
+    SessionTerminalInput {
+        session_id: String,
+        input: SessionTerminalInput,
     },
     #[serde(rename = "review.status")]
     ReviewStatus { repo_id: Option<String> },
@@ -261,6 +271,8 @@ impl Command {
             Self::SessionCancel { .. } => "session.cancel",
             Self::SessionDelete { .. } => "session.delete",
             Self::SessionLog { .. } => "session.log",
+            Self::SessionTerminalCapture { .. } => "session.terminal.capture",
+            Self::SessionTerminalInput { .. } => "session.terminal.input",
             Self::ReviewStatus { .. } => "review.status",
             Self::ReviewDiff { .. } => "review.diff",
             Self::TeamList { .. } => "team.list",
@@ -504,6 +516,13 @@ impl<'a> CommandRunner<'a> {
                 lines,
                 stream,
             } => self.run_session_log(session_id, lines, stream),
+            Command::SessionTerminalCapture {
+                session_id,
+                max_lines,
+            } => self.run_session_terminal_capture(session_id, max_lines),
+            Command::SessionTerminalInput { session_id, input } => {
+                self.run_session_terminal_input(session_id, input)
+            }
             Command::ReviewStatus { repo_id } => self.run_review_status(repo_id),
             Command::ReviewDiff { slot_id } => self.run_review_diff(slot_id),
             Command::TeamList { repo_id } => self.run_team_list(repo_id),

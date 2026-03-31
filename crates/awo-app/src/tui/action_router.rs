@@ -2,18 +2,19 @@ mod dashboard;
 mod dialogs;
 
 use super::{
-    BackgroundResult, InputAction, InputMode, TeamDashboardFocus, TuiFocus, TuiState,
-    append_events, apply_command, dispatch_in_background, fetch_session_log, fetch_slot_diff,
-    refresh_team_dashboard_data, selected_repo, selected_session, selected_slot, selected_team,
-    start_next_team_task, start_team_task_explicit, visible_sessions,
+    BackgroundResult, InputAction, InputMode, TERMINAL_SCROLL_PAGE, TeamDashboardFocus,
+    TerminalLayoutMode, TuiFocus, TuiState, apply_command, dispatch_in_background,
+    fetch_session_log, fetch_session_terminal, fetch_slot_diff, refresh_team_dashboard_data,
+    selected_repo, selected_session, selected_slot, selected_team, send_terminal_input,
+    start_next_team_task, start_team_task_explicit,
 };
-use awo_core::{AppCore, AppSnapshot, Command};
+use awo_core::{AppCore, AppSnapshot, Command, SessionTerminalInput, SessionTerminalKey};
 use crossbeam_channel::Sender;
 use crossterm::event::KeyCode;
 use dashboard::{
-    open_selected_task_diff, open_selected_task_log, open_slot_delete_confirm,
-    select_adjacent_actionable_task, selected_dashboard_member_count, selected_dashboard_task,
-    selected_dashboard_task_ids, selected_dashboard_team,
+    open_selected_task_diff, open_selected_task_log, open_selected_task_terminal,
+    open_slot_delete_confirm, select_adjacent_actionable_task, selected_dashboard_member_count,
+    selected_dashboard_task, selected_dashboard_task_ids, selected_dashboard_team,
 };
 use dialogs::{
     approve_selected_plan_item, handle_confirm_key, handle_enter, handle_form_key,
@@ -41,6 +42,129 @@ pub(crate) fn handle_key_event(
         return KeyOutcome::Continue;
     }
 
+    if state.terminal_input_mode {
+        let Some(session_id) = state.terminal_session_id.clone() else {
+            state.terminal_input_mode = false;
+            state.status = "Error: no terminal session is attached.".to_string();
+            return KeyOutcome::Continue;
+        };
+
+        match key {
+            KeyCode::Esc => {
+                state.terminal_input_mode = false;
+                state.status = format!("Terminal `{session_id}` switched to view mode.");
+            }
+            KeyCode::Char(c) => {
+                send_terminal_input(
+                    core,
+                    state,
+                    &session_id,
+                    SessionTerminalInput::Text {
+                        text: c.to_string(),
+                    },
+                );
+            }
+            KeyCode::Enter => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Enter,
+                },
+            ),
+            KeyCode::Backspace => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Backspace,
+                },
+            ),
+            KeyCode::Tab => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Tab,
+                },
+            ),
+            KeyCode::Up => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Up,
+                },
+            ),
+            KeyCode::Down => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Down,
+                },
+            ),
+            KeyCode::Left => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Left,
+                },
+            ),
+            KeyCode::Right => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Right,
+                },
+            ),
+            KeyCode::PageUp => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::PageUp,
+                },
+            ),
+            KeyCode::PageDown => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::PageDown,
+                },
+            ),
+            KeyCode::Home => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Home,
+                },
+            ),
+            KeyCode::End => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::End,
+                },
+            ),
+            KeyCode::Delete => send_terminal_input(
+                core,
+                state,
+                &session_id,
+                SessionTerminalInput::Key {
+                    key: SessionTerminalKey::Delete,
+                },
+            ),
+            _ => {}
+        }
+        return KeyOutcome::Continue;
+    }
+
     match state.input_mode.clone() {
         InputMode::TextInput { .. } => {
             handle_text_input_key(core, state, snapshot, key, tx);
@@ -64,15 +188,38 @@ pub(crate) fn handle_key_event(
             KeyOutcome::Continue
         }
         KeyCode::Char('/') => {
+            let (prompt_label, buffer, on_submit) = if state.focus == TuiFocus::Terminal {
+                (
+                    "Terminal search: ".to_string(),
+                    state.terminal_search_query.clone().unwrap_or_default(),
+                    InputAction::SetTerminalSearch,
+                )
+            } else {
+                (
+                    "Filter: ".to_string(),
+                    String::new(),
+                    InputAction::SetFilter,
+                )
+            };
             state.input_mode = InputMode::TextInput {
-                prompt_label: "Filter: ".to_string(),
-                buffer: String::new(),
-                on_submit: InputAction::SetFilter,
+                prompt_label,
+                buffer,
+                on_submit,
             };
             KeyOutcome::Continue
         }
         KeyCode::Esc => {
-            if state.focus == TuiFocus::TeamDashboard {
+            if state.focus == TuiFocus::Terminal {
+                state.focus = TuiFocus::Sessions;
+                state.show_terminal_panel = false;
+                state.terminal_input_mode = false;
+                state.terminal_content = None;
+                state.terminal_session_id = None;
+                state.terminal_scroll = 0;
+                state.terminal_search_query = None;
+                state.terminal_follow_output = true;
+                state.terminal_layout = TerminalLayoutMode::Docked;
+            } else if state.focus == TuiFocus::TeamDashboard {
                 state.focus = TuiFocus::Teams;
             } else if state.filter_query.is_some() {
                 state.filter_query = None;
@@ -94,7 +241,14 @@ pub(crate) fn handle_key_event(
                     TuiFocus::Repos => TuiFocus::Teams,
                     TuiFocus::Teams => TuiFocus::Slots,
                     TuiFocus::Slots => TuiFocus::Sessions,
-                    TuiFocus::Sessions => TuiFocus::Repos,
+                    TuiFocus::Sessions => {
+                        if state.show_terminal_panel {
+                            TuiFocus::Terminal
+                        } else {
+                            TuiFocus::Repos
+                        }
+                    }
+                    TuiFocus::Terminal => TuiFocus::Repos,
                     TuiFocus::TeamDashboard => TuiFocus::Repos,
                 };
             }
@@ -110,10 +264,17 @@ pub(crate) fn handle_key_event(
                 };
             } else {
                 state.focus = match state.focus {
-                    TuiFocus::Repos => TuiFocus::Sessions,
+                    TuiFocus::Repos => {
+                        if state.show_terminal_panel {
+                            TuiFocus::Terminal
+                        } else {
+                            TuiFocus::Sessions
+                        }
+                    }
                     TuiFocus::Teams => TuiFocus::Repos,
                     TuiFocus::Slots => TuiFocus::Teams,
                     TuiFocus::Sessions => TuiFocus::Slots,
+                    TuiFocus::Terminal => TuiFocus::Sessions,
                     TuiFocus::TeamDashboard => TuiFocus::Teams,
                 };
             }
@@ -125,6 +286,42 @@ pub(crate) fn handle_key_event(
         }
         KeyCode::Down | KeyCode::Char('j') => {
             move_selection_down(state, snapshot);
+            KeyOutcome::Continue
+        }
+        KeyCode::PageUp => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = state.terminal_scroll.saturating_sub(TERMINAL_SCROLL_PAGE);
+                state.terminal_follow_output = false;
+            } else if state.show_log_panel {
+                state.log_scroll = state.log_scroll.saturating_sub(TERMINAL_SCROLL_PAGE);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::PageDown => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = state.terminal_scroll.saturating_add(TERMINAL_SCROLL_PAGE);
+                state.terminal_follow_output = false;
+            } else if state.show_log_panel {
+                state.log_scroll = state.log_scroll.saturating_add(TERMINAL_SCROLL_PAGE);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Home => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = 0;
+                state.terminal_follow_output = false;
+            } else if state.show_log_panel {
+                state.log_scroll = 0;
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::End => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = u16::MAX;
+                state.terminal_follow_output = true;
+            } else if state.show_log_panel {
+                state.log_scroll = u16::MAX;
+            }
             KeyOutcome::Continue
         }
         KeyCode::Char('s') => {
@@ -219,13 +416,22 @@ pub(crate) fn handle_key_event(
             KeyOutcome::Continue
         }
         KeyCode::Char('G') => {
-            if state.focus == TuiFocus::TeamDashboard {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = u16::MAX;
+                state.terminal_follow_output = true;
+            } else if state.focus == TuiFocus::TeamDashboard {
                 open_plan_generate_form(state);
             }
             KeyOutcome::Continue
         }
         KeyCode::Char('r') => {
-            if state.show_log_panel {
+            if state.focus == TuiFocus::Terminal {
+                if let Some(session_id) = state.terminal_session_id.clone() {
+                    state.terminal_follow_output = true;
+                    fetch_session_terminal(core, state, &session_id);
+                    state.terminal_scroll = u16::MAX;
+                }
+            } else if state.show_log_panel {
                 if let Some(session_id) = state.log_session_id.clone() {
                     if let Some(slot_id) = session_id.strip_prefix("slot-diff:") {
                         fetch_slot_diff(core, state, slot_id);
@@ -314,13 +520,88 @@ pub(crate) fn handle_key_event(
             KeyOutcome::Continue
         }
         KeyCode::Char('o') => {
-            if state.focus == TuiFocus::TeamDashboard {
+            if state.focus == TuiFocus::Terminal {
+                if let Some(session_id) = state.terminal_session_id.clone() {
+                    fetch_session_log(core, state, &session_id);
+                    state.log_scroll = u16::MAX;
+                    state.focus = TuiFocus::Sessions;
+                }
+            } else if state.focus == TuiFocus::TeamDashboard {
                 open_selected_task_log(core, state);
             }
             KeyOutcome::Continue
         }
+        KeyCode::Char('e') => {
+            if state.focus == TuiFocus::Sessions {
+                if let Some(session) = selected_session(snapshot, state) {
+                    if session.embedded_terminal_supported {
+                        fetch_session_terminal(core, state, &session.id);
+                        state.focus = TuiFocus::Terminal;
+                        state.terminal_scroll = u16::MAX;
+                        state.terminal_follow_output = true;
+                        state.terminal_layout = TerminalLayoutMode::Workspace;
+                    } else {
+                        state.status = format!(
+                            "Session `{}` does not support embedded terminal capture on this platform.",
+                            session.id
+                        );
+                    }
+                }
+            } else if state.focus == TuiFocus::TeamDashboard {
+                open_selected_task_terminal(core, state, snapshot);
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('i') => {
+            if state.focus == TuiFocus::Terminal && state.show_terminal_panel {
+                state.terminal_input_mode = true;
+                state.status =
+                    "Terminal interaction mode enabled. Press Esc to return to view mode."
+                        .to_string();
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('f') => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_follow_output = !state.terminal_follow_output;
+                if state.terminal_follow_output {
+                    state.terminal_scroll = u16::MAX;
+                    if let Some(session_id) = state.terminal_session_id.clone() {
+                        fetch_session_terminal(core, state, &session_id);
+                    }
+                }
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('g') => {
+            if state.focus == TuiFocus::Terminal {
+                state.terminal_scroll = 0;
+                state.terminal_follow_output = false;
+            } else if state.show_log_panel {
+                state.log_scroll = 0;
+            }
+            KeyOutcome::Continue
+        }
+        KeyCode::Char('z') => {
+            if state.show_terminal_panel {
+                state.terminal_layout = state.terminal_layout.next();
+                state.status = format!("Terminal layout set to {}.", state.terminal_layout.label());
+            }
+            KeyOutcome::Continue
+        }
         KeyCode::Char('v') => {
-            if state.focus == TuiFocus::TeamDashboard {
+            if state.focus == TuiFocus::Terminal {
+                if let Some(session) = state.terminal_session_id.as_deref().and_then(|session_id| {
+                    snapshot
+                        .sessions
+                        .iter()
+                        .find(|session| session.id == session_id)
+                }) {
+                    fetch_slot_diff(core, state, &session.slot_id);
+                    state.log_scroll = u16::MAX;
+                    state.focus = TuiFocus::Sessions;
+                }
+            } else if state.focus == TuiFocus::TeamDashboard {
                 open_selected_task_diff(core, state);
             }
             KeyOutcome::Continue
@@ -396,6 +677,9 @@ pub(crate) fn handle_key_event(
 fn move_selection_up(state: &mut TuiState, snapshot: &AppSnapshot) {
     if state.show_log_panel {
         state.log_scroll = state.log_scroll.saturating_sub(1);
+    } else if state.focus == TuiFocus::Terminal {
+        state.terminal_scroll = state.terminal_scroll.saturating_sub(1);
+        state.terminal_follow_output = false;
     } else if state.focus == TuiFocus::TeamDashboard {
         match state.team_dashboard.focus {
             TeamDashboardFocus::Team => {
@@ -444,6 +728,7 @@ fn move_selection_up(state: &mut TuiState, snapshot: &AppSnapshot) {
                     state.selected_session_index -= 1;
                 }
             }
+            TuiFocus::Terminal => {}
             TuiFocus::TeamDashboard => {}
         }
     }
@@ -453,6 +738,9 @@ fn move_selection_up(state: &mut TuiState, snapshot: &AppSnapshot) {
 fn move_selection_down(state: &mut TuiState, snapshot: &AppSnapshot) {
     if state.show_log_panel {
         state.log_scroll = state.log_scroll.saturating_add(1);
+    } else if state.focus == TuiFocus::Terminal {
+        state.terminal_scroll = state.terminal_scroll.saturating_add(1);
+        state.terminal_follow_output = false;
     } else if state.focus == TuiFocus::TeamDashboard {
         match state.team_dashboard.focus {
             TeamDashboardFocus::Team => {
@@ -507,6 +795,7 @@ fn move_selection_down(state: &mut TuiState, snapshot: &AppSnapshot) {
                     state.selected_session_index += 1;
                 }
             }
+            TuiFocus::Terminal => {}
             TuiFocus::TeamDashboard => {}
         }
     }
@@ -518,7 +807,8 @@ mod tests {
     use super::{KeyOutcome, handle_key_event};
     use crate::tui::forms::{ConfirmState, FormKind, FormState};
     use crate::tui::{
-        InputAction, InputMode, TeamDashboardFocus, TeamDashboardState, TuiFocus, TuiState,
+        InputAction, InputMode, TeamDashboardFocus, TeamDashboardState, TerminalLayoutMode,
+        TuiFocus, TuiState,
     };
     use anyhow::Result;
     use awo_core::capabilities::CostTier;
@@ -621,6 +911,14 @@ mod tests {
             log_session_id: None,
             log_path: None,
             show_log_panel: false,
+            terminal_content: None,
+            terminal_session_id: None,
+            show_terminal_panel: false,
+            terminal_input_mode: false,
+            terminal_scroll: 0,
+            terminal_search_query: None,
+            terminal_follow_output: true,
+            terminal_layout: TerminalLayoutMode::Docked,
             pending_ops: 0,
             input_mode: InputMode::Normal,
             show_help: false,
@@ -1502,6 +1800,124 @@ mod tests {
             manifest.tasks[0].superseded_by_task_id.as_deref(),
             Some("task-2")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_search_uses_dedicated_prompt() -> Result<()> {
+        let env = TestEnv::new();
+        let mut core = env.core();
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::Terminal;
+        state.show_terminal_panel = true;
+        state.terminal_search_query = Some("error".to_string());
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Char('/'), tx);
+
+        match &state.input_mode {
+            InputMode::TextInput {
+                prompt_label,
+                buffer,
+                on_submit,
+            } => {
+                assert_eq!(prompt_label, "Terminal search: ");
+                assert_eq!(buffer, "error");
+                assert_eq!(*on_submit, InputAction::SetTerminalSearch);
+            }
+            other => panic!("expected terminal search prompt, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_escape_closes_panel_and_resets_workspace_state() -> Result<()> {
+        let env = TestEnv::new();
+        let mut core = env.core();
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::Terminal;
+        state.show_terminal_panel = true;
+        state.terminal_input_mode = true;
+        state.terminal_session_id = Some("session-1".to_string());
+        state.terminal_content = Some("hello".to_string());
+        state.terminal_search_query = Some("error".to_string());
+        state.terminal_layout = TerminalLayoutMode::Workspace;
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Esc, tx.clone());
+        assert_eq!(state.focus, TuiFocus::Terminal);
+        assert!(!state.terminal_input_mode);
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Esc, tx);
+
+        assert_eq!(state.focus, TuiFocus::Sessions);
+        assert!(!state.show_terminal_panel);
+        assert!(!state.terminal_input_mode);
+        assert!(state.terminal_session_id.is_none());
+        assert!(state.terminal_content.is_none());
+        assert!(state.terminal_search_query.is_none());
+        assert_eq!(state.terminal_layout, TerminalLayoutMode::Docked);
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_layout_toggle_cycles_modes() -> Result<()> {
+        let env = TestEnv::new();
+        let mut core = env.core();
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.show_terminal_panel = true;
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('z'),
+            tx.clone(),
+        );
+        assert_eq!(state.terminal_layout, TerminalLayoutMode::Workspace);
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::Char('z'),
+            tx.clone(),
+        );
+        assert_eq!(state.terminal_layout, TerminalLayoutMode::Focus);
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Char('z'), tx);
+        assert_eq!(state.terminal_layout, TerminalLayoutMode::Docked);
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_scroll_shortcuts_toggle_follow_mode() -> Result<()> {
+        let env = TestEnv::new();
+        let mut core = env.core();
+        let snapshot = core.snapshot()?;
+        let (tx, _rx) = unbounded();
+        let mut state = base_state();
+        state.focus = TuiFocus::Terminal;
+        state.show_terminal_panel = true;
+        state.terminal_scroll = 20;
+
+        handle_key_event(
+            &mut core,
+            &mut state,
+            &snapshot,
+            KeyCode::PageUp,
+            tx.clone(),
+        );
+        assert_eq!(state.terminal_scroll, 8);
+        assert!(!state.terminal_follow_output);
+
+        handle_key_event(&mut core, &mut state, &snapshot, KeyCode::Char('G'), tx);
+        assert_eq!(state.terminal_scroll, u16::MAX);
+        assert!(state.terminal_follow_output);
         Ok(())
     }
 

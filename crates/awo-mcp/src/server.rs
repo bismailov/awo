@@ -373,7 +373,11 @@ fn subscribed_resource_uris_for_event(event: &awo_core::DomainEvent) -> &'static
         | awo_core::DomainEvent::SessionCancelled { .. }
         | awo_core::DomainEvent::SessionDeleted { .. }
         | awo_core::DomainEvent::SessionListLoaded { .. }
-        | awo_core::DomainEvent::SessionLogLoaded { .. } => &["awo://sessions", "awo://events"],
+        | awo_core::DomainEvent::SessionLogLoaded { .. }
+        | awo_core::DomainEvent::SessionTerminalCaptured { .. }
+        | awo_core::DomainEvent::SessionTerminalInputSent { .. } => {
+            &["awo://sessions", "awo://events"]
+        }
         awo_core::DomainEvent::ReviewStatusLoaded { .. }
         | awo_core::DomainEvent::ReviewDiffLoaded { .. } => &["awo://review", "awo://events"],
         awo_core::DomainEvent::TeamArchived { .. }

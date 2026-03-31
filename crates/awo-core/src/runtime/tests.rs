@@ -217,6 +217,8 @@ fn running_supervised_session_is_detected_via_supervisor_metadata() {
         SessionSupervisor::from_session(&session),
         Some(SessionSupervisor::Tmux)
     );
+    #[cfg(unix)]
+    assert!(session_supports_embedded_terminal(&session));
 }
 
 #[test]
@@ -224,6 +226,7 @@ fn oneshot_records_do_not_match_supervisor_metadata() {
     let session = running_oneshot_session("sess-5");
     assert!(!session.is_supervised());
     assert_eq!(SessionSupervisor::from_session(&session), None);
+    assert!(!session_supports_embedded_terminal(&session));
 }
 
 #[test]

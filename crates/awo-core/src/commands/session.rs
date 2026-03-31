@@ -3,10 +3,12 @@ use crate::context::{discover_repo_context, plan_session_context, render_session
 use crate::error::{AwoError, AwoResult};
 use crate::events::DomainEvent;
 use crate::runtime::{
-    SessionEndReason, SessionLaunchMode, SessionRunRequest, SessionStatus, cancel_session,
-    detect_runtime, detect_tmux, execute_prepared_session, prepare_session,
+    SessionEndReason, SessionLaunchMode, SessionRunRequest, SessionStatus, SessionTerminalInput,
+    cancel_session, capture_embedded_terminal, detect_runtime, detect_tmux,
+    execute_prepared_session, prepare_session, send_embedded_terminal_input,
 };
 use crate::slot::{FingerprintStatus, SlotStatus};
+use serde_json::json;
 use std::path::Path;
 
 impl<'a> CommandRunner<'a> {
@@ -325,6 +327,51 @@ impl<'a> CommandRunner<'a> {
         Ok(CommandOutcome::with_events(
             "Deleted session from local state.".to_string(),
             events,
+        ))
+    }
+
+    pub(super) fn run_session_terminal_capture(
+        &mut self,
+        session_id: String,
+        max_lines: Option<usize>,
+    ) -> AwoResult<CommandOutcome> {
+        let session = self
+            .store
+            .get_session(&session_id)?
+            .ok_or_else(|| self.session_not_found_error(&session_id))?;
+        let max_lines = max_lines.unwrap_or(500).max(1);
+        let content = capture_embedded_terminal(&self.config.paths, &session, max_lines)?;
+        let lines_returned = content.lines().count();
+
+        Ok(CommandOutcome::with_all(
+            format!(
+                "Captured {lines_returned} line(s) of embedded terminal output for session `{session_id}`."
+            ),
+            vec![],
+            json!({
+                "session_id": session_id,
+                "max_lines": max_lines,
+                "lines_returned": lines_returned,
+                "content": content,
+            }),
+        ))
+    }
+
+    pub(super) fn run_session_terminal_input(
+        &mut self,
+        session_id: String,
+        input: SessionTerminalInput,
+    ) -> AwoResult<CommandOutcome> {
+        let session = self
+            .store
+            .get_session(&session_id)?
+            .ok_or_else(|| self.session_not_found_error(&session_id))?;
+
+        send_embedded_terminal_input(&self.config.paths, &session, &input)?;
+
+        Ok(CommandOutcome::with_events(
+            format!("Sent embedded terminal input to session `{session_id}`."),
+            vec![],
         ))
     }
 }

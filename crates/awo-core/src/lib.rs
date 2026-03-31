@@ -48,6 +48,7 @@ pub use routing::{
 };
 pub use runtime::{
     RuntimeKind, SessionCapacityStatus, SessionEndReason, SessionLaunchMode, SessionStatus,
+    SessionTerminalInput, SessionTerminalKey,
 };
 pub use skills::{
     RepoSkillCatalog, SkillDoctorReport, SkillLinkMode, SkillLinkReport, SkillRuntime,

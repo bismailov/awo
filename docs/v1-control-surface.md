@@ -7,7 +7,7 @@ Define the user-facing surface for a TUI-first V1 while keeping the command mode
 V1 should behave like a workspace operations console with three access patterns:
 - TUI as the primary interactive surface
 - CLI-style commands underneath for scripts, shell users, and automation
-- external terminal handoff for rich agent interaction when embedded terminals are not yet worth the complexity
+- embedded terminal workspace for supervised Unix sessions, with log-first or external-terminal fallback where embedded attach is unavailable
 
 This means the command model should be primary, and the UI should mostly expose the same actions visually.
 

@@ -205,6 +205,7 @@ pub struct SessionSummary {
     pub runtime: String,
     pub supervisor: Option<String>,
     pub status: SessionStatus,
+    pub embedded_terminal_supported: bool,
     pub read_only: bool,
     pub dry_run: bool,
     pub log_path: Option<String>,
@@ -444,6 +445,8 @@ fn build_repo_summary(value: RegisteredRepo) -> RepoSummary {
 
 impl From<SessionRecord> for SessionSummary {
     fn from(value: SessionRecord) -> Self {
+        let embedded_terminal_supported =
+            crate::runtime::session_supports_embedded_terminal(&value);
         let capacity_status = value.capacity_status();
         let runtime_kind = value.runtime.parse().ok();
         let usage_note = runtime_kind.map(usage_note_for_runtime);
@@ -457,6 +460,7 @@ impl From<SessionRecord> for SessionSummary {
             runtime: value.runtime,
             supervisor: value.supervisor,
             status: value.status,
+            embedded_terminal_supported,
             read_only: value.read_only,
             dry_run: value.dry_run,
             log_path: value.stdout_path,

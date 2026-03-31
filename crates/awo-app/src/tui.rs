@@ -7,7 +7,7 @@ use anyhow::Result;
 use awo_core::{
     AppCore, AppSnapshot, Command, DomainEvent, MemberRoutingSummary, PlanItemState, RepoSummary,
     RoutingPreferencesSummary, RuntimeCapabilityDescriptor, SessionEndReason, SessionLaunchMode,
-    SessionStatus, SessionSummary, SlotSummary, TaskCardState, TeamManifest,
+    SessionStatus, SessionSummary, SessionTerminalInput, SlotSummary, TaskCardState, TeamManifest,
     TeamSummary as CoreTeamSummary, TeamTaskStartOptions,
 };
 use crossbeam_channel::Sender;
@@ -27,6 +27,8 @@ use tracing::info;
 
 const SNAPSHOT_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const EVENT_REFRESH_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const TERMINAL_CAPTURE_LINES: usize = 500;
+const TERMINAL_SCROLL_PAGE: u16 = 12;
 
 pub(crate) struct BackgroundResult {
     summary: String,
@@ -67,7 +69,33 @@ enum TuiFocus {
     Teams,
     Slots,
     Sessions,
+    Terminal,
     TeamDashboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalLayoutMode {
+    Docked,
+    Workspace,
+    Focus,
+}
+
+impl TerminalLayoutMode {
+    fn next(self) -> Self {
+        match self {
+            Self::Docked => Self::Workspace,
+            Self::Workspace => Self::Focus,
+            Self::Focus => Self::Docked,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Docked => "Docked",
+            Self::Workspace => "Workspace",
+            Self::Focus => "Focus",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +115,7 @@ pub(crate) enum InputAction {
     AcquireSlot,
     StartSession,
     SetFilter,
+    SetTerminalSearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +149,14 @@ pub(crate) struct TuiState {
     log_session_id: Option<String>,
     log_path: Option<String>,
     show_log_panel: bool,
+    terminal_content: Option<String>,
+    terminal_session_id: Option<String>,
+    show_terminal_panel: bool,
+    terminal_input_mode: bool,
+    terminal_scroll: u16,
+    terminal_search_query: Option<String>,
+    terminal_follow_output: bool,
+    terminal_layout: TerminalLayoutMode,
     pending_ops: usize,
     input_mode: InputMode,
     show_help: bool,
@@ -129,6 +166,12 @@ pub(crate) struct TuiState {
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<std::time::Instant>,
     snapshot_refresh_in_flight: bool,
+}
+
+struct TerminalWorkspaceData<'a> {
+    visible_slots: &'a [&'a SlotSummary],
+    visible_sessions: &'a [&'a SessionSummary],
+    visible_teams: &'a [&'a CoreTeamSummary],
 }
 
 pub fn run_tui() -> Result<()> {
@@ -166,6 +209,14 @@ pub fn run_tui() -> Result<()> {
         log_session_id: None,
         log_path: None,
         show_log_panel: false,
+        terminal_content: None,
+        terminal_session_id: None,
+        show_terminal_panel: false,
+        terminal_input_mode: false,
+        terminal_scroll: 0,
+        terminal_search_query: None,
+        terminal_follow_output: true,
+        terminal_layout: TerminalLayoutMode::Docked,
         pending_ops: 0,
         input_mode: InputMode::Normal,
         show_help: false,
@@ -266,6 +317,36 @@ pub fn run_tui() -> Result<()> {
             if session_running {
                 fetch_session_log(&mut core, &mut state, &session_id);
                 state.last_snapshot_time = None; // Force refresh after log fetch
+            }
+        }
+
+        if state.show_terminal_panel
+            && let Some(session_id) = state.terminal_session_id.clone()
+        {
+            if let Some(session) = snapshot
+                .sessions
+                .iter()
+                .find(|session| session.id == session_id)
+            {
+                if session.embedded_terminal_supported
+                    && session.status == awo_core::runtime::SessionStatus::Running
+                    && state.terminal_follow_output
+                {
+                    fetch_session_terminal(&mut core, &mut state, &session_id);
+                } else if state.terminal_input_mode {
+                    state.terminal_input_mode = false;
+                    state.status = format!(
+                        "Session `{session_id}` is no longer interactive; terminal switched to view mode."
+                    );
+                }
+            } else {
+                state.show_terminal_panel = false;
+                state.terminal_input_mode = false;
+                state.terminal_content = None;
+                state.terminal_session_id = None;
+                state.status = format!(
+                    "Attached terminal session `{session_id}` is no longer present in the snapshot."
+                );
             }
         }
 
@@ -393,6 +474,18 @@ pub(crate) fn selected_session<'a>(
     sessions.get(state.selected_session_index).copied()
 }
 
+fn terminal_attached_session<'a>(
+    snapshot: &'a AppSnapshot,
+    state: &TuiState,
+) -> Option<&'a SessionSummary> {
+    state.terminal_session_id.as_deref().and_then(|session_id| {
+        snapshot
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+    })
+}
+
 pub(crate) fn clamp_selection(state: &mut TuiState, snapshot: &AppSnapshot) {
     let repo_count = visible_repos(snapshot, state).len();
     state.selected_repo_index = if repo_count > 0 {
@@ -516,6 +609,8 @@ pub(crate) fn fetch_session_log(core: &mut AppCore, state: &mut TuiState, sessio
                     state.log_session_id = Some(session_id.clone());
                     state.log_path = Some(log_path.clone());
                     state.show_log_panel = true;
+                    state.show_terminal_panel = false;
+                    state.terminal_input_mode = false;
                 }
             }
             append_events(state, outcome.events);
@@ -540,6 +635,8 @@ pub(crate) fn fetch_slot_diff(core: &mut AppCore, state: &mut TuiState, slot_id:
                     state.log_session_id = Some(format!("slot-diff:{}", slot_id.unwrap_or("?")));
                     state.log_path = slot_path.map(ToString::to_string);
                     state.show_log_panel = true;
+                    state.show_terminal_panel = false;
+                    state.terminal_input_mode = false;
                 }
             }
             append_events(state, outcome.events);
@@ -547,6 +644,97 @@ pub(crate) fn fetch_slot_diff(core: &mut AppCore, state: &mut TuiState, slot_id:
         Err(error) => {
             state.status = format!("Error: {error:#}");
         }
+    }
+}
+
+pub(crate) fn fetch_session_terminal(core: &mut AppCore, state: &mut TuiState, session_id: &str) {
+    match core.dispatch(Command::SessionTerminalCapture {
+        session_id: session_id.to_string(),
+        max_lines: Some(TERMINAL_CAPTURE_LINES),
+    }) {
+        Ok(outcome) => {
+            let session_switched = state.terminal_session_id.as_deref() != Some(session_id);
+            if let Some(data) = &outcome.data
+                && let Some(content) = data.get("content").and_then(|value| value.as_str())
+            {
+                state.terminal_content = Some(content.to_string());
+                state.terminal_session_id = Some(session_id.to_string());
+                state.show_terminal_panel = true;
+                state.show_log_panel = false;
+                if session_switched {
+                    state.terminal_follow_output = true;
+                    state.terminal_search_query = None;
+                    state.terminal_scroll = u16::MAX;
+                } else if state.terminal_follow_output {
+                    state.terminal_scroll = u16::MAX;
+                }
+            }
+        }
+        Err(error) => {
+            state.status = format!("Error: {error:#}");
+            state.terminal_input_mode = false;
+        }
+    }
+}
+
+pub(crate) fn send_terminal_input(
+    core: &mut AppCore,
+    state: &mut TuiState,
+    session_id: &str,
+    input: SessionTerminalInput,
+) {
+    match core.dispatch(Command::SessionTerminalInput {
+        session_id: session_id.to_string(),
+        input,
+    }) {
+        Ok(_) => fetch_session_terminal(core, state, session_id),
+        Err(error) => state.status = format!("Error: {error:#}"),
+    }
+}
+
+fn terminal_display_content(state: &TuiState) -> String {
+    let Some(content) = state.terminal_content.as_deref() else {
+        return "(no terminal content yet)".to_string();
+    };
+
+    let Some(query) = state.terminal_search_query.as_deref() else {
+        return content.to_string();
+    };
+
+    let lowered = query.to_lowercase();
+    let filtered = content
+        .lines()
+        .filter(|line| line.to_lowercase().contains(&lowered))
+        .collect::<Vec<_>>();
+    if filtered.is_empty() {
+        format!("(no terminal lines match search `{query}`)")
+    } else {
+        filtered.join("\n")
+    }
+}
+
+pub(crate) fn open_session_surface(
+    core: &mut AppCore,
+    state: &mut TuiState,
+    session: &SessionSummary,
+) {
+    if session.embedded_terminal_supported {
+        fetch_session_terminal(core, state, &session.id);
+        state.focus = TuiFocus::Terminal;
+        state.terminal_layout = TerminalLayoutMode::Workspace;
+        state.terminal_follow_output = true;
+        state.status = format!(
+            "Attached terminal workspace to session `{}` on slot `{}`.",
+            session.id, session.slot_id
+        );
+    } else {
+        fetch_session_log(core, state, &session.id);
+        state.log_scroll = u16::MAX;
+        state.focus = TuiFocus::Sessions;
+        state.status = format!(
+            "Session `{}` does not expose an embedded terminal; opened log view instead.",
+            session.id
+        );
     }
 }
 
@@ -728,6 +916,15 @@ fn apply_team_task_start(core: &mut AppCore, state: &mut TuiState, options: Team
                     "Task `{}` started with {} on slot `{}`.",
                     execution.task_id, execution.runtime, execution.slot_id
                 );
+                if let Some(session_id) = execution.session_id.as_deref()
+                    && let Ok(snapshot) = core.snapshot()
+                    && let Some(session) = snapshot
+                        .sessions
+                        .iter()
+                        .find(|session| session.id == session_id)
+                {
+                    open_session_surface(core, state, session);
+                }
             }
         }
         Err(err) => {
@@ -764,7 +961,7 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     };
 
     let header = Paragraph::new(format!(
-        "awo V1 | q quit | / search | Tab focus | s acquire | Enter start/log | x cancel | X release | r refresh | Esc close | t next task | {}",
+        "awo V1 | q quit | / search | Tab focus | s acquire | Enter start/log | e terminal | i interact | x cancel | X release | r refresh | Esc close | t next task | {}",
         state.status
     ))
     .block(Block::default().borders(Borders::ALL).title(title));
@@ -808,6 +1005,22 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     let paths_widget =
         Paragraph::new(paths).block(Block::default().borders(Borders::ALL).title("Overview"));
     frame.render_widget(paths_widget, vertical[1]);
+
+    if state.show_terminal_panel && state.terminal_layout != TerminalLayoutMode::Docked {
+        render_terminal_workspace(
+            frame,
+            snapshot,
+            state,
+            vertical[2],
+            vertical[3],
+            TerminalWorkspaceData {
+                visible_slots: &visible_slots,
+                visible_sessions: &visible_sessions,
+                visible_teams: &visible_teams,
+            },
+        );
+        return;
+    }
 
     let top = Layout::horizontal([
         Constraint::Percentage(20),
@@ -925,12 +1138,18 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
             } else {
                 " "
             };
+            let terminal_badge = if session.embedded_terminal_supported {
+                " tty"
+            } else {
+                ""
+            };
             ListItem::new(format!(
-                "{} {} [{}] {} read_only={} dry_run={} exit={} reason={} cap={}",
+                "{} {} [{}] {}{} read_only={} dry_run={} exit={} reason={} cap={}",
                 marker,
                 session.runtime,
                 session.slot_id,
                 session.status,
+                terminal_badge,
                 session.read_only,
                 session.dry_run,
                 session
@@ -1013,24 +1232,67 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
     } else {
         warning_items
     };
-    let warnings =
-        List::new(warning_items).block(Block::default().borders(Borders::ALL).title("Warnings"));
-    frame.render_widget(warnings, bottom[2]);
-
-    let message_items: Vec<ListItem> = if state.messages.is_empty() {
-        vec![ListItem::new("(no events yet)")]
+    if state.show_terminal_panel {
+        let terminal_area = Rect {
+            x: bottom[2].x,
+            y: bottom[2].y,
+            width: bottom[2].width.saturating_add(bottom[3].width),
+            height: bottom[2].height,
+        };
+        let terminal_border_style = if state.focus == TuiFocus::Terminal {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let session_id = state.terminal_session_id.as_deref().unwrap_or("?");
+        let mode = if state.terminal_input_mode {
+            "INTERACT"
+        } else {
+            "VIEW"
+        };
+        let search = state
+            .terminal_search_query
+            .as_deref()
+            .map_or(String::new(), |query| format!(" | search={query}"));
+        let follow = if state.terminal_follow_output {
+            " | follow=on"
+        } else {
+            " | follow=off"
+        };
+        let title = format!(
+            "Terminal: {session_id} [{mode}] [{}] (i interact, z layout, f follow, / search){follow}{search}",
+            state.terminal_layout.label()
+        );
+        let terminal_widget = Paragraph::new(terminal_display_content(state))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(terminal_border_style),
+            )
+            .wrap(Wrap { trim: false })
+            .scroll((state.terminal_scroll, 0));
+        frame.render_widget(terminal_widget, terminal_area);
     } else {
-        state
-            .messages
-            .iter()
-            .rev()
-            .take(12)
-            .map(|message| ListItem::new(message.clone()))
-            .collect()
-    };
-    let messages =
-        List::new(message_items).block(Block::default().borders(Borders::ALL).title("Event Log"));
-    frame.render_widget(messages, bottom[3]);
+        let warnings = List::new(warning_items)
+            .block(Block::default().borders(Borders::ALL).title("Warnings"));
+        frame.render_widget(warnings, bottom[2]);
+
+        let message_items: Vec<ListItem> = if state.messages.is_empty() {
+            vec![ListItem::new("(no events yet)")]
+        } else {
+            state
+                .messages
+                .iter()
+                .rev()
+                .take(12)
+                .map(|message| ListItem::new(message.clone()))
+                .collect()
+        };
+        let messages = List::new(message_items)
+            .block(Block::default().borders(Borders::ALL).title("Event Log"));
+        frame.render_widget(messages, bottom[3]);
+    }
 
     if state.show_log_panel {
         let log_id = state.log_session_id.as_deref().unwrap_or("?");
@@ -1104,6 +1366,292 @@ fn render(frame: &mut Frame, snapshot: &AppSnapshot, state: &TuiState) {
         frame.render_widget(Clear, help_area);
         frame.render_widget(help_widget, help_area);
     }
+}
+
+fn render_terminal_workspace(
+    frame: &mut Frame,
+    snapshot: &AppSnapshot,
+    state: &TuiState,
+    top_area: Rect,
+    bottom_area: Rect,
+    data: TerminalWorkspaceData<'_>,
+) {
+    let workspace_area = Rect {
+        x: top_area.x,
+        y: top_area.y,
+        width: top_area.width,
+        height: top_area.height.saturating_add(bottom_area.height),
+    };
+
+    match state.terminal_layout {
+        TerminalLayoutMode::Docked => {}
+        TerminalLayoutMode::Workspace => {
+            let layout =
+                Layout::horizontal([Constraint::Percentage(26), Constraint::Percentage(74)])
+                    .split(workspace_area);
+            let sidebar =
+                Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)])
+                    .split(layout[0]);
+            let main = Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .split(layout[1]);
+            let inspector =
+                Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
+                    .split(main[1]);
+
+            render_workspace_session_list(frame, state, data.visible_sessions, sidebar[0]);
+            render_workspace_slot_list(frame, state, data.visible_slots, sidebar[1]);
+            render_terminal_panel(frame, snapshot, state, main[0], true);
+            render_workspace_terminal_detail(frame, snapshot, state, inspector[0]);
+            render_workspace_events(frame, snapshot, state, data.visible_teams, inspector[1]);
+        }
+        TerminalLayoutMode::Focus => {
+            let layout = Layout::vertical([Constraint::Percentage(82), Constraint::Percentage(18)])
+                .split(workspace_area);
+            let footer =
+                Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
+                    .split(layout[1]);
+            render_terminal_panel(frame, snapshot, state, layout[0], true);
+            render_workspace_terminal_detail(frame, snapshot, state, footer[0]);
+            render_workspace_events(frame, snapshot, state, data.visible_teams, footer[1]);
+        }
+    }
+}
+
+fn render_terminal_panel(
+    frame: &mut Frame,
+    snapshot: &AppSnapshot,
+    state: &TuiState,
+    area: Rect,
+    show_layout_hint: bool,
+) {
+    let terminal_border_style = if state.focus == TuiFocus::Terminal {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let session = terminal_attached_session(snapshot, state);
+    let session_id = state.terminal_session_id.as_deref().unwrap_or("?");
+    let mode = if state.terminal_input_mode {
+        "INTERACT"
+    } else {
+        "VIEW"
+    };
+    let search = state
+        .terminal_search_query
+        .as_deref()
+        .map_or(String::new(), |query| format!(" | search={query}"));
+    let follow = if state.terminal_follow_output {
+        " | follow=on"
+    } else {
+        " | follow=off"
+    };
+    let session_status = session
+        .map(|session| format!(" | status={}", session.status))
+        .unwrap_or_default();
+    let layout_hint = if show_layout_hint {
+        format!(" [{}]", state.terminal_layout.label())
+    } else {
+        String::new()
+    };
+    let title =
+        format!("Terminal: {session_id} [{mode}]{layout_hint}{session_status}{follow}{search}");
+    let terminal_widget = Paragraph::new(terminal_display_content(state))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(terminal_border_style),
+        )
+        .wrap(Wrap { trim: false })
+        .scroll((state.terminal_scroll, 0));
+    frame.render_widget(terminal_widget, area);
+}
+
+fn render_workspace_session_list(
+    frame: &mut Frame,
+    state: &TuiState,
+    visible_sessions: &[&SessionSummary],
+    area: Rect,
+) {
+    let session_items: Vec<ListItem> = if visible_sessions.is_empty() {
+        vec![ListItem::new("(no sessions)")]
+    } else {
+        visible_sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| {
+                let marker = if index == state.selected_session_index {
+                    ">"
+                } else {
+                    " "
+                };
+                let tty = if session.embedded_terminal_supported {
+                    " tty"
+                } else {
+                    ""
+                };
+                ListItem::new(format!(
+                    "{} {} [{}] {}{}",
+                    marker, session.runtime, session.slot_id, session.status, tty
+                ))
+            })
+            .collect()
+    };
+    let sessions_border_style = if state.focus == TuiFocus::Sessions {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let sessions = List::new(session_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Sessions")
+            .border_style(sessions_border_style),
+    );
+    frame.render_widget(sessions, area);
+}
+
+fn render_workspace_slot_list(
+    frame: &mut Frame,
+    state: &TuiState,
+    visible_slots: &[&SlotSummary],
+    area: Rect,
+) {
+    let slot_items: Vec<ListItem> = if visible_slots.is_empty() {
+        vec![ListItem::new("(no slots)")]
+    } else {
+        visible_slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                let marker = if index == state.selected_slot_index {
+                    ">"
+                } else {
+                    " "
+                };
+                ListItem::new(format!(
+                    "{} {} [{}] {} {} dirty={}",
+                    marker, slot.task_name, slot.id, slot.status, slot.strategy, slot.dirty
+                ))
+            })
+            .collect()
+    };
+    let slots_border_style = if state.focus == TuiFocus::Slots {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let slots = List::new(slot_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Slots")
+            .border_style(slots_border_style),
+    );
+    frame.render_widget(slots, area);
+}
+
+fn render_workspace_terminal_detail(
+    frame: &mut Frame,
+    snapshot: &AppSnapshot,
+    state: &TuiState,
+    area: Rect,
+) {
+    let mut lines = Vec::new();
+    if let Some(session) = terminal_attached_session(snapshot, state) {
+        lines.push(format!("Session: {} ({})", session.id, session.runtime));
+        lines.push(format!(
+            "Status: {} | slot={} | supervisor={}",
+            session.status,
+            session.slot_id,
+            session.supervisor.as_deref().unwrap_or("-")
+        ));
+        lines.push(format!(
+            "Mode: read_only={} dry_run={} terminal={}",
+            session.read_only,
+            session.dry_run,
+            if session.embedded_terminal_supported {
+                "supported"
+            } else {
+                "unsupported"
+            }
+        ));
+        lines.push(format!(
+            "Exit: {} | reason={} | capacity={}",
+            session
+                .exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            session
+                .end_reason
+                .map(SessionEndReason::as_str)
+                .unwrap_or("-"),
+            session.capacity_status.as_str(),
+        ));
+        if let Some(log_path) = &session.log_path {
+            lines.push(format!("Log: {log_path}"));
+        }
+        if let Some(usage_note) = &session.usage_note {
+            lines.push(format!("Usage: {usage_note}"));
+        }
+        if let Some(recovery_hint) = &session.recovery_hint {
+            lines.push(format!("Recovery: {recovery_hint}"));
+        } else if session.status.is_terminal() && session.status != SessionStatus::Completed {
+            lines.push(
+                "Recovery: inspect the terminal/log, then restart in a fresh slot or hand off with a focused follow-up."
+                    .to_string(),
+            );
+        }
+    } else {
+        lines.push("No terminal session is attached.".to_string());
+        lines.push("Press `e` on a running supported session to open the workspace.".to_string());
+    }
+
+    let detail = Paragraph::new(lines.join("\n"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Terminal Detail"),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(detail, area);
+}
+
+fn render_workspace_events(
+    frame: &mut Frame,
+    snapshot: &AppSnapshot,
+    state: &TuiState,
+    visible_teams: &[&CoreTeamSummary],
+    area: Rect,
+) {
+    let title = format!(
+        "Operator Feed (teams={} warnings={})",
+        visible_teams.len(),
+        snapshot.review.warnings.len()
+    );
+    let lines = if !state.messages.is_empty() {
+        state
+            .messages
+            .iter()
+            .rev()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+    } else if !snapshot.review.warnings.is_empty() {
+        snapshot
+            .review
+            .warnings
+            .iter()
+            .rev()
+            .take(10)
+            .map(|warning| warning.message.clone())
+            .collect::<Vec<_>>()
+    } else {
+        vec!["(no warnings or broker events yet)".to_string()]
+    };
+    let feed = Paragraph::new(lines.join("\n"))
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(feed, area);
 }
 
 fn render_team_dashboard(frame: &mut Frame, state: &TuiState) {
@@ -1942,6 +2490,14 @@ mod tests {
             log_session_id: None,
             log_path: None,
             show_log_panel: false,
+            terminal_content: None,
+            terminal_session_id: None,
+            show_terminal_panel: false,
+            terminal_input_mode: false,
+            terminal_scroll: 0,
+            terminal_search_query: None,
+            terminal_follow_output: true,
+            terminal_layout: TerminalLayoutMode::Docked,
             pending_ops: 0,
             input_mode: InputMode::Normal,
             show_help: false,
@@ -2137,6 +2693,7 @@ mod tests {
                 "Session likely exhausted context or token budget. Hand off to another agent, reduce scope, or choose a different model."
                     .to_string(),
             ),
+            embedded_terminal_supported: false,
         });
         let lines = render_dashboard_task_detail_lines(
             &TeamManifest {
@@ -2213,6 +2770,7 @@ mod tests {
             capacity_status: awo_core::runtime::SessionCapacityStatus::ProviderLimited,
             usage_note: None,
             recovery_hint: None,
+            embedded_terminal_supported: false,
         };
 
         let attention =

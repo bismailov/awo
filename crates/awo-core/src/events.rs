@@ -123,6 +123,15 @@ pub enum DomainEvent {
         log_path: String,
         content: String,
     },
+    SessionTerminalCaptured {
+        session_id: String,
+        lines_returned: usize,
+        max_lines: usize,
+    },
+    SessionTerminalInputSent {
+        session_id: String,
+        input_kind: String,
+    },
     TeamArchived {
         team_id: String,
     },
@@ -374,6 +383,17 @@ impl DomainEvent {
             } => {
                 format!("Loaded {lines_returned} line(s) of {stream} for session `{session_id}`")
             }
+            Self::SessionTerminalCaptured {
+                session_id,
+                lines_returned,
+                max_lines,
+            } => format!(
+                "Captured {lines_returned} line(s) of live terminal output for session `{session_id}` (max {max_lines})"
+            ),
+            Self::SessionTerminalInputSent {
+                session_id,
+                input_kind,
+            } => format!("Sent embedded terminal {input_kind} input to session `{session_id}`"),
             Self::TeamArchived { team_id } => {
                 format!("Team `{team_id}` archived")
             }

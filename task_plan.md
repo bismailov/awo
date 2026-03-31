@@ -1,10 +1,10 @@
-# Task Plan: Lead-Agent Task-Card Orchestration Implementation
+# Task Plan: Embedded Terminal Workspace Planning
 
 ## Goal
-Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
+Plan the next major product wave after the `v0.1.0` release, with the immediate focus on evolving the TUI from an operator dashboard into a richer embedded terminal workspace on macOS/Linux while freezing Windows feature scope at the current parity baseline.
 
 ## Current Phase
-Phase 24
+Phase 25
 
 ## Phases
 
@@ -228,6 +228,25 @@ Phase 24
 - [x] Re-run local verification for debug and release paths, then refresh the planning trace
 - **Status:** complete
 
+### Phase 25: Embedded Terminal Workspace Planning
+- [x] Reconcile the post-release product state with the desired “powerful ncurses workspace” direction
+- [x] Define the platform policy: advance macOS/Linux UX immediately and freeze Windows at the current released behavior except for bug fixes/regressions
+- [x] Write a dedicated implementation plan for the embedded terminal workspace with staged milestones, risks, and rough effort bands
+- [x] Refresh the continuation and development plans so the repo points at the new direction instead of generic post-release polish
+- [x] Update the planning trace with the new strategic checkpoint
+- **Status:** complete
+
+### Phase 26: Embedded Terminal Workspace Execution
+- [x] Add the Unix-first embedded terminal contract in `awo-core` for capture/input on supervised sessions
+- [x] Surface embedded-terminal support in session snapshots and the TUI
+- [x] Add a usable single-session terminal pane with interact/view modes
+- [x] Add reattach, follow mode, search, scrollback, and recovery-aware terminal behavior
+- [x] Add terminal workspace layouts for docked, workspace, and focus views
+- [x] Integrate the terminal workspace with direct session starts, team task starts, and review/log escape hatches
+- [x] Refresh README and control-surface docs for the new terminal workspace and the Windows freeze policy
+- [x] Run formatting, clippy, targeted app/core tests, and the full workspace test suite
+- **Status:** complete
+
 ## Key Questions
 1. What is the smallest durable lead-session model that keeps older team manifests compatible?
 2. How should Awo represent “replace the lead” without rewriting the existing structural lead profile?
@@ -235,6 +254,8 @@ Phase 24
 4. What is the smallest honest capacity model we can ship before any runtime exposes true token telemetry?
 5. Which task-card result fields are enough to power review without turning logs into the primary UX?
 6. How should Awo express “retain this worktree for reuse” versus “delete it now” without hiding cleanup inside teardown/reset?
+7. What is the smallest embedded-terminal slice that materially upgrades the TUI without accidentally committing the product to a half-finished tmux clone?
+8. How should macOS/Linux terminal richness evolve without destabilizing the now-working Windows parity baseline?
 
 ## Decisions Made
 | Decision | Rationale |

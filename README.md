@@ -327,20 +327,30 @@ The TUI is intentionally operational rather than decorative.
 
 - `q`: quit
 - `?`: toggle help
-- `/`: filter repos, teams, slots, and sessions
+- `/`: filter repos/teams/slots/sessions, or search terminal output when the terminal pane is focused
 - `Tab` / `Shift+Tab`: cycle focus
 - `j` / `k`: move selection
 - `s`: acquire a slot or start a selected team task
 - `Enter`: start a session on a selected slot or open a session log
+- `e`: open the embedded terminal for the selected supported session or team task
+- `i`: switch the focused terminal pane into interact mode
+- `z`: cycle terminal layout between docked, workspace, and focus views
+- `f`: toggle terminal follow mode
+- `PageUp` / `PageDown`: scroll terminal or log output faster
+- `g` / `G`: jump terminal or log output to top or bottom
 - `x`: cancel the selected session
 - `X`: release the selected slot
 - `c`: run `context doctor` for the selected repo
 - `d`: run `skills doctor` for the selected repo
-- `r`: refresh review state or refresh the current log panel
+- `o`: open the selected task-card log, or switch the attached terminal session into log view
+- `v`: open the selected task-card diff, or open the attached terminal session's slot diff
+- `r`: refresh review state, the current log panel, or the attached terminal pane
 - `R`: generate a report for the selected team
 - `T`: toggle the team dashboard
 - `t`: start the next team task
 - `Esc`: close panels or clear the current filter
+
+On macOS/Linux, supervised `pty` sessions now attach directly inside the TUI through the embedded terminal workspace. Starting a supported session from the Slots pane or starting a supported team task will automatically open that workspace. Windows intentionally stays on the current released dashboard/log baseline for now while the richer terminal UX settles on Unix first.
 
 ## Session Modes
 
@@ -377,7 +387,8 @@ Awo Console is promising, but still early.
 
 Known gaps and active areas:
 
-- embedded terminals in the TUI are not finished
+- the embedded terminal workspace is now available for supervised macOS/Linux sessions, but it is still early and currently tuned around the existing `tmux` supervision path
+- the richer embedded terminal workspace is intentionally not expanded on Windows yet; Windows stays on the current released baseline except for bug fixes and regressions
 - the first tagged public release still needs to be cut and observed end to end
 - daemon lifecycle UX is still maturing
 - richer output normalization and higher-level middleware behavior are still in progress

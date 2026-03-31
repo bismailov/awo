@@ -12,10 +12,12 @@ use strum_macros::{Display, EnumString, IntoStaticStr};
 mod supervisor;
 
 use supervisor::{
-    PreparedCommand, SessionSupervisor, build_session_id, clear_sidecar_if_exists,
+    PreparedCommand, SessionSupervisor, build_session_id,
+    capture_embedded_terminal as capture_supervised_terminal, clear_sidecar_if_exists,
     exit_code_path_for, format_command_line, materialize_shell_script, pid_path_for,
     pid_sidecar_exists, prepare_command, process_is_running, pty_supervision_available,
-    read_exit_code, read_pid, session_io_layout,
+    read_exit_code, read_pid, send_embedded_terminal_input as send_supervised_terminal_input,
+    session_io_layout,
 };
 #[cfg(test)]
 use supervisor::{shell_join, shell_quote, supervisor_ref};
@@ -257,6 +259,113 @@ pub struct SessionRunRequest<'a> {
 #[derive(Debug)]
 pub struct SessionExecutionResult {
     pub session: SessionRecord,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionTerminalKey {
+    Enter,
+    Backspace,
+    Tab,
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Delete,
+}
+
+impl SessionTerminalKey {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionTerminalInput {
+    Text { text: String },
+    Key { key: SessionTerminalKey },
+}
+
+pub fn session_supports_embedded_terminal(session: &SessionRecord) -> bool {
+    session.is_running()
+        && SessionSupervisor::from_session(session)
+            .is_some_and(|supervisor| supervisor.supports_embedded_terminal())
+}
+
+pub fn capture_embedded_terminal(
+    paths: &AppPaths,
+    session: &SessionRecord,
+    max_lines: usize,
+) -> AwoResult<String> {
+    if !session.is_running() {
+        return Err(AwoError::invalid_state(format!(
+            "session `{}` is not running",
+            session.id
+        )));
+    }
+
+    let supervisor = SessionSupervisor::from_session(session).ok_or_else(|| {
+        AwoError::invalid_state(format!(
+            "session `{}` is not backed by an embedded-terminal-capable supervisor",
+            session.id
+        ))
+    })?;
+
+    if !supervisor.supports_embedded_terminal() {
+        return Err(AwoError::invalid_state(format!(
+            "embedded terminal attach is not supported for session `{}` on this platform",
+            session.id
+        )));
+    }
+
+    capture_supervised_terminal(supervisor, paths, &session.id, max_lines.max(1))
+}
+
+pub fn send_embedded_terminal_input(
+    paths: &AppPaths,
+    session: &SessionRecord,
+    input: &SessionTerminalInput,
+) -> AwoResult<()> {
+    if !session.is_running() {
+        return Err(AwoError::invalid_state(format!(
+            "session `{}` is not running",
+            session.id
+        )));
+    }
+
+    let supervisor = SessionSupervisor::from_session(session).ok_or_else(|| {
+        AwoError::invalid_state(format!(
+            "session `{}` is not backed by an embedded-terminal-capable supervisor",
+            session.id
+        ))
+    })?;
+
+    if !supervisor.supports_embedded_terminal() {
+        return Err(AwoError::invalid_state(format!(
+            "embedded terminal attach is not supported for session `{}` on this platform",
+            session.id
+        )));
+    }
+
+    send_supervised_terminal_input(supervisor, paths, &session.id, input)
 }
 
 #[derive(Debug)]

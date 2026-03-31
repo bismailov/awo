@@ -1,4 +1,4 @@
-# Next Sessions Plan (March 28, 2026)
+# Next Sessions Plan (March 28, 2026; updated April 1, 2026)
 
 ## Purpose
 
@@ -6,14 +6,14 @@ Turn the latest audit findings into a concrete sequence of implementation sessio
 
 For the sharper post-broker checkpoint execution order, see `planning/2026-03-28-next-stages-execution-plan.md`.
 
-This plan is not another broad roadmap. It is the practical continuation plan from the current checkpoint, ordered around the real remaining risks:
+This plan is not another broad roadmap. It is the practical continuation plan from the current checkpoint.
 
-1. TUI responsiveness and decomposition
-2. broker hardening
-3. Windows completion
-4. runtime usage truth
-5. hardening and CI safety
-6. release finalization
+As of April 1, 2026, the practical direction has changed:
+
+1. build the embedded terminal workspace on macOS/Linux
+2. keep broker/session architecture aligned with that richer TUI
+3. freeze Windows feature scope at the current parity baseline
+4. preserve releaseability while the richer TUI grows
 
 Status update after the current execution pass:
 - Session 3 broker hardening follow-through is complete for the bounded local-product scope
@@ -23,7 +23,8 @@ Status update after the current execution pass:
 - Session 7 release finalization is complete for the current platform
 - Session 8 release-path and artifact strategy is now complete
 - Session 9 repeatable cross-platform smoke coverage is now complete
-- the remaining material work is cutting and observing the first tagged release plus any optional final enrichment
+- the first tagged release is now cut and published as `v0.1.0`
+- the remaining material work is no longer release-finalization; it is the macOS/Linux embedded terminal workspace
 
 ## Current Starting Point
 
@@ -37,9 +38,113 @@ The local product is already strong:
 - runtime recovery messaging exists
 - the workspace is green under `fmt`, `clippy`, and `test`
 
-The audit conclusion is that the project is no longer blocked on foundational features. It is now mainly blocked on **final release observation and optional last-mile polish**.
+The old “final release observation” blocker is closed.
+
+The new primary product opportunity is:
+
+- turn the TUI from a strong operator dashboard into a stronger in-TUI terminal workspace
+
+Windows is explicitly **not** the place to expand that feature first. Windows should stay stable at the current parity baseline while macOS/Linux carry the next UX wave.
 
 ## Session Order
+
+### Session 1: Terminal Workspace Contract And Unix Feature Gate
+
+**Goal:** define the embedded terminal workspace architecture before broad implementation begins.
+
+Why first:
+- the current TUI is already useful, but its own docs still state that embedded terminals are unfinished
+- input routing, PTY attach semantics, and scrollback behavior need a contract before UI expansion
+- Windows should be frozen now, not dragged through an unstable redesign
+
+Target scope:
+- define how embedded terminal panes bind to supervised sessions
+- define attach/detach/reconnect behavior
+- separate live PTY attachment from durable log viewing
+- add an explicit Unix-first feature gate and document the Windows freeze policy
+
+Likely files:
+- `crates/awo-app/src/tui.rs`
+- `crates/awo-app/src/tui/`
+- `crates/awo-core/src/runtime/`
+- `docs/core-architecture.md`
+- `docs/v1-control-surface.md`
+- `docs/platform-strategy.md`
+
+Definition of done:
+- the repo has a precise contract for the first embedded-terminal slice
+- Windows scope is clearly documented as “hold steady, fix regressions only”
+
+### Session 2: Single Embedded Session Pane MVP
+
+**Goal:** make one selected macOS/Linux session interactive inside the TUI.
+
+Why second:
+- it is the smallest slice that changes the product in the desired direction
+- it proves the input, PTY, and resize path before more elaborate workspace UX
+
+Target scope:
+- attach to a selected PTY-backed supervised session
+- forward keyboard input into the embedded pane
+- render live terminal output inside the TUI
+- support safe detach back to dashboard mode
+
+Definition of done:
+- operators can actually work inside one embedded terminal pane on macOS/Linux
+- quitting the TUI does not kill or corrupt a healthy attached session unintentionally
+
+### Session 3: Reattach, Scrollback, And Recovery
+
+**Goal:** make the embedded pane trustworthy instead of merely impressive.
+
+Why third:
+- a one-shot pane without recovery will feel fragile and operationally risky
+
+Target scope:
+- reconnect to running supervised sessions
+- support bounded scrollback
+- make “live attached” versus “historical log” state obvious
+- handle dead/stale/unavailable attach targets cleanly
+
+Definition of done:
+- operators can leave and return to live sessions confidently
+
+### Session 4: Pane Layout And Workspace Navigation
+
+**Goal:** make the TUI feel like a workspace rather than a launcher plus modal views.
+
+Target scope:
+- split-pane layouts for dashboard, terminal, logs, and review
+- predictable focus movement
+- terminal-first and ops-first layout modes
+
+Definition of done:
+- the TUI supports sustained multi-surface operator work without feeling cramped
+
+### Session 5: Terminal Ergonomics And Operator Comfort
+
+**Goal:** close the biggest UX gap between “technical success” and “daily usability.”
+
+Target scope:
+- copy/search mode
+- improved scrollback ergonomics
+- stronger terminal status chrome and escape hatches
+- cleaner attach/detach prompts and operator cues
+
+Definition of done:
+- the embedded workspace is pleasant enough for real daily use on macOS/Linux
+
+### Session 6: Team/Review Integration For The Richer TUI
+
+**Goal:** integrate the embedded terminal workspace back into Awo’s orchestration strengths.
+
+Target scope:
+- jump from task cards to live sessions
+- move from review states to terminal context cleanly
+- preserve slot and team invariants while the UI becomes richer
+
+Definition of done:
+- the terminal workspace strengthens the orchestration model instead of bypassing it
 
 ### Session 1: TUI Responsiveness And Decomposition
 

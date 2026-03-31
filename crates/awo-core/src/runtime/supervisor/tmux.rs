@@ -1,10 +1,11 @@
 use super::{
-    PreparedCommand, exit_code_path_for, materialize_shell_script, read_exit_code, shell_join,
-    shell_quote,
+    PreparedCommand, SessionTerminalInput, exit_code_path_for, materialize_shell_script,
+    read_exit_code, shell_join, shell_quote,
 };
 use crate::app::AppPaths;
 use crate::error::{AwoError, AwoResult};
 use crate::platform::{default_shell_program, shell_command_args, supports_tmux_supervision};
+use crate::runtime::SessionTerminalKey;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -118,6 +119,64 @@ pub(super) fn kill(session_id: &str) -> AwoResult<()> {
     Ok(())
 }
 
+pub(super) fn capture(session_id: &str, max_lines: usize) -> AwoResult<String> {
+    let supervisor_ref = supervisor_ref(session_id);
+    let start = format!("-{}", max_lines.max(1));
+    let output = Command::new("tmux")
+        .args([
+            "capture-pane",
+            "-p",
+            "-J",
+            "-t",
+            &supervisor_ref,
+            "-S",
+            &start,
+        ])
+        .output()
+        .map_err(|source| {
+            AwoError::supervisor(format!(
+                "failed to capture tmux session `{supervisor_ref}`: {source}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(AwoError::supervisor(format!(
+            "failed to capture tmux session: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub(super) fn send_input(session_id: &str, input: &SessionTerminalInput) -> AwoResult<()> {
+    let supervisor_ref = supervisor_ref(session_id);
+    let mut command = Command::new("tmux");
+    command.arg("send-keys").arg("-t").arg(&supervisor_ref);
+    match input {
+        SessionTerminalInput::Text { text } => {
+            if text.is_empty() {
+                return Ok(());
+            }
+            command.arg("-l").arg(text);
+        }
+        SessionTerminalInput::Key { key } => {
+            command.arg(tmux_key_name(*key));
+        }
+    }
+
+    let output = command.output().map_err(|source| {
+        AwoError::supervisor(format!(
+            "failed to send input to tmux session `{supervisor_ref}`: {source}"
+        ))
+    })?;
+    if !output.status.success() {
+        return Err(AwoError::supervisor(format!(
+            "failed to send input to tmux session: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
 fn build_wrapper(prepared: &PreparedCommand, combined_log_path: &Path, exit_path: &Path) -> String {
     let command = shell_join(&prepared.program, &prepared.args);
     let snippet = format!(
@@ -190,6 +249,23 @@ pub(super) fn supervisor_ref(session_id: &str) -> String {
     format!("awo-{suffix}")
 }
 
+fn tmux_key_name(key: SessionTerminalKey) -> &'static str {
+    match key {
+        SessionTerminalKey::Enter => "Enter",
+        SessionTerminalKey::Backspace => "BSpace",
+        SessionTerminalKey::Tab => "Tab",
+        SessionTerminalKey::Up => "Up",
+        SessionTerminalKey::Down => "Down",
+        SessionTerminalKey::Left => "Left",
+        SessionTerminalKey::Right => "Right",
+        SessionTerminalKey::PageUp => "PageUp",
+        SessionTerminalKey::PageDown => "PageDown",
+        SessionTerminalKey::Home => "Home",
+        SessionTerminalKey::End => "End",
+        SessionTerminalKey::Delete => "DC",
+    }
+}
+
 enum TmuxSessionState {
     Running,
     Exited(i64),
@@ -223,5 +299,12 @@ mod tests {
             !wrapper.contains("pipestatus"),
             "wrapper should not use zsh-only pipestatus: {wrapper}"
         );
+    }
+
+    #[test]
+    fn tmux_key_names_match_expected_control_names() {
+        assert_eq!(tmux_key_name(SessionTerminalKey::Enter), "Enter");
+        assert_eq!(tmux_key_name(SessionTerminalKey::Backspace), "BSpace");
+        assert_eq!(tmux_key_name(SessionTerminalKey::Delete), "DC");
     }
 }

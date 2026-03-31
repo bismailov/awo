@@ -1,7 +1,7 @@
 use super::{TeamDashboardFocus, TuiState};
-use crate::tui::{fetch_session_log, fetch_slot_diff};
-use awo_core::AppCore;
+use crate::tui::{fetch_session_log, fetch_slot_diff, open_session_surface};
 use awo_core::team::{PlanItem, TaskCard, TaskCardState, TeamMember};
+use awo_core::{AppCore, AppSnapshot};
 
 pub(super) fn open_slot_delete_confirm(state: &mut TuiState) {
     let Some(task) = selected_dashboard_task(state) else {
@@ -68,6 +68,31 @@ pub(super) fn open_selected_task_log(core: &mut AppCore, state: &mut TuiState) {
     };
     fetch_session_log(core, state, &session_id);
     state.log_scroll = u16::MAX;
+}
+
+pub(super) fn open_selected_task_terminal(
+    core: &mut AppCore,
+    state: &mut TuiState,
+    snapshot: &AppSnapshot,
+) {
+    let Some(task) = selected_dashboard_task(state) else {
+        state.status = "Error: select a task card first.".to_string();
+        return;
+    };
+    let Some(session_id) = task.result_session_id.clone() else {
+        state.status = "Error: selected task card has no running result session yet.".to_string();
+        return;
+    };
+    let Some(session) = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == session_id)
+    else {
+        state.status =
+            format!("Error: session `{session_id}` is not present in the current snapshot.");
+        return;
+    };
+    open_session_surface(core, state, session);
 }
 
 pub(super) fn open_selected_task_diff(core: &mut AppCore, state: &mut TuiState) {
