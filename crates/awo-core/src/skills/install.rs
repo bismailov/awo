@@ -63,11 +63,13 @@ pub(super) fn install_skill(
 }
 
 pub(super) fn matches_mode(mode: SkillLinkMode, state: SkillInstallState) -> bool {
-    matches!(
-        (mode, state),
-        (SkillLinkMode::Symlink, SkillInstallState::Linked)
-            | (SkillLinkMode::Copy, SkillInstallState::Copied)
-    )
+    match (mode, state) {
+        (SkillLinkMode::Copy, SkillInstallState::Copied) => true,
+        (SkillLinkMode::Symlink, SkillInstallState::Linked) => true,
+        #[cfg(windows)]
+        (SkillLinkMode::Symlink, SkillInstallState::Copied) => true,
+        _ => false,
+    }
 }
 
 pub(super) fn remove_target(target_path: &Path) -> AwoResult<()> {
