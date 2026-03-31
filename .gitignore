@@ -1,10 +1,13 @@
 /target
+/dist
 /.awo
 /.DS_Store
 /.obsidian
 /task_plan.md
 /findings.md
 /progress.md
+__pycache__/
+*.pyc
 
 # Planning scratch files (not version-controlled)
 /planning/2026-03-21-task-plan.md

@@ -215,6 +215,12 @@
 | Windows `runtime` commands should stay out of daemon bootstrap | `runtime list/show/route-preview/pressure` are local capability/config operations, and letting them trigger broker bootstrap made `json_cli` hang under redirected output on Windows |
 | Windows direct-mode fallback is the safer default when `awod` is not already running | Explicit daemon flows now validate cleanly, while ordinary repo/slot/session/team commands remain reliable and scriptable without silent auto-start side effects |
 | The old Windows smoke harness had become a debugging artifact rather than a trustworthy source of truth | `windows_live_check.ps1` still routed `awo.exe` into a stale subprocess shape, so the final Windows report had to be refreshed from clean manual smoke commands and exact serialized test runs |
+| The March 31 Windows checklist report closes the repo's last explicit platform release blocker | The checked-in report shows passing fmt, clippy, serialized tests, repo/slot/session flows, daemon lifecycle, team workflows, and TUI quit smoke on a real Windows 10 machine |
+| The repo's current-state docs drifted behind the new Windows checkpoint immediately | `README.md`, `docs/platform-strategy.md`, and the continuation plans still described Windows validation as pending even after `windows_checklist_report.md` landed |
+| After Windows parity closure, the highest-value next work is operational rather than platform-debugging | The next questions are how to preserve Windows confidence with repeatable smoke coverage and how to package or ship the release candidate cleanly |
+| A single shared smoke runner is a better product-quality investment than platform-specific checklist sprawl | `scripts/awo_smoke.py` now validates the core operator loop across macOS, Linux, and Windows with isolated state and machine-readable reports |
+| Release packaging should be reusable outside GitHub Actions | `scripts/package_release.py` keeps archive composition deterministic locally and in CI instead of hiding packaging logic inside workflow YAML |
+| The release path is only trustworthy if it proves the shipped binaries, not just the dev tree | The new `Release` workflow builds release-profile binaries, runs smoke validation against them, packages the archives, and publishes assets on version tags |
 
 ## Resources
 - `/Users/bismailov/Documents/chaban/project.md`
@@ -239,6 +245,8 @@
 - `/Users/bismailov/Documents/chaban/planning/2026-03-27-master-finalization-plan.md`
 - `/Users/bismailov/Documents/chaban/planning/2026-03-28-audit-and-quality-review.md`
 - `/Users/bismailov/Documents/chaban/planning/2026-03-28-next-sessions-plan.md`
+- `/Users/bismailov/Documents/chaban/windows_checklist_report.md`
+- `/Users/bismailov/Documents/chaban/windows_checklist_report.json`
 - [OpenAI Managing costs](https://platform.openai.com/docs/guides/realtime-costs)
 - [Anthropic Administration API](https://docs.anthropic.com/en/api/administration-api)
 - [Anthropic Messages usage report](https://docs.anthropic.com/en/api/admin-api/usage-cost/get-messages-usage-report)

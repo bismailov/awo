@@ -17,10 +17,13 @@ This plan is not another broad roadmap. It is the practical continuation plan fr
 
 Status update after the current execution pass:
 - Session 3 broker hardening follow-through is complete for the bounded local-product scope
+- Session 4 Windows parity completion is now complete on a native Windows 10 machine
 - Session 5 runtime usage truth is complete for the current honest-adapter slice
 - Session 6 hardening/CI safety is complete
 - Session 7 release finalization is complete for the current platform
-- the remaining material blocker is real Windows workflow validation on a Windows-capable environment
+- Session 8 release-path and artifact strategy is now complete
+- Session 9 repeatable cross-platform smoke coverage is now complete
+- the remaining material work is cutting and observing the first tagged release plus any optional final enrichment
 
 ## Current Starting Point
 
@@ -34,7 +37,7 @@ The local product is already strong:
 - runtime recovery messaging exists
 - the workspace is green under `fmt`, `clippy`, and `test`
 
-The audit conclusion is that the project is no longer blocked on foundational features. It is blocked on **finish-line quality and parity**.
+The audit conclusion is that the project is no longer blocked on foundational features. It is now mainly blocked on **final release observation and optional last-mile polish**.
 
 ## Session Order
 
@@ -172,11 +175,12 @@ Definition of done:
 - Windows behavior is no longer “partial support”
 - known platform limitations are small, explicit, and documented
 
-Current progress:
-- Windows Named Pipe daemon transport is implemented
+Outcome:
+- Windows Named Pipe daemon transport is implemented and validated for explicit daemon start/status/stop flows
 - Windows `DaemonClient` support is implemented
-- ConPTY supervision exists and now preserves actual exit codes and kills the process tree with `taskkill /T`
-- off-host verification from this macOS machine still stops in bundled `libsqlite3-sys` C compilation before full Rust-level Windows validation can finish
+- Windows JSON CLI isolation now removes inherited `AWO_*` env vars so the serialized suite passes under redirected output
+- ordinary Windows CLI commands now stay in direct mode unless `awod` is already running explicitly
+- the checked-in March 31 Windows report records passing fmt, clippy, serialized tests, repo/slot/session flows, daemon lifecycle, team lifecycle, and TUI quit smoke
 
 ### Session 5: Runtime Usage Truth Upgrade
 
@@ -261,6 +265,58 @@ Current progress:
 - isolated CLI and TUI smoke workflows passed in temporary Awo roots
 - a fresh release-quality audit was written in `planning/2026-03-28-release-finalization-audit.md`
 
+## Post-Windows Next Steps
+
+### Session 8: Release Path And Artifact Strategy
+
+**Goal:** decide how this release candidate should actually ship and be consumed.
+
+Why now:
+- Windows parity is no longer the blocker
+- the release workflow needed to move from implied maintainer knowledge into versioned tooling and docs
+
+Target scope:
+- decide which artifacts should be published for macOS, Linux, and Windows
+- document the expected release workflow and ownership
+- tighten install/update guidance around explicit daemon use, Windows defaults, and smoke expectations
+
+Outcome:
+- added `docs/release-process.md` as the maintainer-facing source of truth for packaging and release execution
+- added `scripts/package_release.py` so packaging is reusable outside GitHub Actions
+- added `.github/workflows/release.yml` so tag pushes and manual dispatches build, smoke, package, and publish consistently
+
+### Session 9: Repeatable Cross-Platform Smoke Coverage
+
+**Goal:** preserve the new Windows confidence with something more trustworthy than an aging ad hoc harness.
+
+Why next:
+- `windows_live_check.ps1` is now explicitly a stale reference artifact
+- the new Windows report is strong, but it should be easier to rerun and harder to regress silently
+
+Target scope:
+- replace or refresh the Windows checklist harness
+- decide what belongs in CI versus documented manual smoke
+- keep the smoke matrix aligned across Unix and Windows operator flows
+
+Outcome:
+- added `scripts/awo_smoke.py` as the cross-platform smoke runner for repo, slot, session, daemon, team, and TUI validation
+- refreshed `windows_live_check.ps1` into a thin wrapper around the shared smoke runner
+- wired smoke validation into `.github/workflows/ci.yml` so the core operator loop is exercised on macOS, Linux, and Windows
+
+### Session 10: Optional Final Product Enrichment
+
+**Goal:** choose whether one more pre-release engineering slice is worth it before broader release packaging.
+
+Why last:
+- runtime telemetry and richer broker live delivery are now product improvements, not blockers
+
+Target scope:
+- decide whether adapter-fed usage/capacity truth deserves another bounded slice before release
+- decide whether any broker live-delivery follow-through is still required for the local release candidate
+
+Definition of done:
+- the pre-release backlog is explicitly split into “ship now” and “post-release enrichment”
+
 ## Recommended Worktree / Delegation Pattern
 
 For the next sessions, the best split is:
@@ -274,6 +330,8 @@ Good worktree candidates:
 - `codex/command-parity-sweep`
 - `codex/broker-hardening-pass-2`
 - `codex/windows-parity-completion`
+- `codex/release-path-and-packaging`
+- `codex/windows-smoke-repeatability`
 - `codex/runtime-usage-truth`
 
 ## Session Guardrails
@@ -288,6 +346,6 @@ Good worktree candidates:
 
 If we start one implementation session next, it should be:
 
-**Session 5: Runtime Usage Truth Upgrade**
+**Cut the first tagged release candidate and watch it end to end**
 
-The local broker story is now much stronger. The next best non-platform slice is improving runtime/capacity truth where we can do so honestly without inventing telemetry.
+The release path and smoke automation now exist. The highest-value next move is exercising the real tag-driven workflow and confirming the produced artifacts and automation behave the way the docs now promise.

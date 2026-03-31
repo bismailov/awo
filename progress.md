@@ -123,6 +123,67 @@
   - isolated CLI smoke workflow against a fresh temporary Git repo
   - isolated TUI startup/quit smoke
 
+### Planning Session: Post-Windows Completeness Review And Plan Refresh
+- **Status:** complete
+- **Started:** 2026-03-31
+- Actions taken:
+  - Fast-forwarded local `main` to the March 31 Windows checkpoint (`7aaf311`).
+  - Reviewed the checked-in Windows report artifacts and matched them against the code changes in daemon bootstrap, platform shell handling, TUI startup, config isolation, skills install, and reconcile verification.
+  - Confirmed that the native Windows checklist report now closes the earlier roadmap blocker for real Windows validation.
+  - Identified plan drift in the current development and continuation docs, which still described Windows validation as pending after the new report landed.
+  - Refreshed the current-state plans and status docs so the repo now points at the post-Windows checkpoint and the new next steps.
+- Files created/modified:
+  - `README.md`
+  - `docs/platform-strategy.md`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `cargo test -p awo-app --test json_cli -q`
+  - `cargo test -q`
+    - did not complete within the interactive time budget in this macOS session after reaching the long-running repo-management lane; I did not treat that as a new Windows regression because the checked-in March 31 Windows report includes a passing serialized full-suite run
+
+### Implementation Session: Release Automation And Cross-Platform Smoke Wiring
+- **Status:** complete
+- **Started:** 2026-03-31
+- Actions taken:
+  - Added `scripts/awo_smoke.py` as a shared smoke runner for repo, slot, session, daemon, team, and TUI workflows with isolated temporary state plus JSON/Markdown reporting.
+  - Added `scripts/package_release.py` so release archives are built consistently from local and CI contexts.
+  - Replaced the old bespoke `windows_live_check.ps1` body with a thin wrapper around the shared smoke runner.
+  - Added `docs/release-process.md` as the maintainer-facing source of truth for release packaging and workflow behavior.
+  - Extended `.github/workflows/ci.yml` with built-binary smoke validation on macOS, Linux, and Windows.
+  - Added `.github/workflows/release.yml` so tag pushes and manual dispatches format-check, lint, test, smoke, package, and publish release artifacts consistently.
+  - Updated the public and planning docs so the repo now points at the automated release path instead of treating it as future work.
+- Files created/modified:
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/release.yml`
+  - `.gitignore`
+  - `README.md`
+  - `docs/open-source-release-checklist.md`
+  - `docs/platform-strategy.md`
+  - `docs/release-process.md`
+  - `planning/2026-03-22-development-plan.md`
+  - `planning/2026-03-28-next-sessions-plan.md`
+  - `scripts/awo_smoke.py`
+  - `scripts/package_release.py`
+  - `windows_live_check.ps1`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `python3 -m py_compile scripts/awo_smoke.py scripts/package_release.py`
+  - `cargo build --bins`
+  - `python3 scripts/awo_smoke.py --profile debug --report-json target/smoke-local.json --report-md target/smoke-local.md`
+  - `python3 scripts/package_release.py --profile debug --version-label local-dev --target-name $(rustc -vV | sed -n 's/^host: //p')`
+  - `cargo fmt --all --check`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo test -q -- --test-threads=1`
+  - `cargo build --release --bins`
+  - `python3 scripts/awo_smoke.py --profile release --report-json target/smoke-release-local.json --report-md target/smoke-release-local.md`
+  - `python3 scripts/package_release.py --profile release --version-label local-release --target-name $(rustc -vV | sed -n 's/^host: //p')`
+
 ### Implementation Session: Broker Hardening Follow-Through
 - **Status:** complete for the current slice
 - **Started:** 2026-03-28
@@ -885,8 +946,8 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | The local orchestration loop is strong and verified; the current active finish-line work is broker/event maturity plus CI/security follow-through |
-| Where am I going? | Toward the remaining release blockers: broker live-event delivery, Windows parity, stronger runtime usage truth, and final release documentation/manual validation |
+| Where am I? | The repo now has automated release packaging and cross-platform smoke coverage wired into CI and release workflows |
+| Where am I going? | Toward exercising the first tagged release candidate and then deciding whether any optional final enrichment still belongs before broader promotion |
 | What's the goal? | Finalize Awo as a local orchestration console where a replaceable lead agent plans, dispatches, reviews, and consolidates task cards through Awo |
-| What have I learned? | The biggest remaining gaps are no longer foundational features; they are finish-line trust issues like broker live updates, platform parity, and explicit security/advisory policy |
-| What have I done? | Added bounded MCP resource subscriptions and update notifications, clarified runtime truth notes, re-verified the workspace, and turned the remaining roadmap into a concrete next-stages execution plan |
+| What have I learned? | The product is now strong enough that the biggest remaining risk is whether the real tag-driven release flow behaves the way the docs and workflows now claim |
+| What have I done? | Added shared smoke automation, reusable packaging, CI/release workflow wiring, and verified both debug and release binaries locally end to end |

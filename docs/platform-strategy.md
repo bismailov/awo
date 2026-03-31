@@ -15,12 +15,11 @@
 - shell runtime prefers `zsh`, then falls back to `bash` or `sh`
 
 ### Windows
-- Repo registration, clone/fetch, slot lifecycle, context discovery, and skills workflows are all expected to work
+- Repo registration, clone/fetch, slot lifecycle, context discovery, skills workflows, daemon lifecycle, and team flows now pass the checked-in Windows smoke checklist
 - Shell runtime uses `pwsh`, then falls back to `powershell`
-- ConPTY-backed PTY supervision is implemented in the current codebase
-- One-shot execution remains the fallback when PTY launch is not selected
-- Named Pipe-based daemon transport is implemented
-- The remaining gap is deeper workflow validation on a real Windows environment
+- ConPTY-backed PTY supervision remains in the codebase, but the validated default path currently prefers direct one-shot execution for ordinary shell/team flows
+- Named Pipe-based daemon transport is implemented and validated for explicit daemon start/status/stop flows
+- The March 31, 2026 Windows checklist report closes the earlier native-validation gap
 - Copy mode is the recommended default for skill projection because Windows symlink behavior is often permission-sensitive
 
 ## Design Direction
@@ -46,11 +45,11 @@ The intended backend split is:
 
 ## Next Platform Work
 
-1. Validate the current Windows ConPTY-backed `SessionSupervisor` against the same operator flows used on Unix
-Status: implementation landed; real Windows smoke validation is still pending
+1. Turn the March 31 Windows smoke checklist into a maintained repeatable workflow
+Status: complete via `scripts/awo_smoke.py`, the refreshed `windows_live_check.ps1`, and CI/release workflow wiring
 2. Persist supervisor backend metadata instead of inferring it from log layout
 Status: complete
 3. Keep CI coverage across macOS, Linux, and Windows healthy
 Status: complete for the current matrix
 4. Add platform-specific smoke tests for shell runtime, daemon transport, and skills projection
-Status: in progress; deeper Windows runtime-specific smoke coverage is still pending
+Status: complete for the current operator-core smoke matrix; future work is deeper PTY-specific enrichment rather than basic workflow coverage

@@ -22,6 +22,7 @@ Use this checklist before announcing a public release or opening the repo to wid
 - `cargo fmt --all` passes.
 - `cargo clippy --all-targets -- -D warnings` passes.
 - `cargo test` passes.
+- `scripts/awo_smoke.py` passes on the release binaries for each supported platform.
 - CI is green on supported platforms.
 
 ## Documentation Safety
@@ -41,6 +42,7 @@ Use this checklist before announcing a public release or opening the repo to wid
 - There is a clear issue triage approach.
 - Security reports have a documented intake path.
 - Release assumptions that are still implicit are written down in docs.
+- The packaging and publication flow in `docs/release-process.md` matches the actual GitHub Actions workflows.
 - The current license, contribution model, and project scope reflect maintainer intent.
 
 ## Nice-To-Have Before Wider Promotion

@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build And Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Determine release label
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version_label="${GITHUB_REF_NAME}"
+          else
+            version_label="manual-${GITHUB_RUN_NUMBER}"
+          fi
+          target_name="$(rustc -vV | sed -n 's/^host: //p')"
+          echo "version_label=${version_label}" >> "${GITHUB_OUTPUT}"
+          echo "target_name=${target_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test -q -- --test-threads=1
+
+      - name: Build release binaries
+        run: cargo build --release --bins
+
+      - name: Smoke validation
+        run: python scripts/awo_smoke.py --profile release --report-json target/smoke-${{ steps.meta.outputs.target_name }}.json --report-md target/smoke-${{ steps.meta.outputs.target_name }}.md
+
+      - name: Package release archive
+        id: package
+        shell: bash
+        run: |
+          archive_path="$(python scripts/package_release.py \
+            --profile release \
+            --version-label "${{ steps.meta.outputs.version_label }}" \
+            --target-name "${{ steps.meta.outputs.target_name }}")"
+          echo "archive_path=${archive_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.meta.outputs.target_name }}
+          path: |
+            ${{ steps.package.outputs.archive_path }}
+            target/smoke-${{ steps.meta.outputs.target_name }}.json
+            target/smoke-${{ steps.meta.outputs.target_name }}.md
+
+  publish:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/**/*.json
+            dist/**/*.md

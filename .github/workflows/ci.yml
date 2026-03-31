@@ -39,6 +39,17 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Build binaries for smoke validation
+        run: cargo build --bins
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Smoke validation
+        run: python scripts/awo_smoke.py --profile debug --report-json target/smoke-${{ matrix.os }}.json --report-md target/smoke-${{ matrix.os }}.md
+
   security:
     name: Security And Supply Chain
     runs-on: ubuntu-latest

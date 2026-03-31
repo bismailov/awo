@@ -173,6 +173,8 @@ cargo install --path crates/awo-app --bin awo --bin awod
 cargo install --path crates/awo-mcp --bin awo-mcp
 ```
 
+Prebuilt archives are published for version tags on [GitHub Releases](https://github.com/bismailov/awo/releases).
+
 Or run directly with Cargo while developing:
 
 ```bash
@@ -343,7 +345,7 @@ Awo Console is promising, but still early.
 Known gaps and active areas:
 
 - embedded terminals in the TUI are not finished
-- Windows daemon transport and ConPTY supervision exist, but deeper Windows workflow validation is still pending
+- the first tagged public release still needs to be cut and observed end to end
 - daemon lifecycle UX is still maturing
 - richer output normalization and higher-level middleware behavior are still in progress
 - the product is not yet a fully mature "virtual super-agent" layer
@@ -358,6 +360,8 @@ Known gaps and active areas:
 ## Development
 
 Project onboarding starts with [`project.md`](project.md).
+
+Maintainers should use [`docs/release-process.md`](docs/release-process.md) for packaging and release execution, and [`scripts/awo_smoke.py`](scripts/awo_smoke.py) for the cross-platform smoke workflow.
 
 Compatibility handles:
 

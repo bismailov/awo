@@ -13,7 +13,7 @@ It answers four questions:
 
 Current baseline for this document:
 - branch: `main`
-- checkpoint: post-audit working tree on March 28, 2026
+- checkpoint: post-Windows validation checkpoint on March 31, 2026
 
 ## Product Vision
 
@@ -159,8 +159,9 @@ The most important remaining work now falls into six buckets.
 
 ### 3. Platform Maturity
 - Windows ConPTY and Named Pipe implementations now exist in the codebase
-- real Windows workflow validation remains open
+- a native Windows 10 checklist run now passes repo, slot, session, daemon, team, and TUI smoke flows
 - the current macOS environment still cannot finish Windows-target verification because bundled `libsqlite3-sys` cross-compilation fails before the full Rust workspace can be validated
+- cross-platform smoke coverage is now scripted and wired into CI/release workflows; the remaining platform work is deeper polish rather than first-line parity validation
 
 ### 4. Runtime Usage Truth
 - provider-specific usage/capacity telemetry is still mostly advisory rather than structured
@@ -194,7 +195,7 @@ The most important remaining work now falls into six buckets.
 
 1. Make the TUI feel responsive and maintainable under larger local workloads.
 2. Make the daemon truly feel like the default local broker.
-3. Finish the honest local-platform story on Windows.
+3. Keep the automated cross-platform release path healthy and observable.
 4. Deepen structured runtime usage/capacity truth without inventing fake telemetry.
 5. Finish validating and operationalizing the new CI/security checks.
 6. Turn the current strong engineering substrate into a public release-quality local product.
@@ -213,12 +214,14 @@ Goal: make the daemon feel like a dependable local broker.
 - validate broker-mode concurrency
 - upgrade event delivery for live clients
 
-### Milestone 3: Windows Completion
-Goal: achieve honest local parity on Windows.
+### Milestone 3: Windows Completion And Regression Protection
+Goal: keep honest local parity on Windows proven and repeatable.
 - completed so far: implement Named Pipes for the daemon
 - completed so far: fix the concrete ConPTY exit-code and process-tree cancellation issues found during audit
-- next: validate the main operator workflows on a real Windows environment
-- next: resolve or work around the bundled SQLite cross-toolchain blocker for off-host validation
+- completed so far: validate the main operator workflows on a real Windows 10 environment and record the checklist in `windows_checklist_report.md`
+- completed so far: replace the stale ad hoc Windows smoke harness with the maintained `scripts/awo_smoke.py` workflow plus refreshed Windows wrapper
+- completed so far: wire the smoke workflow into CI and release packaging
+- next: decide how much off-host Windows-target compilation still matters once native validation and automated smoke coverage are the primary truth sources
 
 ### Milestone 4: Runtime Usage Truth
 Goal: turn advisory recovery messaging into stronger runtime-backed operator signals where possible.
@@ -241,17 +244,18 @@ Goal: reduce avoidable crash/supply-chain risk before final release work.
 Goal: deepen local orchestration and finish the release story.
 - completed so far: bounded MCP subscriptions and broker-backed update notifications
 - completed so far: help text, manual scenarios, platform docs, and release-audit refresh
-- next: keep Windows validation and richer adapter-fed telemetry as the only major remaining finish-line work
+- completed so far: clarify the release/deployment path with `docs/release-process.md`, automated packaging, and GitHub release workflow wiring
+- next: cut and observe the first tagged release candidate, then decide whether any richer adapter-fed telemetry work should still land pre-release
 
 ## Recommended Work Order
 
 1. Finish broker live-event delivery for daemon/MCP clients and any remaining degraded-state operator visibility.
-2. Complete Windows parity.
-3. Strengthen runtime usage/capacity truth where adapters support it.
+2. Cut and observe the first tagged release candidate through the new release workflow.
+3. Strengthen runtime usage/capacity truth where adapters support it, if that is still worth doing pre-release.
 4. Finish validating CI/security checks and set advisory policy.
-5. Enrich local middleware and orchestration intelligence.
-6. Do the final release-quality documentation and validation pass.
+5. Enrich local middleware and orchestration intelligence only if it materially improves the release candidate.
+6. Keep the release docs and smoke expectations aligned with the shipped behavior.
 
 ## Summary
 
-Awo Console has moved from concept to a strong local orchestration product with real planning, review, cleanup, and recovery flows. The focus now shifts from "make the features exist" to "keep the operator surface fast, harden the broker/platform story, and ship a local product that feels coherent and trustworthy end to end."
+Awo Console has moved from concept to a strong local orchestration product with real planning, review, cleanup, and recovery flows. The focus now shifts from "make the features exist" to "preserve the new cross-platform confidence, lock down the release path, and ship a local product that feels coherent and trustworthy end to end."

@@ -4,7 +4,7 @@
 Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
 
 ## Current Phase
-Phase 22
+Phase 24
 
 ## Phases
 
@@ -210,7 +210,22 @@ Phase 22
 - [x] Fix or safely route around the broken Windows PTY default so shell/team flows pass end to end
 - [x] Fix the Windows daemon named-pipe health/dispatch path so `status`, client dispatch, and stop are coherent
 - [x] Re-run formatting, clippy, full tests, and the native Windows smoke workflow
-- [ ] Commit, push to `main`, and investigate the repo's deployment/release path
+- [x] Commit and push the Windows checkpoint to `main`
+- **Status:** complete
+
+### Phase 23: Post-Windows Planning Refresh
+- [x] Review the March 31 native Windows checklist report against the actual code changes on `main`
+- [x] Reconcile the roadmap and plan docs with the now-closed Windows validation blocker
+- [x] Identify the next release-facing work after Windows parity closure
+- [x] Update the planning trace for the new checkpoint
+- **Status:** complete
+
+### Phase 24: Release Automation And Smoke Repeatability
+- [x] Add a maintained cross-platform smoke runner for repo, slot, session, daemon, team, and TUI flows
+- [x] Refresh the Windows smoke entrypoint to call the shared runner
+- [x] Add reusable release packaging support and a maintainer-facing release process doc
+- [x] Wire smoke validation into CI and add a release workflow for tag/manual packaging
+- [x] Re-run local verification for debug and release paths, then refresh the planning trace
 - **Status:** complete
 
 ## Key Questions
