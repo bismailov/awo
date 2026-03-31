@@ -40,10 +40,24 @@ impl AppConfig {
             project_dirs.data_dir().to_path_buf()
         };
 
-        Self::with_dirs(config_dir, data_dir)
+        Self::with_dirs_and_storage_overrides(
+            config_dir,
+            data_dir,
+            std::env::var("AWO_CLONES_DIR").map(PathBuf::from).ok(),
+            std::env::var("AWO_WORKTREES_DIR").map(PathBuf::from).ok(),
+        )
     }
 
     pub fn with_dirs(config_dir: PathBuf, data_dir: PathBuf) -> AwoResult<Self> {
+        Self::with_dirs_and_storage_overrides(config_dir, data_dir, None, None)
+    }
+
+    fn with_dirs_and_storage_overrides(
+        config_dir: PathBuf,
+        data_dir: PathBuf,
+        clones_override: Option<PathBuf>,
+        worktrees_override: Option<PathBuf>,
+    ) -> AwoResult<Self> {
         let repos_dir = config_dir.join("repos");
         let teams_dir = config_dir.join("teams");
         let state_db_path = data_dir.join("state.sqlite3");
@@ -68,12 +82,12 @@ impl AppConfig {
         };
         let logs_dir = data_dir.join("logs");
         let clones_dir = resolve_storage_root(
-            std::env::var("AWO_CLONES_DIR").map(PathBuf::from).ok(),
+            clones_override,
             settings.clones_root.clone(),
             data_dir.join("clones"),
         );
         let worktrees_dir = resolve_storage_root(
-            std::env::var("AWO_WORKTREES_DIR").map(PathBuf::from).ok(),
+            worktrees_override,
             settings.worktrees_root.clone(),
             data_dir.join("worktrees"),
         );

@@ -14,8 +14,6 @@ use crate::dispatch::{RpcRequest, RpcResponse, dispatch_rpc, parse_rpc_request};
 use crate::error::{AwoError, AwoResult};
 use fs2::FileExt;
 #[cfg(windows)]
-use interprocess::TryClone;
-#[cfg(windows)]
 use interprocess::local_socket::{
     GenericNamespaced, ListenerOptions, Stream as LocalSocketStream, prelude::*,
 };
@@ -32,6 +30,8 @@ use std::path::Path;
 #[cfg(windows)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::sync::mpsc;
 #[cfg(unix)]
 use std::time::Duration;
 #[cfg(windows)]
@@ -47,8 +47,6 @@ const DAEMON_CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const DAEMON_STARTUP_GRACE: Duration = Duration::from_secs(3);
 #[cfg(windows)]
 const DAEMON_HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
-#[cfg(windows)]
-const DAEMON_CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Daemon state: manages the socket, lock file, and shutdown signal.
 pub struct DaemonServer {
@@ -189,7 +187,7 @@ impl DaemonServer {
 
     /// Stub for non-Unix platforms.
     #[cfg(not(unix))]
-    pub fn run(&self, _dispatcher: &mut dyn Dispatcher) -> AwoResult<()> {
+    pub fn run(&self, dispatcher: &mut dyn Dispatcher) -> AwoResult<()> {
         #[cfg(windows)]
         {
             let socket_name = daemon_pipe_name(&self.socket_path);
@@ -211,11 +209,14 @@ impl DaemonServer {
             tracing::info!(pipe = %socket_name, "awod listening");
 
             while !self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                let stream = listener.accept().map_err(|error| {
-                    AwoError::supervisor(format!(
-                        "accept daemon named-pipe connection `{socket_name}`: {error}"
-                    ))
-                })?;
+                let stream = match listener.accept() {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        tracing::warn!(%error, pipe = %socket_name, "accept daemon named-pipe connection failed");
+                        std::thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                };
                 if let Err(error) = handle_connection_windows(stream, dispatcher) {
                     tracing::warn!(%error, "named-pipe connection handler error");
                 }
@@ -472,7 +473,7 @@ pub fn get_daemon_status(paths: &AppPaths) -> DaemonStatus {
                 return DaemonStatus::Starting { pid, issues };
             }
 
-            return DaemonStatus::Degraded { pid, issues };
+            DaemonStatus::Degraded { pid, issues }
         }
 
         #[cfg(not(windows))]
@@ -587,16 +588,8 @@ pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
         DaemonStatus::NotRunning => {}
     }
 
-    let awo_exe = std::env::current_exe()
-        .map_err(|e| AwoError::supervisor(format!("failed to get current executable path: {e}")))?;
-    let awod_exe = awo_exe.with_file_name("awod");
-
-    if !awod_exe.exists() {
-        return Err(AwoError::supervisor(format!(
-            "awod binary not found at {}",
-            awod_exe.display()
-        )));
-    }
+    let awod_exe = resolve_awod_executable()?;
+    ensure_awod_binary_exists(&awod_exe)?;
 
     let mut child = std::process::Command::new(&awod_exe)
         .arg("--config-dir")
@@ -670,16 +663,8 @@ pub fn spawn_daemon(paths: &AppPaths) -> AwoResult<u32> {
             DaemonStatus::NotRunning => {}
         }
 
-        let awo_exe = std::env::current_exe().map_err(|error| {
-            AwoError::supervisor(format!("failed to get current executable path: {error}"))
-        })?;
-        let awod_exe = awo_exe.with_file_name("awod.exe");
-        if !awod_exe.exists() {
-            return Err(AwoError::supervisor(format!(
-                "awod binary not found at {}",
-                awod_exe.display()
-            )));
-        }
+        let awod_exe = resolve_awod_executable()?;
+        ensure_awod_binary_exists(&awod_exe)?;
 
         #[cfg(windows)]
         use std::os::windows::process::CommandExt;
@@ -760,8 +745,7 @@ pub struct DaemonClient {
 
 #[cfg(windows)]
 pub struct DaemonClient {
-    reader: BufReader<LocalSocketStream>,
-    writer: LocalSocketStream,
+    connection: BufReader<LocalSocketStream>,
     next_id: u64,
 }
 
@@ -846,28 +830,8 @@ impl DaemonClient {
                 "connect to daemon named pipe `{socket_name}` failed: {source}"
             ))
         })?;
-        stream
-            .set_recv_timeout(Some(DAEMON_CLIENT_IO_TIMEOUT))
-            .map_err(|source| {
-                AwoError::supervisor(format!(
-                    "set daemon receive timeout for `{socket_name}` failed: {source}"
-                ))
-            })?;
-        stream
-            .set_send_timeout(Some(DAEMON_CLIENT_IO_TIMEOUT))
-            .map_err(|source| {
-                AwoError::supervisor(format!(
-                    "set daemon send timeout for `{socket_name}` failed: {source}"
-                ))
-            })?;
-        let reader = BufReader::new(stream.try_clone().map_err(|source| {
-            AwoError::supervisor(format!(
-                "clone daemon named pipe `{socket_name}` failed: {source}"
-            ))
-        })?);
         Ok(Self {
-            reader,
-            writer: stream,
+            connection: BufReader::new(stream),
             next_id: 1,
         })
     }
@@ -883,22 +847,28 @@ impl DaemonClient {
             AwoError::supervisor(format!("failed to serialize RPC request: {error}"))
         })?;
 
-        self.writer.write_all(&request_bytes).map_err(|source| {
-            AwoError::io("write to daemon named pipe", Path::new("<pipe>"), source)
-        })?;
-        self.writer.write_all(b"\n").map_err(|source| {
-            AwoError::io(
-                "write newline to daemon named pipe",
-                Path::new("<pipe>"),
-                source,
-            )
-        })?;
-        self.writer.flush().map_err(|source| {
+        self.connection
+            .get_mut()
+            .write_all(&request_bytes)
+            .map_err(|source| {
+                AwoError::io("write to daemon named pipe", Path::new("<pipe>"), source)
+            })?;
+        self.connection
+            .get_mut()
+            .write_all(b"\n")
+            .map_err(|source| {
+                AwoError::io(
+                    "write newline to daemon named pipe",
+                    Path::new("<pipe>"),
+                    source,
+                )
+            })?;
+        self.connection.get_mut().flush().map_err(|source| {
             AwoError::io("flush daemon named pipe", Path::new("<pipe>"), source)
         })?;
 
         let mut line = String::new();
-        self.reader.read_line(&mut line).map_err(|source| {
+        self.connection.read_line(&mut line).map_err(|source| {
             AwoError::io("read from daemon named pipe", Path::new("<pipe>"), source)
         })?;
         if line.trim().is_empty() {
@@ -1010,6 +980,22 @@ fn probe_daemon_connectivity(socket_path: &Path, timeout: Duration) -> Vec<Daemo
 
 #[cfg(windows)]
 fn probe_daemon_connectivity(socket_path: &Path, timeout: Duration) -> Vec<DaemonHealthIssue> {
+    let socket_path = socket_path.to_path_buf();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(probe_daemon_connectivity_blocking(&socket_path));
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(issues) => issues,
+        Err(mpsc::RecvTimeoutError::Timeout) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            vec![DaemonHealthIssue::RpcUnresponsive]
+        }
+    }
+}
+
+#[cfg(windows)]
+fn probe_daemon_connectivity_blocking(socket_path: &Path) -> Vec<DaemonHealthIssue> {
     let socket_name = daemon_pipe_name(socket_path);
     let name = match socket_name.as_str().to_ns_name::<GenericNamespaced>() {
         Ok(name) => name,
@@ -1020,12 +1006,6 @@ fn probe_daemon_connectivity(socket_path: &Path, timeout: Duration) -> Vec<Daemo
         Ok(stream) => stream,
         Err(_) => return vec![DaemonHealthIssue::SocketUnreachable],
     };
-
-    if stream.set_recv_timeout(Some(timeout)).is_err()
-        || stream.set_send_timeout(Some(timeout)).is_err()
-    {
-        return vec![DaemonHealthIssue::RpcUnresponsive];
-    }
 
     let request = match RpcRequest::from_command(
         &crate::commands::Command::EventsPoll {
@@ -1049,13 +1029,9 @@ fn probe_daemon_connectivity(socket_path: &Path, timeout: Duration) -> Vec<Daemo
         return vec![DaemonHealthIssue::RpcUnresponsive];
     }
 
-    let cloned = match stream.try_clone() {
-        Ok(cloned) => cloned,
-        Err(_) => return vec![DaemonHealthIssue::RpcUnresponsive],
-    };
     let mut line = String::new();
-    let mut reader = BufReader::new(cloned);
-    match reader.read_line(&mut line) {
+    let mut connection = BufReader::new(stream);
+    match connection.read_line(&mut line) {
         Ok(0) => vec![DaemonHealthIssue::RpcUnresponsive],
         Ok(_) => match serde_json::from_str::<RpcResponse>(&line) {
             Ok(response) if response.error.is_none() && response.result.is_some() => Vec::new(),
@@ -1107,7 +1083,7 @@ fn cleanup_stale_daemon_artifacts(paths: &AppPaths) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_for_existing_daemon_start(paths: &AppPaths, pid: u32, timeout: Duration) -> AwoResult<u32> {
     let start = std::time::Instant::now();
     let interval = Duration::from_millis(100);
@@ -1144,23 +1120,56 @@ fn format_daemon_issues(issues: &[DaemonHealthIssue]) -> String {
         .join(", ")
 }
 
+fn resolve_awod_executable() -> AwoResult<PathBuf> {
+    let current_exe = std::env::current_exe().map_err(|error| {
+        AwoError::supervisor(format!("failed to get current executable path: {error}"))
+    })?;
+    #[cfg(windows)]
+    let binary_name = "awod.exe";
+    #[cfg(not(windows))]
+    let binary_name = "awod";
+
+    let sibling = current_exe.with_file_name(binary_name);
+    if sibling.exists() {
+        return Ok(sibling);
+    }
+
+    if let Some(parent) = current_exe.parent()
+        && parent.file_name().and_then(|name| name.to_str()) == Some("deps")
+        && let Some(grandparent) = parent.parent()
+    {
+        return Ok(grandparent.join(binary_name));
+    }
+
+    Ok(sibling)
+}
+
+fn ensure_awod_binary_exists(awod_exe: &Path) -> AwoResult<()> {
+    if awod_exe.exists() {
+        Ok(())
+    } else {
+        Err(AwoError::supervisor(format!(
+            "awod binary not found at {}",
+            awod_exe.display()
+        )))
+    }
+}
+
 #[cfg(windows)]
 fn handle_connection_windows(
     stream: LocalSocketStream,
     dispatcher: &mut dyn Dispatcher,
 ) -> AwoResult<()> {
-    let reader_stream = stream.try_clone().map_err(|source| {
-        AwoError::supervisor(format!(
-            "failed to clone named-pipe stream for daemon connection: {source}"
-        ))
-    })?;
-    let reader = BufReader::new(reader_stream);
-    let mut writer = stream;
+    let mut connection = BufReader::new(stream);
 
-    for line in reader.lines() {
-        let line = line.map_err(|source| {
+    loop {
+        let mut line = String::new();
+        let bytes_read = connection.read_line(&mut line).map_err(|source| {
             AwoError::io("read from daemon named pipe", Path::new("<pipe>"), source)
         })?;
+        if bytes_read == 0 {
+            break;
+        }
         if line.is_empty() {
             continue;
         }
@@ -1173,17 +1182,20 @@ fn handle_connection_windows(
         let response_bytes = serde_json::to_vec(&response).map_err(|error| {
             AwoError::supervisor(format!("failed to serialize RPC response: {error}"))
         })?;
-        writer.write_all(&response_bytes).map_err(|source| {
-            AwoError::io("write to daemon named pipe", Path::new("<pipe>"), source)
-        })?;
-        writer.write_all(b"\n").map_err(|source| {
+        connection
+            .get_mut()
+            .write_all(&response_bytes)
+            .map_err(|source| {
+                AwoError::io("write to daemon named pipe", Path::new("<pipe>"), source)
+            })?;
+        connection.get_mut().write_all(b"\n").map_err(|source| {
             AwoError::io(
                 "write newline to daemon named pipe",
                 Path::new("<pipe>"),
                 source,
             )
         })?;
-        writer.flush().map_err(|source| {
+        connection.get_mut().flush().map_err(|source| {
             AwoError::io("flush daemon named pipe", Path::new("<pipe>"), source)
         })?;
     }
@@ -1437,20 +1449,10 @@ mod tests {
     }
 
     #[test]
-    fn spawn_daemon_fails_when_awod_missing() {
+    fn ensure_awod_binary_exists_reports_missing_binary() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let paths = AppPaths {
-            config_dir: temp_dir.path().to_path_buf(),
-            data_dir: temp_dir.path().to_path_buf(),
-            state_db_path: temp_dir.path().join("state.sqlite3"),
-            logs_dir: temp_dir.path().join("logs"),
-            repos_dir: temp_dir.path().join("repos"),
-            clones_dir: temp_dir.path().join("clones"),
-            worktrees_dir: temp_dir.path().join("worktrees"),
-            teams_dir: temp_dir.path().join("teams"),
-        };
-
-        let result = spawn_daemon(&paths);
+        let missing = temp_dir.path().join("awod-missing.exe");
+        let result = ensure_awod_binary_exists(&missing);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("awod binary not found"));

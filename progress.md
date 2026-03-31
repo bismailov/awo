@@ -2,6 +2,54 @@
 
 ## Session: 2026-03-27
 
+### Implementation Session: Native Windows Release-Blocker Closure
+- **Status:** in_progress
+- **Started:** 2026-03-29
+- Actions taken:
+  - Re-read the active planning docs (`task_plan.md`, next-sessions, next-stages, release audit, and master finalization plan) to identify the true remaining scope.
+  - Confirmed the roadmap is effectively complete except for the native Windows parity blocker.
+  - Re-ran the native Windows checklist and isolated the real remaining issues:
+    - `json_cli` subprocesses inherit outer `AWO_CONFIG_DIR` / `AWO_DATA_DIR` values during `cargo test`
+    - shell sessions fail only in the PTY/ConPTY path
+    - shell sessions succeed in `oneshot` mode
+    - daemon mode accepts connections but does not answer RPC health probes
+  - Narrowed the likely daemon root cause to clone-based named-pipe stream handling in the Windows client/server path.
+  - Re-ran the full Windows checklist against the live Windows machine after the latest code changes.
+  - Confirmed the toolchain/build lane is now green on Windows:
+    - `cargo fmt --all --check`
+    - `cargo clippy --all-targets -- -D warnings`
+    - `cargo test -q -- --test-threads=1`
+    - `cargo build`
+  - Confirmed these direct-mode checklist flows now pass on Windows:
+    - repo add/list
+    - context pack/doctor
+    - skills list/doctor
+    - runtime list/show
+    - slot acquire/release/delete
+    - standalone shell session start/list/log
+  - Reproduced the remaining daemon blocker with an explicit foreground smoke:
+    - `awod.exe` starts and listens
+    - first `awo.exe daemon status` reports `starting`
+    - second `awo.exe daemon status` reports `degraded`
+    - the process then exits with `-1073740791` / `0xC0000409`
+  - Reproduced the remaining Windows team-flow issue:
+    - `team init`, `team member add`, `team plan add/approve/generate`, `team report`, `team teardown`, and `team delete` work
+    - `team task start` fails for the checklist task body `pwd && ls`
+    - the session `.err.log` shows `The token '&&' is not a valid statement separator in this version.`
+  - Reproduced the remaining TUI quit issue:
+    - startup succeeds
+    - `cmd /c "echo q| ...\\awo.exe"` hangs and ends with `Failed to show the cursor ... (os error 232)`
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `windows_live_check.ps1`
+- Verification:
+  - native Windows `cargo test` failure review
+  - native Windows `awo.exe` smoke runs
+  - native Windows `session start ... --launch-mode oneshot`
+  - native Windows full checklist rerun with isolated state
+
 ### Implementation Session: Windows Follow-Through, Runtime Truth, CI Closure, And Release Sweep
 - **Status:** complete for the current environment
 - **Started:** 2026-03-28
@@ -807,6 +855,12 @@
 | Full workspace linting after MCP subscriptions | `cargo clippy --all-targets -- -D warnings` | Workspace remains warning-free after MCP live-delivery changes | Passed | ✓ |
 | Full workspace tests after MCP subscriptions | `cargo test -q` | Whole workspace remains green after MCP live-delivery and runtime-note changes | Passed | ✓ |
 | Next-stages execution planning | Planning/doc updates only | Remaining roadmap converted into a concrete execution sequence with worktree/delegation lanes | Completed | ✓ |
+| Windows runtime JSON regression | `cargo test -p awo-app --test json_cli runtime_pressure_clear_removes_entry -- --exact --nocapture` | `runtime pressure clear` no longer hangs under redirected output on Windows | Passed | ✓ |
+| Windows runtime JSON suite | `cargo test -p awo-app --test json_cli -q -- --test-threads=1` | Full JSON CLI integration suite stays green on Windows | Passed | ✓ |
+| Exact serialized workspace tests on Windows | `cargo test -q -- --test-threads=1` | Entire workspace stays green after the final Windows fixes | Passed | ✓ |
+| Windows daemon lifecycle smoke | manual `awo.exe daemon status` / `awod.exe` / `awo.exe daemon stop` | Explicit daemon start, healthy status, repo access, stop, and final `not running` all work cleanly | Passed | ✓ |
+| Windows team lifecycle smoke | manual repo/team/plan/task/report/teardown/delete flow with `pwd && ls` | Team task reaches `review`, supersede works, report emits, teardown resets, and delete succeeds | Passed | ✓ |
+| Windows TUI quit smoke | `cmd.exe /c "echo q| C:\\tmp\\awo-validation\\awo\\target\\debug\\awo.exe"` | Piped `q` exits immediately with code 0 | Passed | ✓ |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -825,6 +879,8 @@
 | 2026-03-28 | Local `cargo-deny` installation repeatedly stalled on this machine | 1 | Kept CI wiring and `deny.toml` in place, validated `cargo-audit`, and recorded local `cargo-deny` validation as remaining follow-through |
 | 2026-03-28 | The first MCP subscription implementation mismatched `DomainEvent` and `EventEntry` types and used the wrong `BTreeSet::contains` borrow shape | 1 | Narrowed notification routing to `DomainEvent`, iterated with `for &uri`, and reran the MCP test lane plus workspace verification |
 | 2026-03-28 | The apparent isolated operator-flow hang was not reproducible once rerun cleanly | 1 | Verified `team_init_creates_manifest_and_shows_it` in isolation, then completed a fresh full `cargo test -q` run successfully |
+| 2026-03-31 | `runtime pressure clear` hung the Windows `json_cli` suite when stdout/stderr were redirected | 1 | Routed `run_runtime` through direct `AppCore` bootstrapping instead of daemon transport so local runtime/config commands stay scriptable on Windows |
+| 2026-03-31 | Windows ordinary CLI commands could still go silent if they auto-started `awod` while running under captured output | 1 | Changed Windows daemon bootstrap to stay in direct mode unless the daemon is already running explicitly |
 
 ## 5-Question Reboot Check
 | Question | Answer |

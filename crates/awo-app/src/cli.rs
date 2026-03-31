@@ -20,7 +20,7 @@ pub enum AppCommand {
     /// Launch the interactive TUI dashboard (default).
     Tui,
     /// Manage the background daemon (awod).
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,

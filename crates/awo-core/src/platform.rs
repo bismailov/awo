@@ -2,6 +2,11 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn executable_exists(name: &str) -> bool {
+    let candidate = Path::new(name);
+    if candidate.is_absolute() || name.contains('\\') || name.contains('/') {
+        return candidate.exists();
+    }
+
     #[cfg(windows)]
     let probe = "where";
     #[cfg(not(windows))]
@@ -17,8 +22,15 @@ pub fn executable_exists(name: &str) -> bool {
 pub fn default_shell_program() -> &'static str {
     #[cfg(windows)]
     {
+        const PWSH_PATH: &str = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        const POWERSHELL_PATH: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+
         if executable_exists("pwsh") {
             "pwsh"
+        } else if executable_exists(PWSH_PATH) {
+            PWSH_PATH
+        } else if executable_exists(POWERSHELL_PATH) {
+            POWERSHELL_PATH
         } else {
             "powershell"
         }
@@ -56,7 +68,14 @@ pub fn shell_command_args(command: &str) -> Vec<String> {
 pub fn shell_script_args(script_path: &Path) -> Vec<String> {
     #[cfg(windows)]
     {
-        vec!["-File".to_string(), script_path.display().to_string()]
+        vec![
+            "-NoLogo".to_string(),
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            script_path.display().to_string(),
+        ]
     }
 
     #[cfg(not(windows))]

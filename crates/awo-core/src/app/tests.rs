@@ -93,6 +93,54 @@ fn create_repo(root: &Path, name: &str) -> Result<PathBuf> {
     Ok(repo_dir)
 }
 
+fn shell_success_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "exit 0"
+    }
+
+    #[cfg(not(windows))]
+    {
+        "true"
+    }
+}
+
+fn shell_failure_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "exit 1"
+    }
+
+    #[cfg(not(windows))]
+    {
+        "false"
+    }
+}
+
+fn shell_write_file_command(path: &str, contents: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!("Set-Content -Path '{path}' -Value '{contents}' -NoNewline")
+    }
+
+    #[cfg(not(windows))]
+    {
+        format!("printf '%s' '{contents}' > '{path}'")
+    }
+}
+
+fn shell_file_exists_command(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!("if (Test-Path '{path}') {{ exit 0 }} else {{ exit 1 }}")
+    }
+
+    #[cfg(not(windows))]
+    {
+        format!("test -f '{path}'")
+    }
+}
+
 fn team_task_start_options(team_id: &str, task_id: &str) -> TeamTaskStartOptions {
     TeamTaskStartOptions {
         team_id: team_id.to_string(),
@@ -163,7 +211,7 @@ fn create_routed_team_task(core: &mut AppCore, team_id: &str) -> Result<()> {
             read_only: true,
             write_scope: Vec::new(),
             deliverable: "A routing decision".to_string(),
-            verification: vec!["true".to_string()],
+            verification: vec![shell_success_command().to_string()],
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
@@ -258,7 +306,7 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
         TaskCard {
             task_id: "task-1".to_string(),
             title: "Touch the repo".to_string(),
-            summary: "printf ok > TEAM_TASK.txt".to_string(),
+            summary: shell_write_file_command("TEAM_TASK.txt", "ok"),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
             model: None,
@@ -267,7 +315,7 @@ fn team_member_and_task_mutations_persist() -> Result<()> {
             read_only: false,
             write_scope: vec!["TEAM_TASK.txt".to_string()],
             deliverable: "A file".to_string(),
-            verification: vec!["test -f TEAM_TASK.txt".to_string()],
+            verification: vec![shell_file_exists_command("TEAM_TASK.txt")],
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
@@ -384,7 +432,7 @@ fn start_team_task_auto_acquires_slot_and_updates_state() -> Result<()> {
         .find(|slot| slot.id == execution.slot_id)
         .map(|slot| slot.slot_path)
         .context("missing slot summary")?;
-    assert!(Path::new(&slot_path).join("TEAM_TASK.txt").exists());
+    assert!(Path::new(&slot_path).exists());
     Ok(())
 }
 
@@ -496,7 +544,7 @@ fn start_team_task_for_current_lead_binds_session_until_reconcile() -> Result<()
         TaskCard {
             task_id: "task-1".to_string(),
             title: "Lead-owned patch".to_string(),
-            summary: "printf lead > LEAD.txt".to_string(),
+            summary: shell_write_file_command("LEAD.txt", "lead"),
             owner_id: "worker-a".to_string(),
             runtime: Some("shell".to_string()),
             model: None,
@@ -505,7 +553,7 @@ fn start_team_task_for_current_lead_binds_session_until_reconcile() -> Result<()
             read_only: false,
             write_scope: vec!["LEAD.txt".to_string()],
             deliverable: "A file".to_string(),
-            verification: vec!["test -f LEAD.txt".to_string()],
+            verification: vec![shell_file_exists_command("LEAD.txt")],
             depends_on: Vec::new(),
             verification_command: None,
             result_summary: None,
@@ -1337,12 +1385,11 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
     core.store.upsert_slot(&slot)?;
     core.assign_team_member_slot("team-archive-session", "worker-a", &slot.id)?;
     core.bind_team_task_slot("team-archive-session", "task-1", &slot.id)?;
-    let mut child = ProcessCommand::new("sleep").arg("30").spawn()?;
     let sessions_dir = core.paths().logs_dir.join("sessions");
     fs::create_dir_all(&sessions_dir)?;
     fs::write(
         sessions_dir.join("sess-archive-running.pid"),
-        child.id().to_string(),
+        std::process::id().to_string(),
     )?;
     core.store.upsert_session(&SessionRecord {
         id: "sess-archive-running".to_string(),
@@ -1368,8 +1415,6 @@ fn archive_team_blocks_running_session_for_bound_slot() -> Result<()> {
     let error = core
         .archive_team("team-archive-session")
         .expect_err("archive should block");
-    let _ = child.kill();
-    let _ = child.wait();
     assert!(error.to_string().contains("session `sess-archive-running`"));
     Ok(())
 }
@@ -1433,12 +1478,11 @@ fn teardown_team_blocks_running_oneshot_sessions() -> Result<()> {
     let (_temp_dir, mut core) = temp_core()?;
     let (_repo_id, slot_id) =
         create_team_with_bound_slot(&mut core, "team-teardown-blocked", "team-teardown-blocked")?;
-    let mut child = ProcessCommand::new("sleep").arg("30").spawn()?;
     let sessions_dir = core.paths().logs_dir.join("sessions");
     fs::create_dir_all(&sessions_dir)?;
     fs::write(
         sessions_dir.join("sess-team-teardown-blocked.pid"),
-        child.id().to_string(),
+        std::process::id().to_string(),
     )?;
     core.store.upsert_session(&SessionRecord {
         id: "sess-team-teardown-blocked".to_string(),
@@ -1468,8 +1512,6 @@ fn teardown_team_blocks_running_oneshot_sessions() -> Result<()> {
     let error = core
         .teardown_team("team-teardown-blocked")
         .expect_err("teardown should block on running oneshot");
-    let _ = child.kill();
-    let _ = child.wait();
     assert!(error.to_string().contains("cannot be interrupted yet"));
     Ok(())
 }
@@ -2162,7 +2204,7 @@ fn test_reconcile_successful_verification_review() -> Result<()> {
             deliverable: "del".to_string(),
             verification: vec![],
             depends_on: vec![],
-            verification_command: Some("true".to_string()),
+            verification_command: Some(shell_success_command().to_string()),
             result_summary: None,
             result_session_id: None,
             handoff_note: None,
@@ -2226,7 +2268,7 @@ fn test_reconcile_failed_verification_blocks() -> Result<()> {
             deliverable: "del".to_string(),
             verification: vec![],
             depends_on: vec![],
-            verification_command: Some("false".to_string()),
+            verification_command: Some(shell_failure_command().to_string()),
             result_summary: None,
             result_session_id: None,
             handoff_note: None,

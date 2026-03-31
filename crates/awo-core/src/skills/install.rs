@@ -84,13 +84,21 @@ pub(super) fn remove_target(target_path: &Path) -> AwoResult<()> {
 }
 
 fn create_symlink(source_path: &Path, target_path: &Path) -> AwoResult<()> {
-    create_dir_symlink(source_path, target_path).map_err(|source| {
-        AwoError::io(
+    match create_dir_symlink(source_path, target_path) {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(source)
+            if source.kind() == std::io::ErrorKind::PermissionDenied
+                || source.raw_os_error() == Some(1314) =>
+        {
+            copy_dir_all(source_path, target_path)
+        }
+        Err(source) => Err(AwoError::io(
             "create skill symlink",
             format!("{} -> {}", source_path.display(), target_path.display()),
             source,
-        )
-    })
+        )),
+    }
 }
 
 #[cfg(unix)]

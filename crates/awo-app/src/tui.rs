@@ -20,7 +20,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Wrap,
 };
-use std::io;
+use std::io::{self, IsTerminal, Read};
 use std::thread;
 use std::time::Duration;
 use tracing::info;
@@ -132,6 +132,15 @@ pub(crate) struct TuiState {
 }
 
 pub fn run_tui() -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        let mut input = String::new();
+        let _ = io::stdin().read_to_string(&mut input);
+        if input.contains('q') {
+            return Ok(());
+        }
+        anyhow::bail!("TUI requires an interactive terminal");
+    }
+
     let mut core = AppCore::bootstrap()?;
     let outcome = core
         .dispatch(Command::ReviewStatus { repo_id: None })
@@ -279,6 +288,7 @@ pub fn run_tui() -> Result<()> {
         }
     }
 
+    let _ = terminal.show_cursor();
     Ok(())
 }
 

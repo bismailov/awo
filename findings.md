@@ -13,6 +13,21 @@
 - Commit and push the resulting checkpoint.
 
 ## Research Findings
+- The current roadmap is effectively complete except for the native Windows blocker surfaced by the real checklist run:
+  - JSON CLI integration tests were contaminated by inherited `AWO_*` env vars from the outer `cargo test` environment
+  - shell runtime works in `oneshot` mode on Windows
+  - shell runtime fails in the PTY/ConPTY path on Windows
+  - daemon mode accepts Windows named-pipe connections but fails RPC health checks
+- The March 30 rerun on the real Windows machine tightened the finish-line picture further:
+  - `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test -q -- --test-threads=1`, and `cargo build` all pass
+  - repo registration, context/skills/runtime inspection, slot lifecycle, and standalone shell session start/log all pass in direct mode
+  - daemon mode still fails reproducibly:
+    - foreground `awod.exe` starts
+    - first `awo.exe daemon status` reports `starting`
+    - second `awo.exe daemon status` reports `degraded`
+    - the daemon then exits with `0xC0000409`
+  - team planning and teardown commands work, but the checklist's Windows task body `pwd && ls` still fails when executed through the team-task shell-script path because the generated `.ps1` is interpreted by a PowerShell variant that rejects `&&`
+  - TUI startup still works, but scripted quit via piped input still fails with `Failed to show the cursor ... (os error 232)`
 - The bounded broker/MCP completion slice is now effectively closed for the local product:
   - the TUI wakes on broker events
   - MCP supports resource subscriptions
@@ -21,6 +36,10 @@
   - the current macOS machine can compile deep into the Windows target graph
   - bundled `libsqlite3-sys` still fails before a full Rust-level Windows parity check can finish
   - this is a real toolchain/environment blocker, not a reproduced application bug
+- Native Windows smoke results sharpen the remaining work further:
+  - `session start ... --launch-mode oneshot` succeeds for `shell` with `exit=0`
+  - default Windows session start fails only when the PTY path is selected
+  - the daemon's named-pipe roundtrip likely breaks in clone-based client/server stream handling because the process stays alive, accepts connections, but never answers the health-check RPC
 - The Windows ConPTY implementation had one concrete correctness issue worth fixing now:
   - it was collapsing all non-zero exits to `1` instead of preserving the actual exit code
   - `taskkill /T` is the safer process-tree cancellation shape for supervised Windows sessions
@@ -193,6 +212,9 @@
 | The isolated `team_init_creates_manifest_and_shows_it` slowdown signal was environmental noise, not a reproduced product regression | The targeted test passed cleanly once stale background cargo processes were cleared and rerun in isolation |
 | The remaining roadmap is now dominated by release blockers rather than missing core product concepts | The practical order is broker completion, Windows parity, runtime telemetry improvement, CI closure, then release finalization |
 | Windows parity is the clearest external-agent lane | It is the largest remaining release blocker and benefits the most from a dedicated environment or separate worktree |
+| Windows `runtime` commands should stay out of daemon bootstrap | `runtime list/show/route-preview/pressure` are local capability/config operations, and letting them trigger broker bootstrap made `json_cli` hang under redirected output on Windows |
+| Windows direct-mode fallback is the safer default when `awod` is not already running | Explicit daemon flows now validate cleanly, while ordinary repo/slot/session/team commands remain reliable and scriptable without silent auto-start side effects |
+| The old Windows smoke harness had become a debugging artifact rather than a trustworthy source of truth | `windows_live_check.ps1` still routed `awo.exe` into a stale subprocess shape, so the final Windows report had to be refreshed from clean manual smoke commands and exact serialized test runs |
 
 ## Resources
 - `/Users/bismailov/Documents/chaban/project.md`

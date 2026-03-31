@@ -778,6 +778,11 @@ fn session_launch_mode_roundtrip() {
 #[test]
 fn default_shell_program_returns_known_shell() {
     let shell = default_shell_program();
+    #[cfg(windows)]
+    let shell = std::path::Path::new(shell)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(shell);
     let known_shells = ["zsh", "bash", "sh", "pwsh", "powershell"];
     assert!(
         known_shells.contains(&shell),

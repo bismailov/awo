@@ -4,7 +4,7 @@
 Plan the next implementation wave after the current orchestration checkpoint, with the immediate focus on immutable task recovery, review diff/consolidation depth, planning-to-task-card flow, and runtime-usage recovery improvements.
 
 ## Current Phase
-Phase 21
+Phase 22
 
 ## Phases
 
@@ -204,6 +204,15 @@ Phase 21
 - [x] Write the final release-quality audit and refresh the roadmap from that checkpoint
 - **Status:** complete
 
+### Phase 22: Native Windows Release-Blocker Closure
+- [x] Reconcile the native Windows checklist run with the repo roadmap and isolate the still-open blockers
+- [x] Fix the Windows JSON CLI test-harness isolation issue exposed by inherited `AWO_*` env vars
+- [x] Fix or safely route around the broken Windows PTY default so shell/team flows pass end to end
+- [x] Fix the Windows daemon named-pipe health/dispatch path so `status`, client dispatch, and stop are coherent
+- [x] Re-run formatting, clippy, full tests, and the native Windows smoke workflow
+- [ ] Commit, push to `main`, and investigate the repo's deployment/release path
+- **Status:** complete
+
 ## Key Questions
 1. What is the smallest durable lead-session model that keeps older team manifests compatible?
 2. How should Awo represent “replace the lead” without rewriting the existing structural lead profile?
@@ -275,6 +284,12 @@ Phase 21
 | The new failing-serializer test helper triggered an unused-variable warning under `-D warnings` | 1 | Renamed the serializer parameter to `_serializer` |
 | `cargo-deny` local installation stalled repeatedly on this machine | 1 | Kept the CI wiring and baseline config in place, validated `cargo-audit` locally, and recorded local `cargo-deny` validation as the remaining gap |
 | The TUI was still doing a blind periodic refresh even after the background snapshot worker landed | 1 | Added an event-bus watcher so command-driven changes trigger immediate refreshes, while preserving a slower fallback refresh for silent runtime-state changes |
+| Native Windows `cargo test` reused checklist-level `AWO_CONFIG_DIR` / `AWO_DATA_DIR` values inside `json_cli` subprocesses | 1 | Update the test harness to remove inherited `AWO_*` variables unless a test intentionally sets them |
+| Native Windows shell sessions fail only in the PTY path while oneshot shell sessions complete successfully | 1 | Treat the PTY layer as the problem to fix or route around, not the shell runtime itself |
+| Native Windows daemon sockets accept connections but fail the RPC health probe | 1 | Rework the named-pipe client/server roundtrip to avoid clone-based stream handling and verify health through real requests |
+| The March 30 Windows checklist rerun still kills `awod.exe` after the second health probe with exit `0xC0000409` | 1 | Keep daemon transport as the primary remaining blocker and record the exact failing foreground-smoke sequence |
+| The March 30 Windows team smoke used the checklist task body `pwd && ls`, but the generated `.ps1` ran under a PowerShell variant that rejects `&&` | 1 | Record it as a remaining Windows team-flow blocker tied to shell-script execution compatibility |
+| The March 30 Windows TUI quit smoke still fails under piped input with `os error 232` | 1 | Keep the piped-input quit path as a release blocker for scripted Windows smoke |
 
 ## Notes
 - The orchestration planning package created earlier in this line of work is:

@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-03-31T04:08:00+05:00",
+  "checklist_source": "C:\\Users\\bismailov\\Downloads\\Windows.md",
+  "repo_root": "C:\\tmp\\awo-validation\\awo",
+  "summary": {
+    "pass": 9,
+    "fail": 0
+  },
+  "results": [
+    {
+      "name": "cargo fmt --all --check",
+      "status": "PASS",
+      "evidence": "Exited 0 on 2026-03-31 after the final Windows fixes."
+    },
+    {
+      "name": "cargo clippy --all-targets -- -D warnings",
+      "status": "PASS",
+      "evidence": "Exited 0 on 2026-03-31 after the final Windows fixes."
+    },
+    {
+      "name": "cargo test -q -- --test-threads=1",
+      "status": "PASS",
+      "evidence": "Exited 0 on 2026-03-31; workspace suites completed green in 243.1s."
+    },
+    {
+      "name": "repo add/list",
+      "status": "PASS",
+      "evidence": "`awo.exe --json repo add` returned a valid `repo_registered` envelope and `repo list` showed the registered repo in isolated Windows state."
+    },
+    {
+      "name": "slot acquire/release/delete",
+      "status": "PASS",
+      "evidence": "Warm-slot acquire, release, and delete all completed successfully in isolated Windows state."
+    },
+    {
+      "name": "shell session start/log",
+      "status": "PASS",
+      "evidence": "Shell session completed and `session log` contained `hello from awo windows smoke` plus the worktree path."
+    },
+    {
+      "name": "daemon start/status/stop",
+      "status": "PASS",
+      "evidence": "Explicit `awod.exe` start reached `healthy`, repeated status stayed healthy, `repo list` worked through the daemon, `daemon stop` succeeded, and final status returned `not running`."
+    },
+    {
+      "name": "team init/plan/task/report/teardown/delete",
+      "status": "PASS",
+      "evidence": "The Windows checklist team flow completed end to end, including `pwd && ls` task execution reaching `review`, `team task supersede`, `team report`, `team teardown --force`, and `team delete`."
+    },
+    {
+      "name": "TUI startup/quit",
+      "status": "PASS",
+      "evidence": "`cmd.exe /c \"echo q| C:\\tmp\\awo-validation\\awo\\target\\debug\\awo.exe\"` exited 0 after the non-interactive quit-path fix."
+    }
+  ],
+  "notes": [
+    "On Windows, normal CLI commands now stay in direct mode unless `awod` is already running explicitly. This avoids the redirected-output auto-start problems seen earlier while keeping explicit daemon workflows fully validated.",
+    "The older `windows_live_check.ps1` helper is still a stale debugging artifact and was not used as the final source of truth for this refreshed report."
+  ]
+}

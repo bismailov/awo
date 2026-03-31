@@ -1,4 +1,4 @@
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::cli::DaemonCommand;
 use crate::cli::{
     AppCommand, ContextCommand, DebugCommand, RepoCommand, ReviewCommand, RuntimeCommand,
@@ -17,7 +17,7 @@ use crate::tui::run_tui;
 use anyhow::{Result, bail};
 use awo_core::capabilities::CostTier;
 use awo_core::commands::CommandOutcome;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use awo_core::dispatch::Dispatcher;
 use awo_core::error::AwoResult;
 use awo_core::{
@@ -27,12 +27,12 @@ use awo_core::{
     TeamManifest, TeamMember, TeamResetSummary, TeamTaskDelegateOptions, TeamTaskStartOptions,
     all_runtime_capabilities, route_runtime, runtime_capabilities,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use awo_core::{DaemonOptions, DaemonServer, DaemonStatus, get_daemon_status, stop_daemon};
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use serde_json::json;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 
@@ -47,9 +47,9 @@ use tracing_subscriber::EnvFilter;
 /// — safe because WAL mode supports concurrent readers.
 struct CliBackend {
     core: AppCore,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     daemon: Option<awo_core::DaemonClient>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     notice: Option<String>,
 }
 
@@ -57,20 +57,20 @@ impl CliBackend {
     fn bootstrap() -> Result<Self> {
         let core = AppCore::bootstrap()?;
 
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let (daemon, notice) = bootstrap_daemon_transport(core.paths());
 
         Ok(Self {
             core,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             daemon,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             notice,
         })
     }
 
     fn dispatch(&mut self, command: Command) -> AwoResult<CommandOutcome> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(client) = &mut self.daemon {
             return client.dispatch(command);
         }
@@ -85,7 +85,7 @@ impl CliBackend {
         &mut self.core
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn emit_notice(&self, output: OutputMode) {
         if !output.json
             && let Some(notice) = &self.notice
@@ -95,14 +95,14 @@ impl CliBackend {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn bootstrap_backend(output: OutputMode) -> Result<CliBackend> {
     let backend = CliBackend::bootstrap()?;
     backend.emit_notice(output);
     Ok(backend)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn bootstrap_backend(_output: OutputMode) -> Result<CliBackend> {
     CliBackend::bootstrap()
 }
@@ -154,32 +154,46 @@ fn bootstrap_daemon_transport(
                 )),
             )
         }
-        DaemonStatus::NotRunning => match awo_core::spawn_daemon(paths) {
-            Ok(pid) => match connect_daemon_client(paths) {
-                Ok(client) => {
-                    tracing::info!(pid, "auto-started awod daemon");
-                    (Some(client), None)
-                }
-                Err(error) => {
-                    tracing::warn!(%error, pid, "auto-started daemon but connection failed, using direct mode");
-                    (
-                        None,
-                        Some(format!(
-                            "using direct mode because auto-started daemon (pid {pid}) was unreachable: {error}"
-                        )),
-                    )
-                }
-            },
-            Err(error) => {
-                tracing::debug!(%error, "could not auto-start daemon, using direct mode");
+        DaemonStatus::NotRunning => {
+            #[cfg(windows)]
+            {
+                tracing::debug!("daemon not running on Windows; using direct mode");
                 (
                     None,
-                    Some(format!(
-                        "using direct mode because daemon auto-start failed: {error}"
-                    )),
+                    Some("using direct mode because daemon is not running".to_string()),
                 )
             }
-        },
+
+            #[cfg(not(windows))]
+            {
+                match awo_core::spawn_daemon(paths) {
+                    Ok(pid) => match connect_daemon_client(paths) {
+                        Ok(client) => {
+                            tracing::info!(pid, "auto-started awod daemon");
+                            (Some(client), None)
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, pid, "auto-started daemon but connection failed, using direct mode");
+                            (
+                                None,
+                                Some(format!(
+                                    "using direct mode because auto-started daemon (pid {pid}) was unreachable: {error}"
+                                )),
+                            )
+                        }
+                    },
+                    Err(error) => {
+                        tracing::debug!(%error, "could not auto-start daemon, using direct mode");
+                        (
+                            None,
+                            Some(format!(
+                                "using direct mode because daemon auto-start failed: {error}"
+                            )),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -220,7 +234,7 @@ fn wait_for_daemon_client(
     )))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn format_daemon_issues(issues: &[awo_core::daemon::DaemonHealthIssue]) -> String {
     issues
         .iter()
@@ -229,7 +243,7 @@ fn format_daemon_issues(issues: &[awo_core::daemon::DaemonHealthIssue]) -> Strin
         .join(", ")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn daemon_issue_code(issue: &awo_core::daemon::DaemonHealthIssue) -> &'static str {
     match issue {
         awo_core::daemon::DaemonHealthIssue::SocketMissing => "socket_missing",
@@ -238,7 +252,7 @@ fn daemon_issue_code(issue: &awo_core::daemon::DaemonHealthIssue) -> &'static st
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn daemon_status_payload(status: &DaemonStatus) -> serde_json::Value {
     json!({
         "status": status.state_label(),
@@ -259,7 +273,7 @@ fn daemon_status_payload(status: &DaemonStatus) -> serde_json::Value {
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn daemon_status_text(status: &DaemonStatus) -> String {
     match status {
         DaemonStatus::NotRunning => "not running".to_string(),
@@ -306,7 +320,7 @@ pub fn execute(command: AppCommand, output: OutputMode) -> Result<()> {
             run_tui()
         }
         AppCommand::Repo { command } => run_repo(command, output),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         AppCommand::Daemon { command } => run_daemon(command, output),
         AppCommand::Context { command } => run_context(command, output),
         AppCommand::Skills { command } => run_skills(command, output),
@@ -433,7 +447,7 @@ fn run_repo(command: RepoCommand, output: OutputMode) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn run_daemon(command: DaemonCommand, output: OutputMode) -> Result<()> {
     let core = AppCore::bootstrap()?;
     let paths = core.paths();
@@ -615,7 +629,7 @@ fn run_skills(command: SkillsCommand, output: OutputMode) -> Result<()> {
 }
 
 fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
-    let mut backend = bootstrap_backend(output)?;
+    let mut core = AppCore::bootstrap()?;
     match command {
         RuntimeCommand::List => {
             let capabilities = all_runtime_capabilities();
@@ -669,7 +683,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
                 avoid_metered,
                 max_cost_tier,
             };
-            let context = resolve_routing_context(backend.core(), &pressure)?;
+            let context = resolve_routing_context(&core, &pressure)?;
 
             let decision = route_runtime(primary_target, fallback_target, &preferences, &context);
 
@@ -680,7 +694,7 @@ fn run_runtime(command: RuntimeCommand, output: OutputMode) -> Result<()> {
             }
         }
         RuntimeCommand::Pressure { command } => {
-            handle_runtime_pressure_command(backend.core_mut(), command, output)?
+            handle_runtime_pressure_command(&mut core, command, output)?
         }
     }
 
@@ -1749,6 +1763,7 @@ fn resolve_routing_context(core: &AppCore, pressure_entries: &[String]) -> Resul
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]

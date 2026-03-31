@@ -424,7 +424,7 @@ fn configured_pty_supervisor() -> Option<SessionSupervisor> {
 
     #[cfg(windows)]
     {
-        Some(SessionSupervisor::Conpty)
+        None
     }
 
     #[cfg(not(any(unix, windows)))]

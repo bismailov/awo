@@ -24,6 +24,10 @@ impl TestContext {
             cmd.arg("--json");
         }
         cmd.args(args);
+        cmd.env_remove("AWO_CONFIG_DIR");
+        cmd.env_remove("AWO_DATA_DIR");
+        cmd.env_remove("AWO_CLONES_DIR");
+        cmd.env_remove("AWO_WORKTREES_DIR");
         let config_dir = self.root.join("config");
         let data_dir = self.root.join("data");
         std::fs::create_dir_all(&config_dir).expect("test config dir should be creatable");
@@ -74,11 +78,21 @@ fn unique_state_root() -> std::path::PathBuf {
 
 fn isolate_state_dir(cmd: &mut Command) {
     let root = unique_state_root();
+    std::fs::create_dir_all(root.join("config")).expect("test config dir should be creatable");
+    std::fs::create_dir_all(root.join("data")).expect("test data dir should be creatable");
+    cmd.env_remove("AWO_CONFIG_DIR");
+    cmd.env_remove("AWO_DATA_DIR");
+    cmd.env_remove("AWO_CLONES_DIR");
+    cmd.env_remove("AWO_WORKTREES_DIR");
     cmd.env("HOME", &root);
     cmd.env("XDG_CONFIG_HOME", root.join("config"));
     cmd.env("XDG_DATA_HOME", root.join("data"));
     #[cfg(windows)]
     {
+        std::fs::create_dir_all(root.join("local"))
+            .expect("test local appdata dir should be creatable");
+        std::fs::create_dir_all(root.join("roaming"))
+            .expect("test roaming appdata dir should be creatable");
         cmd.env("LOCALAPPDATA", root.join("local"));
         cmd.env("APPDATA", root.join("roaming"));
     }

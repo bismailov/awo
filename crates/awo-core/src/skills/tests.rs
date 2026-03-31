@@ -61,6 +61,9 @@ fn links_skills_into_runtime_directory() -> Result<()> {
 
     let doctor = doctor_repo_skills(&catalog, SkillRuntime::Codex, &roots)?;
     assert_eq!(doctor.entries.len(), 1);
+    #[cfg(windows)]
+    assert_eq!(doctor.entries[0].state, SkillInstallState::Copied);
+    #[cfg(not(windows))]
     assert_eq!(doctor.entries[0].state, SkillInstallState::Linked);
     assert!(Path::new(&doctor.entries[0].target_path).exists());
 

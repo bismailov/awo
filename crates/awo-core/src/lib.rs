@@ -20,6 +20,9 @@ pub mod snapshot;
 pub mod store;
 pub mod team;
 
+#[cfg(test)]
+use filetime as _;
+
 pub use app::{AppCore, AppPaths};
 pub use capabilities::{
     CapabilitySupport, RuntimeCapabilityDescriptor, all_runtime_capabilities, runtime_capabilities,

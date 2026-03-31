@@ -64,6 +64,12 @@ impl TestHarness {
 
     fn run_git(&self, dir: &std::path::Path, args: &[&str]) -> Result<()> {
         let output = ProcessCommand::new("git")
+            .args([
+                "-c",
+                "user.name=AWO Tests",
+                "-c",
+                "user.email=awo-tests@example.com",
+            ])
             .args(args)
             .current_dir(dir)
             .output()?;

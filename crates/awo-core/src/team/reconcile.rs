@@ -1,4 +1,5 @@
 use crate::error::AwoResult;
+use crate::platform::{default_shell_program, shell_command_args};
 use crate::runtime::{SessionEndReason, SessionStatus};
 use crate::slot::SlotStatus;
 use crate::store::Store;
@@ -139,9 +140,8 @@ pub fn reconcile_team_manifest_state(
                         && let Some(ref s) = slot
                     {
                         let path = Path::new(&s.slot_path);
-                        match Command::new("sh")
-                            .arg("-c")
-                            .arg(cmd)
+                        match Command::new(default_shell_program())
+                            .args(shell_command_args(cmd))
                             .current_dir(path)
                             .output()
                         {
