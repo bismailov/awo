@@ -78,15 +78,19 @@ fn unique_state_root() -> std::path::PathBuf {
 
 fn isolate_state_dir(cmd: &mut Command) {
     let root = unique_state_root();
-    std::fs::create_dir_all(root.join("config")).expect("test config dir should be creatable");
-    std::fs::create_dir_all(root.join("data")).expect("test data dir should be creatable");
+    let config_dir = root.join("config");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&config_dir).expect("test config dir should be creatable");
+    std::fs::create_dir_all(&data_dir).expect("test data dir should be creatable");
     cmd.env_remove("AWO_CONFIG_DIR");
     cmd.env_remove("AWO_DATA_DIR");
     cmd.env_remove("AWO_CLONES_DIR");
     cmd.env_remove("AWO_WORKTREES_DIR");
+    cmd.env("AWO_CONFIG_DIR", &config_dir);
+    cmd.env("AWO_DATA_DIR", &data_dir);
     cmd.env("HOME", &root);
-    cmd.env("XDG_CONFIG_HOME", root.join("config"));
-    cmd.env("XDG_DATA_HOME", root.join("data"));
+    cmd.env("XDG_CONFIG_HOME", &config_dir);
+    cmd.env("XDG_DATA_HOME", &data_dir);
     #[cfg(windows)]
     {
         std::fs::create_dir_all(root.join("local"))
